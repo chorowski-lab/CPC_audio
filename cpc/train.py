@@ -3,6 +3,7 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 import argparse
+import contextlib
 import json
 import os
 import numpy as np
@@ -85,8 +86,8 @@ def trainStep(dataLoader,
               cpcCriterion,
               optimizer,
               scheduler,
-              loggingStep):
-
+              loggingStep,
+              amp_context, amp_scaler):
     cpcModel.train()
     cpcCriterion.train()
 
@@ -99,14 +100,16 @@ def trainStep(dataLoader,
         n_examples += batchData.size(0)
         batchData = batchData.cuda(non_blocking=True)
         label = label.cuda(non_blocking=True)
-        c_feature, encoded_data, label = cpcModel(batchData, label)
-        allLosses, allAcc = cpcCriterion(c_feature, encoded_data, label)
-        totLoss = allLosses.sum()
+        with amp_context():
+            c_feature, encoded_data, label = cpcModel(batchData, label)
+            allLosses, allAcc = cpcCriterion(c_feature, encoded_data, label)
+            totLoss = allLosses.sum()
 
-        totLoss.backward()
+        amp_scaler.scale(totLoss).backward()
 
         # Show grads ?
-        optimizer.step()
+        amp_scaler.step(optimizer)
+        amp_scaler.update()
         optimizer.zero_grad()
 
         if "locLoss_train" not in logs:
@@ -140,7 +143,8 @@ def trainStep(dataLoader,
 
 def valStep(dataLoader,
             cpcModel,
-            cpcCriterion):
+            cpcCriterion,
+            amp_context):
 
     cpcCriterion.eval()
     cpcModel.eval()
@@ -157,8 +161,9 @@ def valStep(dataLoader,
         label = label.cuda(non_blocking=True)
 
         with torch.no_grad():
-            c_feature, encoded_data, label = cpcModel(batchData, label)
-            allLosses, allAcc = cpcCriterion(c_feature, encoded_data, label)
+            with amp_context():
+                c_feature, encoded_data, label = cpcModel(batchData, label)
+                allLosses, allAcc = cpcCriterion(c_feature, encoded_data, label)
 
         if "locLoss_val" not in logs:
             logs["locLoss_val"] = np.zeros(allLosses.size(1))
@@ -184,7 +189,9 @@ def run(trainDataset,
         pathCheckpoint,
         optimizer,
         scheduler,
-        logs):
+        logs,
+        amp_context, 
+        amp_scaler):
 
     print(f"Running {nEpoch} epochs")
     startEpoch = len(logs["epoch"])
@@ -207,9 +214,9 @@ def run(trainDataset,
               (len(trainLoader), len(valLoader), batchSize))
 
         locLogsTrain = trainStep(trainLoader, cpcModel, cpcCriterion,
-                                 optimizer, scheduler, logs["logging_step"])
+                                 optimizer, scheduler, logs["logging_step"], amp_context=amp_context, amp_scaler=amp_scaler)
 
-        locLogsVal = valStep(valLoader, cpcModel, cpcCriterion)
+        locLogsVal = valStep(valLoader, cpcModel, cpcCriterion, amp_context=amp_context)
 
         print(f'Ran {epoch + 1} epochs '
               f'in {time.time() - start_time:.2f} seconds')
@@ -398,6 +405,15 @@ def main(args):
     cpcCriterion = torch.nn.DataParallel(cpcCriterion,
                                          device_ids=range(args.nGPU)).cuda()
     
+    if args.amp:
+        print('!!Using AMP!!')
+        # TODO: scaler should be saved as well
+        amp_scaler = torch.cuda.amp.GradScaler()
+        amp_context = torch.cuda.amp.autocast
+    else:
+        amp_scaler = torch.cuda.amp.GradScaler(enabled=False)
+        amp_context = contextlib.nullcontext
+
     run(trainDataset,
         valDataset,
         batchSize,
@@ -408,7 +424,10 @@ def main(args):
         args.pathCheckpoint,
         optimizer,
         scheduler,
-        logs)
+        logs,
+        amp_context=amp_context,
+        amp_scaler=amp_scaler,
+        )
 
 
 def parseArgs(argv):
@@ -480,6 +499,8 @@ def parseArgs(argv):
                            "available GPUs)")
     group_gpu.add_argument('--batchSizeGPU', type=int, default=8,
                            help='Number of batches per GPU.')
+    parser.add_argument('--amp', action='store_true',
+                        help="Use AMP.")
     parser.add_argument('--debug', action='store_true',
                         help="Load only a very small amount of files for "
                         "debugging purposes.")
