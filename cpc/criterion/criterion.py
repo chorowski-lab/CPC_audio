@@ -222,7 +222,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
 
         return "orthoLoss", self.orthoLoss * self.wPrediction.orthoCriterion()
 
-    def forward(self, cFeature, encodedData, label):
+    def forward(self, cFeature, encodedData, label, captureOptions):
 
         if self.mode == "reverse":
             encodedData = torch.flip(encodedData, [1])
@@ -242,6 +242,14 @@ class CPCUnsupersivedCriterion(BaseCriterion):
 
         predictions = self.wPrediction(cFeature, sampledData)
 
+        captureRes = None
+        if captureOptions != None:
+            for o in captureOptions:
+                assert o in ('pred',)
+            captureRes = {}
+            if 'pred' in captureOptions:
+                captureRes['pred'] = predictions.cpu()
+
         outLosses = [0 for x in range(self.nPredicts)]
         outAcc = [0 for x in range(self.nPredicts)]
 
@@ -254,7 +262,8 @@ class CPCUnsupersivedCriterion(BaseCriterion):
             outAcc[k] += torch.sum(predsIndex == labelLoss).float().view(1, -1)
 
         return torch.cat(outLosses, dim=1), \
-            torch.cat(outAcc, dim=1) / (windowSize * batchSize)
+            torch.cat(outAcc, dim=1) / (windowSize * batchSize), \
+                captureRes
 
 
 class SpeakerCriterion(BaseCriterion):
