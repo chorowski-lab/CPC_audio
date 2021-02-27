@@ -248,14 +248,12 @@ class AudioBatchData(Dataset):
                                    at the begining of each iteration
         """
         nLoops = len(self.packageIndex)
-        print("!!!!", self.totSize, self.sizeWindow, batchSize)
         totSize = self.totSize // (self.sizeWindow * batchSize)
         if onLoop >= 0:
             self.currentPack = onLoop - 1
             self.loadNextPack()
             nLoops = 1
 
-        print("!!!!!!!!!! SAMPLER TYPE", type)
         def samplerCall():
             offset = random.randint(0, self.sizeWindow // 2) \
                 if randomOffset else 0
