@@ -12,6 +12,7 @@ from copy import deepcopy
 import random
 import psutil
 import sys
+import math
 
 import cpc.criterion as cr
 import cpc.criterion.soft_align as sa
@@ -138,6 +139,82 @@ def trainStep(dataLoader,
     return logs
 
 
+def trainClassifStep(dataLoader,
+              cpcModel,
+              classifModel,
+              classifCriterion,
+              optimizer): #,
+              #scheduler,
+              #loggingStep):
+
+    cpcModel.eval()
+    classifModel.train()
+    classifCriterion.train()
+
+    #start_time = time.perf_counter()   # optimizer.state_dict()['state'][0]['exp_avg'].min()
+    n_examples = 0
+    #logs, lastlogs = {}, None
+    #iter = 0
+    for step, fulldata in enumerate(dataLoader):
+        batchData, labelData = fulldata
+        speakerLabel, groundTruth = labelData  # first one is speaker; groundTruth are 1-hot
+        # n_examples += batchData.size(0)
+
+        # those detaches are not really needed
+        batchData = batchData.detach().cuda(non_blocking=True)
+        speakerLabel = speakerLabel.detach().cuda(non_blocking=True)
+        groundTruth = groundTruth.detach().cuda(non_blocking=True)
+
+        # [!] double checking stuff is detached and won't affect unsupervised training
+        with torch.no_grad():
+            _, encoded_data, _ = cpcModel(batchData, speakerLabel)
+        encoded_data = encoded_data.detach().requires_grad_()
+
+        modelGuess = classifModel(encoded_data)
+        #      downsampling x160 made directly in the dataset with the labels
+        #      could also do it here, but would be slow and big tenstors
+        #      could also pass downsampling factor to DS (and use in getDataLoader(), loadNextPack()), but not needed for now
+        # encoderDownsampling = cpcModel.module.gEncoder.DOWNSAMPLING
+        
+        flattenedGuess = modelGuess.view(-1, modelGuess.shape[2])
+        flattenedTruth = groundTruth.view(-1)
+        classifLoss = classifCriterion(flattenedGuess, flattenedTruth)
+        
+        classifLoss.backward()
+
+        # Show grads ?
+        optimizer.step()
+        optimizer.zero_grad()
+
+        # if "locLoss_train" not in logs:
+        #     logs["locLoss_train"] = np.zeros(allLosses.size(1))
+        #     logs["locAcc_train"] = np.zeros(allLosses.size(1))
+
+        # iter += 1
+        # logs["locLoss_train"] += (allLosses.mean(dim=0)).detach().cpu().numpy()
+        # logs["locAcc_train"] += (allAcc.mean(dim=0)).cpu().numpy()
+
+        # if (step + 1) % loggingStep == 0:
+        #     new_time = time.perf_counter()
+        #     elapsed = new_time - start_time
+        #     print(f"Update {step + 1}")
+        #     print(f"elapsed: {elapsed:.1f} s")
+        #     print(
+        #         f"{1000.0 * elapsed / loggingStep:.1f} ms per batch, {1000.0 * elapsed / n_examples:.1f} ms / example")
+        #     locLogs = utils.update_logs(logs, loggingStep, lastlogs)
+        #     lastlogs = deepcopy(logs)
+        #     utils.show_logs("Training loss", locLogs)
+        #     start_time, n_examples = new_time, 0
+
+    # if scheduler is not None:
+    #     scheduler.step()
+
+    # logs = utils.update_logs(logs, iter)
+    # logs["iter"] = iter
+    # utils.show_logs("Average training loss on epoch", logs)
+    #return logs
+
+
 def valStep(dataLoader,
             cpcModel,
             cpcCriterion):
@@ -172,6 +249,42 @@ def valStep(dataLoader,
     logs["iter"] = iter
     utils.show_logs("Validation loss:", logs)
     return logs
+
+
+def valClassifStep(dataLoader,
+              cpcModel,
+              classifModel): #,
+              #scheduler,
+              #loggingStep):
+
+    cpcModel.eval()
+    classifModel.eval()
+    
+    #start_time = time.perf_counter()
+    n_examples = 0
+    correct = 0
+    #logs, lastlogs = {}, None
+    #iter = 0
+    for step, fulldata in enumerate(dataLoader):
+        batchData, labelData = fulldata
+        speakerLabel, groundTruth = labelData  # first one is speaker; groundTruth are 1-hot
+        
+        batchData = batchData.cuda(non_blocking=True)
+        speakerLabel = speakerLabel.cuda(non_blocking=True)
+        groundTruth = groundTruth.cuda(non_blocking=True)
+
+        with torch.no_grad():
+            _, encoded_data, _ = cpcModel(batchData, speakerLabel)
+            modelGuess = classifModel(encoded_data)
+            modelGuessFlattened = modelGuess.view(-1, modelGuess.shape[2])
+            groundTruthFlattened = groundTruth.view(-1)
+            modelLabels = torch.max(modelGuessFlattened, 1).indices
+            # ground truth labels are already downsampled 160x
+            #groundTruthLabels = torch.max(groundTruthFlattened, 1)  # now already as labels 
+            n_examples += groundTruthFlattened.shape[0]
+            correct += (modelLabels == groundTruthFlattened).sum().item()
+
+    return float(correct) / float(n_examples)        
 
 
 def captureStep(
@@ -235,6 +348,54 @@ def captureStep(
     return
 
 
+def classifTraining(
+              getTrainLoader,
+              getValLoader,
+              cpcModel,
+              classifModel,
+              classifCriterion,
+              optimizer,
+              numEpochs):
+    
+    print("--< COMPUTING SUPERVISED PHONEME CLASSIFICATION METRIC VIA TRAINING ON REPRESENTATIONS >--")
+
+    valAccs = [0.]
+    for classifEpoch in range(numEpochs):
+
+        print(f"Starting classification task epoch {classifEpoch}")
+
+        trainLoader = getTrainLoader()
+        valLoader = getValLoader()
+
+        # they implemented CPC in a way that does make comuting only representations difficult,
+        # would need to change quite a bit of code, but maybe can stay like that
+        
+        trainClassifStep(
+            trainLoader,
+            cpcModel,
+            classifModel,
+            classifCriterion,
+            optimizer
+        )
+
+        print("train step done")
+
+        valLossThisEpoch = valClassifStep(
+            valLoader,
+            cpcModel,
+            classifModel
+        )
+
+        print("val step done")
+
+        if not math.isnan(valLossThisEpoch):
+            valAccs.append(valLossThisEpoch)
+
+        print(f"Phoneme classification accuracy in this epoch: {valLossThisEpoch}")
+
+    return max(valAccs)
+
+
 def run(performTraining,
         trainDataset,
         valDataset,
@@ -247,7 +408,8 @@ def run(performTraining,
         pathCheckpoint,
         optimizer,
         scheduler,
-        logs):
+        logs,
+        classifTaskParams=None):
 
     startEpoch = len(logs["epoch"])
     if performTraining:
@@ -263,6 +425,16 @@ def run(performTraining,
     print(f'DS sizes: train {str(len(trainDataset)) if trainDataset is not None else "-"}, '
         f'val {str(len(valDataset)) if valDataset is not None else "-"}, capture '
         f'{str(len(captureDataset)) if captureDataset is not None else "-"}')
+    if classifTaskParams:
+
+        # will create a new model for each classif training instead of messing with reset
+        classifEachEpochs, classifTrainEpochs, classifModelCreate, \
+            only_classif_metric_output = classifTaskParams
+
+        if 'phonemeClassif' not in logs:
+            logs['phonemeClassif'] = []
+        while len(logs['phonemeClassif']) < startEpoch:
+            logs['phonemeClassif'].append(None)
 
     if performTraining:
         for epoch in range(startEpoch, nEpoch):
@@ -291,6 +463,30 @@ def run(performTraining,
             if captureDataset is not None and epoch % captureEachEpochs == 0:
                 print(f"Capturing data for epoch {epoch}")
                 captureStep(captureLoader, cpcModel, cpcCriterion, captureOptions, epoch)
+
+            if classifTaskParams is not None and epoch % classifEachEpochs == 0:
+                classifModel, classifCriterion, classifOptimizer =  classifModelCreate()
+                bestClassifValAcc = classifTraining(
+                    (lambda ds, bs, sm: 
+                        (lambda: ds.getDataLoader(bs, sm, True, numWorkers=0))
+                      )(trainDataset, batchSize, samplingMode),
+                    (lambda ds, bs: 
+                        (lambda: ds.getDataLoader(bs, 'sequential', False, numWorkers=0))
+                      )(trainDataset, batchSize),
+                    cpcModel,
+                    classifModel,
+                    classifCriterion,
+                    classifOptimizer,
+                    classifTrainEpochs
+                )
+                # freeing stuff just in case
+                del classifModel
+                del classifCriterion
+                del classifOptimizer
+                logs['phonemeClassif'].append(bestClassifValAcc)
+                print(f'LEARNT phoneme classification with accuracy: {bestClassifValAcc}')
+            elif classifTaskParams is not None:
+                logs['phonemeClassif'].append(None)
 
             print(f'Ran {epoch + 1} epochs '
                 f'in {time.time() - start_time:.2f} seconds')
@@ -321,15 +517,45 @@ def run(performTraining,
                                 f"{pathCheckpoint}_{epoch}.pt")
                 utils.save_logs(logs, pathCheckpoint + "_logs.json")
     else:
-        assert (captureDataset is not None and captureOptions is not None)
-        
-        # here we ignore num epochs, epoch frequency to log etc. - just capturing data
-        # for the model training saved in the provided checkpoint
-        
-        captureLoader = captureDataset.getDataLoader(batchSize, 'sequential', False,
-                                                numWorkers=0)
-        print(f"Capturing data for epoch {startEpoch}")
-        captureStep(captureLoader, cpcModel, cpcCriterion, captureOptions, startEpoch)
+
+        didSomething = False
+        if captureDataset is not None:
+            assert captureDataset is not None and captureOptions is not None
+            
+            # here we ignore num epochs, epoch frequency to log etc. - just capturing data
+            # for the model training saved in the provided checkpoint
+            
+            captureLoader = captureDataset.getDataLoader(batchSize, 'sequential', False,
+                                                    numWorkers=0)
+            print(f"Capturing data for epoch {startEpoch}")
+            captureStep(captureLoader, cpcModel, cpcCriterion, captureOptions, startEpoch)
+            didSomething = True
+
+        if classifTaskParams and only_classif_metric_output is not None:
+            classifModel, classifCriterion, classifOptimizer =  classifModelCreate()
+            bestClassifValAcc = classifTraining(
+                (lambda ds, bs, sm: 
+                    (lambda: ds.getDataLoader(bs, sm, True, numWorkers=0))
+                    )(trainDataset, batchSize, samplingMode),
+                (lambda ds, bs: 
+                    (lambda: ds.getDataLoader(bs, 'sequential', False, numWorkers=0))
+                    )(trainDataset, batchSize),
+                cpcModel,
+                classifModel,
+                classifCriterion,
+                classifOptimizer,
+                classifTrainEpochs
+            )
+            # freeing stuff just in case
+            del classifModel
+            del classifCriterion
+            del classifOptimizer
+            with open(only_classif_metric_output, 'w') as f:
+                f.write(f'Best validation set accuracy obtained: {bestClassifValAcc}')
+            didSomething = True
+
+        assert didSomething
+
 
 
 def main(args):
@@ -409,11 +635,20 @@ def main(args):
             seqVal = seqVal[-100:]
 
         phoneLabels, nPhones = None, None
-        # TODO implement label usage in some less horrible format
         if args.supervised and args.pathPhone is not None:
             print("Loading the phone labels at " + args.pathPhone)
             phoneLabels, nPhones = parseSeqLabels(args.pathPhone)
             print(f"{nPhones} phones found")
+
+        if args.compute_supervised_phoneme_classif_metric:
+            assert args.pathTrain is not None and args.pathVal is not None
+            assert args.pathTrainAlignments is not None and args.pathValAlignments is not None
+            pathTrainAlignments = args.pathTrainAlignments
+            pathValAlignments = args.pathValAlignments
+            
+        else:
+            pathTrainAlignments = None
+            pathValAlignments = None
 
         print("")
         print(f'Loading audio data at {args.pathDB}')
@@ -424,7 +659,8 @@ def main(args):
                                     phoneLabels,
                                     len(speakers),
                                     nProcessLoader=args.n_process_loader,
-                                    MAX_SIZE_LOADED=args.max_size_loaded)
+                                    MAX_SIZE_LOADED=args.max_size_loaded,
+                                    pathAlignments=pathTrainAlignments)
         print("Training dataset loaded")
         print("")
 
@@ -434,7 +670,8 @@ def main(args):
                                     seqVal,
                                     phoneLabels,
                                     len(speakers),
-                                    nProcessLoader=args.n_process_loader)
+                                    nProcessLoader=args.n_process_loader,
+                                    pathAlignments=pathValAlignments)
         print("Validation dataset loaded")
         print("")
     else:
@@ -456,17 +693,59 @@ def main(args):
         captureDataset = None
 
     if args.load is not None:
+        # AFAIU args.hiddenEncoder is encoded representation dimension, from single or merged-model encoder
+        # AR stuff AFAIU is the CPC prediction net
         cpcModel, args.hiddenGar, args.hiddenEncoder = \
             fl.loadModel(args.load)
+        encodedDim = args.hiddenEncoder
 
     else:
         # Encoder network
         encoderNet = fl.getEncoder(args)
+        
         # AR Network
         arNet = fl.getAR(args)
+        encodedDim = encoderNet.getDimOutput()
 
         cpcModel = model.CPCModel(encoderNet, arNet)
 
+    if args.compute_supervised_phoneme_classif_metric:
+        
+        trainPhonemes = trainDataset.getPhoneDict()
+        valPhonemes = valDataset.getPhoneDict()
+        mergedDict = {}
+        for d in (trainPhonemes, valPhonemes):
+            for p in d:
+                if p not in mergedDict:
+                    mergedDict[p] = len(mergedDict)
+        trainDataset.setPhoneDict(deepcopy(mergedDict))
+        valDataset.setPhoneDict(deepcopy(mergedDict))
+
+        def classifModelCreateFun():   # TODO maybe bind args better to be sure
+            layers = []
+            neuronNumbers = list(map(int, args.FCNetLayersNeurons.split(',')))
+            prevDim = encodedDim
+            for nNum in neuronNumbers:
+                if nNum != 0:  # can put 0 to specify e.g. no hidden layers
+                    layers.append(torch.nn.Linear(prevDim, nNum))
+                    prevDim = nNum
+                    layers.append(torch.nn.ReLU())
+            layers.append(torch.nn.Linear(prevDim, len(mergedDict)))
+
+            classifModel = torch.nn.Sequential(*layers)
+            classifCriterion = torch.nn.CrossEntropyLoss()
+            classifOptimizer = torch.optim.Adam(classifModel.parameters(), lr=args.classif_lr)
+        
+            classifCriterion.cuda()
+            classifModel.cuda()
+            return (classifModel, classifCriterion, classifOptimizer)
+
+        classifParams = (args.classifEachEpochs, args.classifTrainEpochs, classifModelCreateFun,
+                         args.only_classif_metric_output if args.only_classif_metric_output else None)
+
+    else:
+        classifParams = None
+        
     batchSize = args.nGPU * args.batchSizeGPU
     cpcModel.supervised = args.supervised
 
@@ -534,7 +813,7 @@ def main(args):
     cpcCriterion = torch.nn.DataParallel(cpcCriterion,
                                          device_ids=range(args.nGPU)).cuda()
     
-    run(True if not args.onlyCapture else False,
+    run(True if (not args.onlyCapture) and (args.only_classif_metric_output is None) else False,
         trainDataset,
         valDataset,
         (captureDataset, captureOptions),
@@ -546,7 +825,8 @@ def main(args):
         args.pathCheckpoint,
         optimizer,
         scheduler,
-        logs)
+        logs,
+        classifTaskParams=classifParams)
 
 
 def parseArgs(argv):
@@ -598,12 +878,50 @@ def parseArgs(argv):
                                   help='(Depreciated) Disable the CPC loss and activate '
                                   'the supervised mode. By default, the supervised '
                                   'training method is the speaker classification.')
+    # [!] --pathPhone and whole this group_supervised is for some their weird format, 
+    #     I looked at the code and it seemed so absurdly unnecessary complicated and weird
+    #     that I just decided to base additional supervised (metrics only)
+    #     on alignments in format I know - this is done in group_supervised_metric below
     group_supervised.add_argument('--pathPhone', type=str, default=None,
                                   help='(Supervised mode only) Path to a .txt '
                                   'containing the phone labels of the dataset. If given '
                                   'and --supervised, will train the model using a '
                                   'phone classification task.')
     group_supervised.add_argument('--CTC', action='store_true')
+
+    group_supervised_metric = parser.add_argument_group(
+                          'Supervised metrics - to see how CTC performs, see how well it performs in '
+                          'additional supervised phoneme classification task (with fully connected net)')
+    group_supervised_metric.add_argument('--compute_supervised_phoneme_classif_metric',
+                          action='store_true', help='compute the metric; conflicts with --onlyCapture '
+                          'except if --only_classif_metric_output')
+    group_supervised_metric.add_argument('--only_classif_metric_output',
+                          type=str, default=None,
+                          help="don't train CPC, just compute classification accuracy on given checkpoint "
+                          'on given checkpoint (classification net itself is trained) and store in given path; '
+                          'conflicts with regular training')
+    group_supervised_metric.add_argument('--pathTrainAlignments', type=str, default=None,
+                          help='Path to a root directory with alinment files '
+                          'in savage Praat TextGrid format; superset subdir structure to dataset assumed '
+                          '- needs to contain sub-paths to alignment files for all files in train DS '
+                          'can contains more - e.g. can pass same root when using two subsets of that')
+    group_supervised_metric.add_argument('--pathValAlignments', type=str, default=None,
+                          help='Path to a root directory with alinment files '
+                          'in savage Praat TextGrid format; superset subdir structure to dataset assumed '
+                          '- needs to contain sub-paths to alignment files for all files in val DS '
+                          'can contains more - e.g. can pass same root when using two subsets of that')
+    group_supervised_metric.add_argument('--classifEachEpochs', type=int, default=20,
+                          help='how often to perform classification task - classification net is then '
+                          'trained on train DS representations and assesed on val DS representations '
+                          'that are produced after that epoch in eval mode')
+    group_supervised_metric.add_argument('--FCNetLayersNeurons', type=str, default='1000,1000',
+                          help='description of how big net to use for classification in ,-separated format '
+                          '- e.g. 1000,1000 will result in a net with 2 hidden layers of 1000 neurons; ' 
+                          ' additionally softmax layer with correct number of classes is added on top')
+    group_supervised_metric.add_argument('--classif_lr', type=float, default=0.0001,
+                          help='what lr is used for the classification net (for adam)')
+    group_supervised_metric.add_argument('--classifTrainEpochs', type=int, default=30,
+                          help='how many epochs to perform during classification model training')
 
     group_save = parser.add_argument_group('Save')
     group_save.add_argument('--pathCheckpoint', type=str, default=None,

@@ -7,7 +7,9 @@ import random
 import time
 import tqdm
 import torch
+import textgrids  # install: praat-textgrids
 import soundfile as sf
+import functools
 from pathlib import Path
 from copy import deepcopy
 from torch.multiprocessing import Pool
@@ -27,7 +29,8 @@ class AudioBatchData(Dataset):
                  phoneLabelsDict,
                  nSpeakers,
                  nProcessLoader=50,
-                 MAX_SIZE_LOADED=4000000000):
+                 MAX_SIZE_LOADED=4000000000,
+                 pathAlignments=None):
         """
         Args:
             - path (string): path to the training dataset
@@ -51,6 +54,12 @@ class AudioBatchData(Dataset):
         self.sizeWindow = sizeWindow
         self.seqNames = [(s, self.dbPath / x) for s, x in seqNames]
         self.seqRelNames = [x for s, x in seqNames]  # only sequence realtive names
+        if pathAlignments is not None:
+            self.alignmentsRoot = pathAlignments
+            self.phoneDict = {}
+        else:
+            self.alignmentsRoot = None
+            self.phoneDict= None
         self.reload_pool = Pool(nProcessLoader)
         # self.reload_pool = dummy.Pool(1) #Pool(nProcessLoader)
 
@@ -67,6 +76,16 @@ class AudioBatchData(Dataset):
         self.loadNextPack(first=True)
         self.loadNextPack()
         self.doubleLabels = False
+
+    def getPhoneDict(self):
+        if self.alignmentsRoot:
+            return self.phoneDict
+        else:
+            raise Exception('no alignment mode')
+
+    # to use e.g. for merging phoneDicts between datasets
+    def setPhoneDict(self, phoneDict):
+        self.phoneDict = phoneDict
 
     def resetPhoneLabels(self, newPhoneLabels, step):
         self.phoneSize = step
@@ -92,15 +111,34 @@ class AudioBatchData(Dataset):
             del self.seqLabel
 
     def prepare(self):
-        random.shuffle(self.seqNames)
+        #aaaa = 1
+        shuffled = list(zip(self.seqNames, self.seqRelNames))
+        random.shuffle(shuffled)
+        self.seqNames = [a for a, _ in shuffled]
+        self.seqRelNames = [b for _, b in shuffled]
         start_time = time.time()
 
         print("Checking length...")
-        allLength = self.reload_pool.map(extractLength, self.seqNames)
+        if not self.alignmentsRoot:
+            allLength = self.reload_pool.map(extractLength, self.seqNames)
+        else:
+            self.phoneDict = {}
+            allLength = self.reload_pool.map(
+                functools.partial(extractLengthAndPhonemes, self.alignmentsRoot),
+                #(lambda root: (lambda x: extractLengthAndPhonemes(root, x)))(self.alignmentsRoot),
+                zip(self.seqNames, self.seqRelNames))
 
         self.packageIndex, self.totSize = [], 0
         start, packageSize = 0, 0
-        for index, length in tqdm.tqdm(enumerate(allLength)):
+        for index, data in tqdm.tqdm(enumerate(allLength)):
+            if not self.alignmentsRoot:
+                length = data
+            else:
+                length, phonesInFile = data
+                # construct phoneme -> ID mapping in DS for helper classification task
+                for p in phonesInFile:
+                    if p not in self.phoneDict:
+                        self.phoneDict[p] = len(self.phoneDict)
             packageSize += length
             if packageSize > self.MAX_SIZE_LOADED:
                 self.packageIndex.append([start, index])
@@ -136,9 +174,14 @@ class AudioBatchData(Dataset):
         seqStart, seqEnd = self.packageIndex[self.nextPack]
         if self.nextPack == 0 and len(self.packageIndex) > 1:
             self.prepare()
-        self.r = self.reload_pool.map_async(loadFile,
-                                            zip(self.seqNames[seqStart:seqEnd],
-                                            self.seqRelNames[seqStart:seqEnd]))
+        
+        self.r = self.reload_pool.map_async(
+                # (lambda root, phoneDct: 
+                #         (lambda fileData: loadFile(fileData, root, phoneDct))
+                #     )(self.alignmentsRoot, self.phoneDict),
+                functools.partial(loadFile, alignmentsRoot=self.alignmentsRoot, phoneDict=self.phoneDict),
+                zip(self.seqNames[seqStart:seqEnd],
+                self.seqRelNames[seqStart:seqEnd]))
 
     def parseNextDataBlock(self):
 
@@ -152,8 +195,10 @@ class AudioBatchData(Dataset):
         # To accelerate the process a bit
         self.nextData.sort(key=lambda x: (x[0], x[1]))
         tmpData = []
+        if self.alignmentsRoot:
+            tmpAlignments = []
 
-        for speaker, seqName, seqRelName, seq in self.nextData:
+        for speaker, seqName, seqAlignments, seq in self.nextData:
             while self.speakers[indexSpeaker] < speaker:
                 indexSpeaker += 1
                 self.speakerLabel.append(speakerSize)
@@ -167,12 +212,16 @@ class AudioBatchData(Dataset):
 
             sizeSeq = seq.size(0)
             tmpData.append(seq)
+            if self.alignmentsRoot:
+                tmpAlignments.append(seqAlignments)  # given as one-hot for DS, given downsampled 160x
             self.seqLabel.append(self.seqLabel[-1] + sizeSeq)
             speakerSize += sizeSeq
             del seq
 
         self.speakerLabel.append(speakerSize)
         self.data = torch.cat(tmpData, dim=0)
+        if self.alignmentsRoot:
+            self.alignmentData = torch.cat(tmpAlignments, dim=0)
 
     def getPhonem(self, idx):
         idPhone = idx // self.phoneSize
@@ -194,17 +243,26 @@ class AudioBatchData(Dataset):
 
         outData = self.data[idx:(self.sizeWindow + idx)].view(1, -1)
         label = torch.tensor(self.getSpeakerLabel(idx), dtype=torch.long)
-        if self.phoneSize > 0:
-            label_phone = torch.tensor(self.getPhonem(idx), dtype=torch.long)
-            if not self.doubleLabels:
-                label = label_phone
+        # if self.phoneSize > 0:
+        #     label_phone = torch.tensor(self.getPhonem(idx), dtype=torch.long)
+        #     if not self.doubleLabels:
+        #         label = label_phone
+        # else:
+        #     label_phone = torch.zeros(1)
+        if self.alignmentsRoot:
+            # alignments downsampled 160x
+            phoneAlignments = self.alignmentData[(idx//160):((self.sizeWindow + idx)//160)]
+            # doesn't really make sense
+            #phoneAlignments = phoneAlignments.view(1, *(phoneAlignments.shape))
+            return outData, (label, phoneAlignments)
         else:
-            label_phone = torch.zeros(1)
+            phoneAlignments = torch.zeros(1)
+            return outData, label
 
-        if self.doubleLabels:
-            return outData, label, label_phone
+        # if self.doubleLabels:
+        #     return outData, label, label_phone
 
-        return outData, label
+        
 
     def getNSpeakers(self):
         return len(self.speakers)
@@ -251,7 +309,9 @@ class AudioBatchData(Dataset):
         totSize = self.totSize // (self.sizeWindow * batchSize)
         if onLoop >= 0:
             self.currentPack = onLoop - 1
-            self.loadNextPack()
+            self.loadNextPack()  
+            # TODO add arg for label downsampling here
+            #      keeping .data in DS object state is equally awful anyway
             nLoops = 1
 
         def samplerCall():
@@ -263,17 +323,42 @@ class AudioBatchData(Dataset):
                            totSize, numWorkers)
 
 
-def loadFile(data):
-    seqName, seqRelName = data
-    speaker, fullPath = seqName
+def loadFile(data, alignmentsRoot=None, phoneDict=None):
+    seqData, seqRelName = data
+    speaker, fullPath = seqData
     seqName = fullPath.stem
     # Due to some issues happening when combining torchaudio.load
     # with torch.multiprocessing we use soundfile to load the data
     seq = torch.tensor(sf.read(str(fullPath))[0]).float()
     if len(seq.size()) == 2:
-        seq = seq.mean(dim=1)
-    # TODO also return phoneme labels here, or at least as an option
-    return speaker, seqName, seqRelName, seq
+        seq = seq.mean(dim=1)  # TODO check this, it looks like some utter nonsence
+    if alignmentsRoot is not None:
+        relMain = seqRelName.split('.')[0]
+        gridFilePath = os.path.join(alignmentsRoot, relMain + ".TextGrid")
+        grid = textgrids.TextGrid(gridFilePath)
+        seqLength = seq.shape[0]
+        # DOWNSAMPLING 160x (as CPC encoder) from the very beginning, 
+        # 16k -> 100 per second, so begin index in sample is int(100*phone.xmin)
+        seqAlignments = torch.zeros(seqLength // 160, dtype=torch.long)
+        for phone in grid['phones']:
+            begin = int(round(100.*phone.xmin))  #int(round(phone.xmin / grid.xmax * float(seqLength)))
+            end = int(round(100*phone.xmax)) #int(round(phone.xmax / grid.xmax * float(seqLength)))
+            if end == seqLength // 160:  # end of last phoneme can go out of range especially with rounding 
+                end -= 1
+            # if end >= seqAlignments.shape[0]:
+            #     print(begin, end, phone.max, grid.xmax)
+            #     assert False
+            seqAlignments[begin:(end+1)] = int(phoneDict[phone.text])
+            # below is just in case of weird numerical stuff, next phoneme
+            # will overwrite if it's there anyway and there won't be any weird
+            # blank spaces if there can be some problems with rounding
+            if end+1 < seqLength // 160:
+                seqAlignments[end+1] = int(phoneDict[phone.text])
+        # need constant num classes for whole train & eval, but that will be know from prediction net out dim
+        #seqAlignments = torch.nn.functional.one_hot(seqAlignments.long(), num_classes=len(phoneDict))
+    else:
+        seqAlignments = None
+    return speaker, seqName, seqAlignments, seq
 
 
 class AudioLoader(object):
@@ -419,6 +504,18 @@ def extractLength(couple):
     speaker, locPath = couple
     info = torchaudio.info(str(locPath))[0]
     return info.length
+
+def extractLengthAndPhonemes(alignmentsRoot, data):
+    couple, relPath = data
+    relMain = relPath.split('.')[0]
+    speaker, locPath = couple
+    info = torchaudio.info(str(locPath))[0]
+    gridFilePath = os.path.join(alignmentsRoot, relMain + ".TextGrid")
+    grid = textgrids.TextGrid(gridFilePath)
+    phonesInFile = set()
+    for phone in grid['phones']:
+        phonesInFile.add(phone.text)
+    return info.length, phonesInFile
 
 
 def findAllSeqs(dirName,

@@ -14,8 +14,9 @@ dependencies:
   - tqdm
   - nose
   - cython
-  - pysoundfile
   - pip:
     - progressbar2
     - matplotlib
     - torchaudio
+    - soundfile
+    - praat-textgrids

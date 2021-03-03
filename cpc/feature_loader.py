@@ -179,17 +179,20 @@ def loadModel(pathCheckpoints, loadStateDict=True):
             hiddenEncoder += he
         else:
             encoderNet = getEncoder(locArgs)
-
+            
             arNet = getAR(locArgs)
             m_ = CPCModel(encoderNet, arNet)
+
+            hiddenGar += locArgs.hiddenGar
+            hiddenEncoder += locArgs.hiddenEncoder
 
         if loadStateDict:
             print(f"Loading the state dict at {path}")
             state_dict = torch.load(path, 'cpu')
             m_.load_state_dict(state_dict["gEncoder"], strict=False)
-        if not doLoad:
-            hiddenGar += locArgs.hiddenGar
-            hiddenEncoder += locArgs.hiddenEncoder
+        # if not doLoad:  # moved above where it SHOULD be
+        #     hiddenGar += locArgs.hiddenGar
+        #     hiddenEncoder += locArgs.hiddenEncoder
 
         models.append(m_)
 
