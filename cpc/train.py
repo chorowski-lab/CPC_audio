@@ -138,6 +138,22 @@ def trainStep(dataLoader,
     utils.show_logs("Average training loss on epoch", logs)
     return logs
 
+def removeInvalidClassifData(sample, labels):
+    #print("!!!", sample.shape, labels.shape)
+    validIndices = []
+    for i in range(labels.shape[0]):
+        isInvalid = torch.min(labels[i]) < 0
+        if not isInvalid:
+            validIndices.append(i)
+    if len(validIndices) == labels.shape[0]:
+        return sample, labels, labels.shape[0], 0
+    fixedSample = torch.zeros((len(validIndices), *(sample.shape[1:])), dtype=sample.dtype)
+    fixedLabels = torch.zeros((len(validIndices), *(labels.shape[1:])), dtype=labels.dtype)
+    for i, idx in enumerate(validIndices):
+        fixedSample[i] = sample[idx]
+        fixedLabels[i] = labels[idx]
+    return fixedSample, fixedLabels, len(validIndices), labels.shape[0] - len(validIndices)  # last thing are invalid lines
+
 
 def trainClassifStep(dataLoader,
               cpcModel,
@@ -153,12 +169,18 @@ def trainClassifStep(dataLoader,
 
     #start_time = time.perf_counter()   # optimizer.state_dict()['state'][0]['exp_avg'].min()
     n_examples = 0
+    bad_lines = 0
+    ok_lines = 0
     #logs, lastlogs = {}, None
     #iter = 0
     for step, fulldata in enumerate(dataLoader):
         batchData, labelData = fulldata
         speakerLabel, groundTruth = labelData  # first one is speaker; groundTruth are 1-hot
         # n_examples += batchData.size(0)
+
+        batchData, groundTruth, ok, bad = removeInvalidClassifData(batchData, groundTruth)
+        bad_lines += bad
+        ok_lines += ok
 
         # those detaches are not really needed
         batchData = batchData.detach().cuda(non_blocking=True)
@@ -206,6 +228,7 @@ def trainClassifStep(dataLoader,
         #     utils.show_logs("Training loss", locLogs)
         #     start_time, n_examples = new_time, 0
 
+    print(f'Training lines with ok label data: {ok_lines}, with missing data: {bad_lines}')
     # if scheduler is not None:
     #     scheduler.step()
 
@@ -263,12 +286,18 @@ def valClassifStep(dataLoader,
     #start_time = time.perf_counter()
     n_examples = 0
     correct = 0
+    bad_lines = 0
+    ok_lines = 0
     #logs, lastlogs = {}, None
     #iter = 0
     for step, fulldata in enumerate(dataLoader):
         batchData, labelData = fulldata
         speakerLabel, groundTruth = labelData  # first one is speaker; groundTruth are 1-hot
         
+        batchData, groundTruth, ok, bad = removeInvalidClassifData(batchData, groundTruth)
+        bad_lines += bad
+        ok_lines += ok
+
         batchData = batchData.cuda(non_blocking=True)
         speakerLabel = speakerLabel.cuda(non_blocking=True)
         groundTruth = groundTruth.cuda(non_blocking=True)
@@ -283,6 +312,8 @@ def valClassifStep(dataLoader,
             #groundTruthLabels = torch.max(groundTruthFlattened, 1)  # now already as labels 
             n_examples += groundTruthFlattened.shape[0]
             correct += (modelLabels == groundTruthFlattened).sum().item()
+
+    print(f'Validation lines with ok label data: {ok_lines}, with missing data: {bad_lines}')
 
     return float(correct) / float(n_examples)        
 
@@ -768,9 +799,9 @@ def main(args):
     g_params = list(cpcCriterion.parameters()) + list(cpcModel.parameters())
 
     lr = args.learningRate
-    optimizer = torch.optim.Adam(g_params, lr=lr,
-                                 betas=(args.beta1, args.beta2),
-                                 eps=args.epsilon)
+    optimizer = torch.optim.AdamW(g_params, lr=lr, betas=(0.9, 0.98), eps=1e-06, weight_decay=0.01)
+                                 #betas=(args.beta1, args.beta2),
+                                 #eps=args.epsilon)
 
     if loadOptimizer:
         print("Loading optimizer " + args.load[0])

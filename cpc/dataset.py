@@ -214,6 +214,7 @@ class AudioBatchData(Dataset):
             tmpData.append(seq)
             if self.alignmentsRoot:
                 tmpAlignments.append(seqAlignments)  # given as one-hot for DS, given downsampled 160x
+                # there are -1s for invalid data
             self.seqLabel.append(self.seqLabel[-1] + sizeSeq)
             speakerSize += sizeSeq
             del seq
@@ -335,27 +336,30 @@ def loadFile(data, alignmentsRoot=None, phoneDict=None):
     if alignmentsRoot is not None:
         relMain = seqRelName.split('.')[0]
         gridFilePath = os.path.join(alignmentsRoot, relMain + ".TextGrid")
-        grid = textgrids.TextGrid(gridFilePath)
-        seqLength = seq.shape[0]
-        # DOWNSAMPLING 160x (as CPC encoder) from the very beginning, 
-        # 16k -> 100 per second, so begin index in sample is int(100*phone.xmin)
-        seqAlignments = torch.zeros(seqLength // 160, dtype=torch.long)
-        for phone in grid['phones']:
-            begin = int(round(100.*phone.xmin))  #int(round(phone.xmin / grid.xmax * float(seqLength)))
-            end = int(round(100*phone.xmax)) #int(round(phone.xmax / grid.xmax * float(seqLength)))
-            if end == seqLength // 160:  # end of last phoneme can go out of range especially with rounding 
-                end -= 1
-            # if end >= seqAlignments.shape[0]:
-            #     print(begin, end, phone.max, grid.xmax)
-            #     assert False
-            seqAlignments[begin:(end+1)] = int(phoneDict[phone.text])
-            # below is just in case of weird numerical stuff, next phoneme
-            # will overwrite if it's there anyway and there won't be any weird
-            # blank spaces if there can be some problems with rounding
-            if end+1 < seqLength // 160:
-                seqAlignments[end+1] = int(phoneDict[phone.text])
-        # need constant num classes for whole train & eval, but that will be know from prediction net out dim
-        #seqAlignments = torch.nn.functional.one_hot(seqAlignments.long(), num_classes=len(phoneDict))
+        if os.path.exists(gridFilePath):
+            grid = textgrids.TextGrid(gridFilePath)
+            seqLength = seq.shape[0]
+            # DOWNSAMPLING 160x (as CPC encoder) from the very beginning, 
+            # 16k -> 100 per second, so begin index in sample is int(100*phone.xmin)
+            seqAlignments = torch.zeros(seqLength // 160, dtype=torch.long)
+            for phone in grid['phones']:
+                begin = int(round(100.*phone.xmin))  #int(round(phone.xmin / grid.xmax * float(seqLength)))
+                end = int(round(100*phone.xmax)) #int(round(phone.xmax / grid.xmax * float(seqLength)))
+                if end == seqLength // 160:  # end of last phoneme can go out of range especially with rounding 
+                    end -= 1
+                # if end >= seqAlignments.shape[0]:
+                #     print(begin, end, phone.max, grid.xmax)
+                #     assert False
+                seqAlignments[begin:(end+1)] = int(phoneDict[phone.text])
+                # below is just in case of weird numerical stuff, next phoneme
+                # will overwrite if it's there anyway and there won't be any weird
+                # blank spaces if there can be some problems with rounding
+                if end+1 < seqLength // 160:
+                    seqAlignments[end+1] = int(phoneDict[phone.text])
+            # need constant num classes for whole train & eval, but that will be know from prediction net out dim
+            #seqAlignments = torch.nn.functional.one_hot(seqAlignments.long(), num_classes=len(phoneDict))
+        else:  # sometimes alignments files are missing, rare but happens
+            seqAlignments = torch.full(seqLength // 160, -1, dtype=torch.long)
     else:
         seqAlignments = None
     return speaker, seqName, seqAlignments, seq
