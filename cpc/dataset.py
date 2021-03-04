@@ -60,8 +60,8 @@ class AudioBatchData(Dataset):
         else:
             self.alignmentsRoot = None
             self.phoneDict= None
-        self.reload_pool = Pool(nProcessLoader)
-        # self.reload_pool = dummy.Pool(1) #Pool(nProcessLoader)
+        #self.reload_pool = Pool(nProcessLoader)
+        self.reload_pool = dummy.Pool(nProcessLoader)
 
         self.prepare()
         self.speakers = list(range(nSpeakers))
@@ -164,9 +164,9 @@ class AudioBatchData(Dataset):
         if not first:
             self.currentPack = self.nextPack
             start_time = time.time()
-            print('Joining pool')
+            ####print('Joining pool')
             self.r.wait()
-            print(f'Joined process, elapsed={time.time()-start_time:.3f} secs')
+            ####print(f'Joined process, elapsed={time.time()-start_time:.3f} secs')
             self.nextData = self.r.get()
             self.parseNextDataBlock()
             del self.nextData
@@ -332,13 +332,17 @@ def loadFile(data, alignmentsRoot=None, phoneDict=None):
     # with torch.multiprocessing we use soundfile to load the data
     seq = torch.tensor(sf.read(str(fullPath))[0]).float()
     if len(seq.size()) == 2:
-        seq = seq.mean(dim=1)  # TODO check this, it looks like some utter nonsence
+        seq = seq.mean(dim=1)  
     if alignmentsRoot is not None:
         relMain = seqRelName.split('.')[0]
         gridFilePath = os.path.join(alignmentsRoot, relMain + ".TextGrid")
+        # [!] v
+        seqLength = (seq.shape[0] // 160) * 160
+        seq = seq[:seqLength]  
+        # ^ [!] need to cut because stuff will break when concatenating
+        #   as returned labels would move away in time from audio
         if os.path.exists(gridFilePath):
             grid = textgrids.TextGrid(gridFilePath)
-            seqLength = seq.shape[0]
             # DOWNSAMPLING 160x (as CPC encoder) from the very beginning, 
             # 16k -> 100 per second, so begin index in sample is int(100*phone.xmin)
             seqAlignments = torch.zeros(seqLength // 160, dtype=torch.long)
@@ -359,7 +363,7 @@ def loadFile(data, alignmentsRoot=None, phoneDict=None):
             # need constant num classes for whole train & eval, but that will be know from prediction net out dim
             #seqAlignments = torch.nn.functional.one_hot(seqAlignments.long(), num_classes=len(phoneDict))
         else:  # sometimes alignments files are missing, rare but happens
-            seqAlignments = torch.full(seqLength // 160, -1, dtype=torch.long)
+            seqAlignments = torch.full((seqLength // 160,), -1, dtype=torch.long)
     else:
         seqAlignments = None
     return speaker, seqName, seqAlignments, seq
@@ -444,11 +448,15 @@ class SequentialSampler(Sampler):
         self.batchSize = batchSize
         if self.offset > 0:
             self.len -= 1
+        self.dataSize = dataSize
 
     def __iter__(self):
         for idx in range(self.len):
-            yield [self.offset + self.sizeWindow * idx
+            starts = [self.offset + self.sizeWindow * idx
                    + start for start in self.startBatches]
+            for s in starts:
+                assert self.dataSize - s >= self.sizeWindow
+            yield starts
 
     def __len__(self):
         return self.len
@@ -515,10 +523,11 @@ def extractLengthAndPhonemes(alignmentsRoot, data):
     speaker, locPath = couple
     info = torchaudio.info(str(locPath))[0]
     gridFilePath = os.path.join(alignmentsRoot, relMain + ".TextGrid")
-    grid = textgrids.TextGrid(gridFilePath)
     phonesInFile = set()
-    for phone in grid['phones']:
-        phonesInFile.add(phone.text)
+    if os.path.exists(gridFilePath):  # sometimes (rare) file is not there
+        grid = textgrids.TextGrid(gridFilePath)
+        for phone in grid['phones']:
+            phonesInFile.add(phone.text)
     return info.length, phonesInFile
 
 

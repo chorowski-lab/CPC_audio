@@ -10,7 +10,7 @@ import torch
 import time
 from copy import deepcopy
 import random
-import psutil
+#import psutil
 import sys
 import math
 
@@ -139,7 +139,6 @@ def trainStep(dataLoader,
     return logs
 
 def removeInvalidClassifData(sample, labels):
-    #print("!!!", sample.shape, labels.shape)
     validIndices = []
     for i in range(labels.shape[0]):
         isInvalid = torch.min(labels[i]) < 0
@@ -156,14 +155,15 @@ def removeInvalidClassifData(sample, labels):
 
 
 def trainClassifStep(dataLoader,
-              cpcModel,
+              encoderNet,
               classifModel,
               classifCriterion,
               optimizer): #,
               #scheduler,
               #loggingStep):
 
-    cpcModel.eval()
+    #cpcModel.eval()
+    encoderNet.eval()
     classifModel.train()
     classifCriterion.train()
 
@@ -182,6 +182,9 @@ def trainClassifStep(dataLoader,
         bad_lines += bad
         ok_lines += ok
 
+        if ok_lines == 0:
+            continue
+
         # those detaches are not really needed
         batchData = batchData.detach().cuda(non_blocking=True)
         speakerLabel = speakerLabel.detach().cuda(non_blocking=True)
@@ -189,7 +192,8 @@ def trainClassifStep(dataLoader,
 
         # [!] double checking stuff is detached and won't affect unsupervised training
         with torch.no_grad():
-            _, encoded_data, _ = cpcModel(batchData, speakerLabel)
+            #_, encoded_data, _ = cpcModel(batchData, speakerLabel)
+            encoded_data = encoderNet(batchData).permute(0, 2, 1)
         encoded_data = encoded_data.detach().requires_grad_()
 
         modelGuess = classifModel(encoded_data)
@@ -200,6 +204,7 @@ def trainClassifStep(dataLoader,
         
         flattenedGuess = modelGuess.view(-1, modelGuess.shape[2])
         flattenedTruth = groundTruth.view(-1)
+        assert torch.max(flattenedTruth) < flattenedGuess.shape[1] and torch.min(flattenedTruth) >= 0
         classifLoss = classifCriterion(flattenedGuess, flattenedTruth)
         
         classifLoss.backward()
@@ -275,12 +280,13 @@ def valStep(dataLoader,
 
 
 def valClassifStep(dataLoader,
-              cpcModel,
+              encoderNet,
               classifModel): #,
               #scheduler,
               #loggingStep):
 
-    cpcModel.eval()
+    #cpcModel.eval()
+    encoderNet.eval()
     classifModel.eval()
     
     #start_time = time.perf_counter()
@@ -298,12 +304,15 @@ def valClassifStep(dataLoader,
         bad_lines += bad
         ok_lines += ok
 
-        batchData = batchData.cuda(non_blocking=True)
-        speakerLabel = speakerLabel.cuda(non_blocking=True)
-        groundTruth = groundTruth.cuda(non_blocking=True)
+        if ok_lines == 0:
+            continue
 
         with torch.no_grad():
-            _, encoded_data, _ = cpcModel(batchData, speakerLabel)
+            batchData = batchData.cuda(non_blocking=True)
+            speakerLabel = speakerLabel.cuda(non_blocking=True)
+            groundTruth = groundTruth.cuda(non_blocking=True)
+            #_, encoded_data, _ = cpcModel(batchData, speakerLabel)
+            encoded_data = encoderNet(batchData).permute(0, 2, 1)
             modelGuess = classifModel(encoded_data)
             modelGuessFlattened = modelGuess.view(-1, modelGuess.shape[2])
             groundTruthFlattened = groundTruth.view(-1)
@@ -311,6 +320,7 @@ def valClassifStep(dataLoader,
             # ground truth labels are already downsampled 160x
             #groundTruthLabels = torch.max(groundTruthFlattened, 1)  # now already as labels 
             n_examples += groundTruthFlattened.shape[0]
+            assert torch.max(groundTruthFlattened) < modelGuessFlattened.shape[1] and torch.min(groundTruthFlattened) >= 0
             correct += (modelLabels == groundTruthFlattened).sum().item()
 
     print(f'Validation lines with ok label data: {ok_lines}, with missing data: {bad_lines}')
@@ -382,11 +392,12 @@ def captureStep(
 def classifTraining(
               getTrainLoader,
               getValLoader,
-              cpcModel,
+              encoderNet,
               classifModel,
               classifCriterion,
               optimizer,
-              numEpochs):
+              numEpochs,
+              fileToWrite=None):
     
     print("--< COMPUTING SUPERVISED PHONEME CLASSIFICATION METRIC VIA TRAINING ON REPRESENTATIONS >--")
 
@@ -403,7 +414,7 @@ def classifTraining(
         
         trainClassifStep(
             trainLoader,
-            cpcModel,
+            encoderNet,
             classifModel,
             classifCriterion,
             optimizer
@@ -413,7 +424,7 @@ def classifTraining(
 
         valLossThisEpoch = valClassifStep(
             valLoader,
-            cpcModel,
+            encoderNet,
             classifModel
         )
 
@@ -424,7 +435,14 @@ def classifTraining(
 
         print(f"Phoneme classification accuracy in this epoch: {valLossThisEpoch}")
 
-    return max(valAccs)
+        if fileToWrite:
+            with open(fileToWrite, 'a') as f:
+                f.write(f'Val accuracy for epoch {classifEpoch}: {valLossThisEpoch}\n')
+
+    if fileToWrite:
+        with open(fileToWrite, 'a') as f:
+            f.write(f'Best validation set accuracy obtained: {max(valAccs)}\n')
+    return max(valAccs), valAccs
 
 
 def run(performTraining,
@@ -459,6 +477,7 @@ def run(performTraining,
     if classifTaskParams:
 
         # will create a new model for each classif training instead of messing with reset
+        encoderNet, trainClassifDataset, valClassifDataset, classifBatch, \
         classifEachEpochs, classifTrainEpochs, classifModelCreate, \
             only_classif_metric_output = classifTaskParams
 
@@ -497,14 +516,14 @@ def run(performTraining,
 
             if classifTaskParams is not None and epoch % classifEachEpochs == 0:
                 classifModel, classifCriterion, classifOptimizer =  classifModelCreate()
-                bestClassifValAcc = classifTraining(
-                    (lambda ds, bs, sm: 
-                        (lambda: ds.getDataLoader(bs, sm, True, numWorkers=0))
-                      )(trainDataset, batchSize, samplingMode),
+                bestClassifValAcc, _ = classifTraining(
+                    (lambda ds, bs: 
+                        (lambda: ds.getDataLoader(bs, "uniform", True, numWorkers=0))
+                      )(trainClassifDataset, classifBatch),
                     (lambda ds, bs: 
                         (lambda: ds.getDataLoader(bs, 'sequential', False, numWorkers=0))
-                      )(trainDataset, batchSize),
-                    cpcModel,
+                      )(valClassifDataset, classifBatch),
+                    encoderNet,
                     classifModel,
                     classifCriterion,
                     classifOptimizer,
@@ -564,25 +583,27 @@ def run(performTraining,
 
         if classifTaskParams and only_classif_metric_output is not None:
             classifModel, classifCriterion, classifOptimizer =  classifModelCreate()
-            bestClassifValAcc = classifTraining(
-                (lambda ds, bs, sm: 
-                    (lambda: ds.getDataLoader(bs, sm, True, numWorkers=0))
-                    )(trainDataset, batchSize, samplingMode),
+            with open(only_classif_metric_output, 'w') as f:
+                f.write("")  # clearing the file
+            bestClassifValAcc, allClassifAccs = classifTraining(
+                (lambda ds, bs: 
+                    (lambda: ds.getDataLoader(bs, "uniform", True, numWorkers=0))
+                    )(trainClassifDataset, classifBatch),
                 (lambda ds, bs: 
                     (lambda: ds.getDataLoader(bs, 'sequential', False, numWorkers=0))
-                    )(trainDataset, batchSize),
-                cpcModel,
+                    )(valClassifDataset, classifBatch),
+                encoderNet,
                 classifModel,
                 classifCriterion,
                 classifOptimizer,
-                classifTrainEpochs
+                classifTrainEpochs,
+                fileToWrite=only_classif_metric_output
             )
             # freeing stuff just in case
             del classifModel
             del classifCriterion
             del classifOptimizer
-            with open(only_classif_metric_output, 'w') as f:
-                f.write(f'Best validation set accuracy obtained: {bestClassifValAcc}')
+            
             didSomething = True
 
         assert didSomething
@@ -671,16 +692,6 @@ def main(args):
             phoneLabels, nPhones = parseSeqLabels(args.pathPhone)
             print(f"{nPhones} phones found")
 
-        if args.compute_supervised_phoneme_classif_metric:
-            assert args.pathTrain is not None and args.pathVal is not None
-            assert args.pathTrainAlignments is not None and args.pathValAlignments is not None
-            pathTrainAlignments = args.pathTrainAlignments
-            pathValAlignments = args.pathValAlignments
-            
-        else:
-            pathTrainAlignments = None
-            pathValAlignments = None
-
         print("")
         print(f'Loading audio data at {args.pathDB}')
         print("Loading the training dataset")
@@ -690,8 +701,7 @@ def main(args):
                                     phoneLabels,
                                     len(speakers),
                                     nProcessLoader=args.n_process_loader,
-                                    MAX_SIZE_LOADED=args.max_size_loaded,
-                                    pathAlignments=pathTrainAlignments)
+                                    MAX_SIZE_LOADED=args.max_size_loaded)
         print("Training dataset loaded")
         print("")
 
@@ -701,10 +711,54 @@ def main(args):
                                     seqVal,
                                     phoneLabels,
                                     len(speakers),
-                                    nProcessLoader=args.n_process_loader,
-                                    pathAlignments=pathValAlignments)
+                                    nProcessLoader=args.n_process_loader)
         print("Validation dataset loaded")
         print("")
+
+        if args.compute_supervised_phoneme_classif_metric:
+            assert args.pathTrain is not None and args.pathVal is not None
+            assert args.pathTrainAlignments is not None and args.pathValAlignments is not None
+            pathTrainAlignments = args.pathTrainAlignments
+            pathValAlignments = args.pathValAlignments
+            print("")
+            print(f'Loading audio data at {args.pathDB}')
+            print("Loading the classif training dataset")
+            trainClassifDataset = AudioBatchData(args.pathDB,
+                                        args.sizeWindow,
+                                        seqTrain,
+                                        phoneLabels,
+                                        len(speakers),
+                                        nProcessLoader=args.n_process_loader,
+                                        MAX_SIZE_LOADED=args.max_size_loaded,
+                                        pathAlignments=pathTrainAlignments)
+            print("Classif training dataset loaded")
+            print("")
+
+            print("Loading the classif validation dataset")
+            valClassifDataset = AudioBatchData(args.pathDB,
+                                        args.sizeWindow,
+                                        seqVal,
+                                        phoneLabels,
+                                        len(speakers),
+                                        nProcessLoader=args.n_process_loader,
+                                        pathAlignments=pathValAlignments)
+            print("Classif validation dataset loaded")
+            print("")
+
+            trainPhonemes = trainClassifDataset.getPhoneDict()
+            valPhonemes = valClassifDataset.getPhoneDict()
+            mergedDict = {}
+            for d in (trainPhonemes, valPhonemes):
+                for p in d:
+                    if p not in mergedDict:
+                        mergedDict[p] = len(mergedDict)
+            trainClassifDataset.setPhoneDict(deepcopy(mergedDict))
+            valClassifDataset.setPhoneDict(deepcopy(mergedDict))
+
+
+        else:
+            phoneLabels, nPhones = None, None
+        
     else:
         phoneLabels, nPhones = None, None
         trainDataset = None
@@ -742,16 +796,7 @@ def main(args):
 
     if args.compute_supervised_phoneme_classif_metric:
         
-        trainPhonemes = trainDataset.getPhoneDict()
-        valPhonemes = valDataset.getPhoneDict()
-        mergedDict = {}
-        for d in (trainPhonemes, valPhonemes):
-            for p in d:
-                if p not in mergedDict:
-                    mergedDict[p] = len(mergedDict)
-        trainDataset.setPhoneDict(deepcopy(mergedDict))
-        valDataset.setPhoneDict(deepcopy(mergedDict))
-
+        
         def classifModelCreateFun():   # TODO maybe bind args better to be sure
             layers = []
             neuronNumbers = list(map(int, args.FCNetLayersNeurons.split(',')))
@@ -771,7 +816,8 @@ def main(args):
             classifModel.cuda()
             return (classifModel, classifCriterion, classifOptimizer)
 
-        classifParams = (args.classifEachEpochs, args.classifTrainEpochs, classifModelCreateFun,
+        classifParams = (cpcModel.gEncoder, trainClassifDataset, valClassifDataset, args.classifBatch,
+                         args.classifEachEpochs, args.classifTrainEpochs, classifModelCreateFun,
                          args.only_classif_metric_output if args.only_classif_metric_output else None)
 
     else:
@@ -953,6 +999,8 @@ def parseArgs(argv):
                           help='what lr is used for the classification net (for adam)')
     group_supervised_metric.add_argument('--classifTrainEpochs', type=int, default=30,
                           help='how many epochs to perform during classification model training')
+    group_supervised_metric.add_argument('--classifBatch', type=int, default=16,
+                          help='how big batch to use for classification task')
 
     group_save = parser.add_argument_group('Save')
     group_save.add_argument('--pathCheckpoint', type=str, default=None,
