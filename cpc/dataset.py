@@ -50,9 +50,8 @@ class AudioBatchData(Dataset):
         self.dbPath = Path(path)
         self.sizeWindow = sizeWindow
         self.seqNames = [(s, self.dbPath / x) for s, x in seqNames]
-        self.seqRelNames = [x for s, x in seqNames]  # only sequence realtive names
-        self.reload_pool = Pool(nProcessLoader)
-        # self.reload_pool = dummy.Pool(1) #Pool(nProcessLoader)
+        #self.reload_pool = Pool(nProcessLoader)
+        self.reload_pool = dummy.Pool(nProcessLoader)
 
         self.prepare()
         self.speakers = list(range(nSpeakers))
@@ -137,8 +136,7 @@ class AudioBatchData(Dataset):
         if self.nextPack == 0 and len(self.packageIndex) > 1:
             self.prepare()
         self.r = self.reload_pool.map_async(loadFile,
-                                            zip(self.seqNames[seqStart:seqEnd],
-                                            self.seqRelNames[seqStart:seqEnd]))
+                                            self.seqNames[seqStart:seqEnd])
 
     def parseNextDataBlock(self):
 
@@ -153,7 +151,7 @@ class AudioBatchData(Dataset):
         self.nextData.sort(key=lambda x: (x[0], x[1]))
         tmpData = []
 
-        for speaker, seqName, seqRelName, seq in self.nextData:
+        for speaker, seqName, seq in self.nextData:
             while self.speakers[indexSpeaker] < speaker:
                 indexSpeaker += 1
                 self.speakerLabel.append(speakerSize)
@@ -264,16 +262,14 @@ class AudioBatchData(Dataset):
 
 
 def loadFile(data):
-    seqName, seqRelName = data
-    speaker, fullPath = seqName
+    speaker, fullPath = data
     seqName = fullPath.stem
     # Due to some issues happening when combining torchaudio.load
     # with torch.multiprocessing we use soundfile to load the data
     seq = torch.tensor(sf.read(str(fullPath))[0]).float()
     if len(seq.size()) == 2:
         seq = seq.mean(dim=1)
-    # TODO also return phoneme labels here, or at least as an option
-    return speaker, seqName, seqRelName, seq
+    return speaker, seqName, seq
 
 
 class AudioLoader(object):
