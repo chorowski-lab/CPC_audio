@@ -335,8 +335,8 @@ def run(performTraining,
         
         captureLoader = captureDataset.getDataLoader(batchSize, 'sequential', False,
                                                 numWorkers=0)
-        print(f"Capturing data for epoch {startEpoch}")
-        captureStep(captureLoader, cpcModel, cpcCriterion, captureOptions, startEpoch)
+        print(f"Capturing data for model checkpoint after epoch: {startEpoch-1}")
+        captureStep(captureLoader, cpcModel, cpcCriterion, captureOptions, startEpoch-1)
 
 
 def main(args):
