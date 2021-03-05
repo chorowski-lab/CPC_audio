@@ -204,6 +204,9 @@ def captureStep(
     epochDir = os.path.join(capturePath, str(epochNr))
     if not os.path.exists(epochDir):
         os.makedirs(epochDir)
+    for sub in whatToSave:
+        if not os.path.exists(os.path.join(epochDir, sub)):
+            os.makedirs(os.path.join(epochDir, sub))
 
     for step, fulldata in enumerate(dataLoader):
 
@@ -222,11 +225,15 @@ def captureStep(
             # which is there as dataLoader is a sequential one here
             if 'repr' in whatToSave:
                 # encoded data shape: batch_size x len x repr_dim
-                torch.save(encoded_data.cpu(), os.path.join(epochDir, f'repr_batch{batchBegin}-{batchEnd}.pt'))
+                torch.save(encoded_data.cpu(), os.path.join(epochDir, 'repr', f'repr_batch{batchBegin}-{batchEnd}.pt'))
+            if 'ctx' in whatToSave:
+                # ctx data shape: also batch_size x len x repr_dim
+                torch.save(c_feature.cpu(), os.path.join(epochDir, 'ctx', f'ctx_batch{batchBegin}-{batchEnd}.pt'))
             for cpcCaptureThing in cpcCaptureOpts:
                 # pred shape (CPC-CTC): batch_size x (len - num_matched) x repr_dim x num_predicts
                 # align shape (CPC-CTC): batch_size x (len - num_matched) x num_matched
-                torch.save(captured[cpcCaptureThing].cpu(), os.path.join(epochDir, f'{cpcCaptureThing}_batch{batchBegin}-{batchEnd}.pt'))
+                torch.save(captured[cpcCaptureThing].cpu(), os.path.join(epochDir, cpcCaptureThing, 
+                            f'{cpcCaptureThing}_batch{batchBegin}-{batchEnd}.pt'))
 
             # TODO maybe later can write that with process pool or something??? but not even sure if makes sense
 
@@ -387,7 +394,7 @@ def main(args):
     if args.pathCaptureDS is not None:
         assert args.pathCaptureSave is not None
         whatToSave = []
-        for argVal, name in zip([args.saveRepr, args.savePred, args.saveAlign], ['repr', 'pred', 'align']):
+        for argVal, name in zip([args.saveRepr, args.saveCtx, args.savePred, args.saveAlign], ['repr', 'ctx', 'pred', 'align']):
             if argVal:
                 whatToSave.append(name)
         assert len(whatToSave) > 0
@@ -616,6 +623,7 @@ def parseArgs(argv):
     group_save.add_argument('--pathCaptureSave', type=str, default=None, )
     group_save.add_argument('--captureEachEpochs', type=int, default=10, help='how often to save capture data')
     group_save.add_argument('--saveRepr', action='store_true', help='if to save representations after the encoder')
+    group_save.add_argument('--saveCtx', action='store_true', help='if to save LSTM-based contexts produced in CPC model')
     group_save.add_argument('--savePred', action='store_true', help='if to save CPC predictions')
     group_save.add_argument('--saveAlign', action='store_true', help='if to save CTC alignments with CPC predictions - only for CPC-CTC variant')
     # end of capturing data part here
