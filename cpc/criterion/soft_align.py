@@ -330,9 +330,9 @@ class CPCUnsupersivedCriterion(BaseCriterion):
             captureRes = {}
             if 'pred' in captureOptions:
                 # need to remove 'predict self loop' stuff from captured data
-                captureRes['pred'] = predictions[:,:,:,1:].cpu()
+                captureRes['pred'] = predictions[:,:,:,1:]
             if 'align' in captureOptions:
                 readableAligns = aligns.view(batchSize, windowSize, self.nMatched)
-                captureRes['align'] = readableAligns.cpu()
+                captureRes['align'] = readableAligns
 
         return losses, outAcc, captureRes
