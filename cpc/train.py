@@ -230,7 +230,7 @@ def captureStep(
                 # ctx data shape: also batch_size x len x repr_dim
                 torch.save(c_feature.cpu(), os.path.join(epochDir, 'ctx', f'ctx_batch{batchBegin}-{batchEnd}.pt'))
             for cpcCaptureThing in cpcCaptureOpts:
-                # pred shape (CPC-CTC): batch_size x (len - num_matched) x repr_dim x num_predicts
+                # pred shape (CPC-CTC): batch_size x (len - num_matched) x repr_dim x num_predicts (or num_predicts +1 if self loop allowed)
                 # align shape (CPC-CTC): batch_size x (len - num_matched) x num_matched
                 torch.save(captured[cpcCaptureThing].cpu(), os.path.join(epochDir, cpcCaptureThing, 
                             f'{cpcCaptureThing}_batch{batchBegin}-{batchEnd}.pt'))
@@ -242,8 +242,7 @@ def captureStep(
     return
 
 
-def run(performTraining,
-        trainDataset,
+def run(trainDataset,
         valDataset,
         captureDatasetWithOptions,
         batchSize,
@@ -257,86 +256,96 @@ def run(performTraining,
         logs):
 
     startEpoch = len(logs["epoch"])
-    if performTraining:
-        print(f"Running {nEpoch} epochs")
-        bestAcc = 0
-        bestStateDict = None
-        start_time = time.time()
+    print(f"Running {nEpoch} epochs, now at {startEpoch}")
+    bestAcc = 0
+    bestStateDict = None
+    start_time = time.time()
+
     captureDataset, captureOptions = captureDatasetWithOptions
     assert (captureDataset is None and captureOptions is None) \
         or (captureDataset is not None and captureOptions is not None)
     if captureOptions is not None:
         captureEachEpochs = captureOptions['eachEpochs']
+
     print(f'DS sizes: train {str(len(trainDataset)) if trainDataset is not None else "-"}, '
         f'val {str(len(valDataset)) if valDataset is not None else "-"}, capture '
         f'{str(len(captureDataset)) if captureDataset is not None else "-"}')
 
-    if performTraining:
-        for epoch in range(startEpoch, nEpoch):
+    for epoch in range(startEpoch, nEpoch):
 
-            print(f"Starting epoch {epoch}")
-            utils.cpu_stats()
+        print(f"Starting epoch {epoch}")
+        utils.cpu_stats()
 
-            trainLoader = trainDataset.getDataLoader(batchSize, samplingMode,
-                                                    True, numWorkers=0)
-            
-            valLoader = valDataset.getDataLoader(batchSize, 'sequential', False,
-                                                numWorkers=0)
-            
-            if captureDataset is not None and epoch % captureEachEpochs == 0:
-                captureLoader = captureDataset.getDataLoader(batchSize, 'sequential', False,
-                                                    numWorkers=0)
-            
-            print("Training dataset %d batches, Validation dataset %d batches, batch size %d" %
-                (len(trainLoader), len(valLoader), batchSize))
-
-            locLogsTrain = trainStep(trainLoader, cpcModel, cpcCriterion,
-                                    optimizer, scheduler, logs["logging_step"])
-
-            locLogsVal = valStep(valLoader, cpcModel, cpcCriterion)
-
-            if captureDataset is not None and epoch % captureEachEpochs == 0:
-                print(f"Capturing data for epoch {epoch}")
-                captureStep(captureLoader, cpcModel, cpcCriterion, captureOptions, epoch)
-
-            print(f'Ran {epoch + 1} epochs '
-                f'in {time.time() - start_time:.2f} seconds')
-
-            torch.cuda.empty_cache()
-
-            currentAccuracy = float(locLogsVal["locAcc_val"].mean())
-            if currentAccuracy > bestAcc:
-                bestStateDict = fl.get_module(cpcModel).state_dict()
-
-            for key, value in dict(locLogsTrain, **locLogsVal).items():
-                if key not in logs:
-                    logs[key] = [None for x in range(epoch)]
-                if isinstance(value, np.ndarray):
-                    value = value.tolist()
-                logs[key].append(value)
-
-            logs["epoch"].append(epoch)
-
-            if pathCheckpoint is not None \
-                    and (epoch % logs["saveStep"] == 0 or epoch == nEpoch-1):
-
-                modelStateDict = fl.get_module(cpcModel).state_dict()
-                criterionStateDict = fl.get_module(cpcCriterion).state_dict()
-
-                fl.save_checkpoint(modelStateDict, criterionStateDict,
-                                optimizer.state_dict(), bestStateDict,
-                                f"{pathCheckpoint}_{epoch}.pt")
-                utils.save_logs(logs, pathCheckpoint + "_logs.json")
-    else:
-        assert (captureDataset is not None and captureOptions is not None)
+        trainLoader = trainDataset.getDataLoader(batchSize, samplingMode,
+                                                True, numWorkers=0)
         
-        # here we ignore num epochs, epoch frequency to log etc. - just capturing data
-        # for the model training saved in the provided checkpoint
+        valLoader = valDataset.getDataLoader(batchSize, 'sequential', False,
+                                            numWorkers=0)
         
-        captureLoader = captureDataset.getDataLoader(batchSize, 'sequential', False,
+        if captureDataset is not None and epoch % captureEachEpochs == 0:
+            captureLoader = captureDataset.getDataLoader(batchSize, 'sequential', False,
                                                 numWorkers=0)
-        print(f"Capturing data for model checkpoint after epoch: {startEpoch-1}")
-        captureStep(captureLoader, cpcModel, cpcCriterion, captureOptions, startEpoch-1)
+        
+        print("Training dataset %d batches, Validation dataset %d batches, batch size %d" %
+            (len(trainLoader), len(valLoader), batchSize))
+
+        locLogsTrain = trainStep(trainLoader, cpcModel, cpcCriterion,
+                                optimizer, scheduler, logs["logging_step"])
+
+        locLogsVal = valStep(valLoader, cpcModel, cpcCriterion)
+
+        if captureDataset is not None and epoch % captureEachEpochs == 0:
+            print(f"Capturing data for epoch {epoch}")
+            captureStep(captureLoader, cpcModel, cpcCriterion, captureOptions, epoch)
+
+        print(f'Ran {epoch + 1} epochs '
+            f'in {time.time() - start_time:.2f} seconds')
+
+        torch.cuda.empty_cache()
+
+        currentAccuracy = float(locLogsVal["locAcc_val"].mean())
+        if currentAccuracy > bestAcc:
+            bestStateDict = fl.get_module(cpcModel).state_dict()
+
+        for key, value in dict(locLogsTrain, **locLogsVal).items():
+            if key not in logs:
+                logs[key] = [None for x in range(epoch)]
+            if isinstance(value, np.ndarray):
+                value = value.tolist()
+            logs[key].append(value)
+
+        logs["epoch"].append(epoch)
+
+        if pathCheckpoint is not None \
+                and (epoch % logs["saveStep"] == 0 or epoch == nEpoch-1):
+
+            modelStateDict = fl.get_module(cpcModel).state_dict()
+            criterionStateDict = fl.get_module(cpcCriterion).state_dict()
+
+            fl.save_checkpoint(modelStateDict, criterionStateDict,
+                            optimizer.state_dict(), bestStateDict,
+                            f"{pathCheckpoint}_{epoch}.pt")
+            utils.save_logs(logs, pathCheckpoint + "_logs.json")
+
+
+def onlyCapture(
+        captureDatasetWithOptions,
+        batchSize,
+        cpcModel,
+        cpcCriterion,
+        logs
+):
+    startEpoch = len(logs["epoch"])
+    captureDataset, captureOptions = captureDatasetWithOptions
+    assert (captureDataset is not None and captureOptions is not None)
+    if captureOptions is not None:
+        captureEachEpochs = captureOptions['eachEpochs']
+    print(f'Capture DS size: {str(len(captureDataset))}')
+
+    captureLoader = captureDataset.getDataLoader(batchSize, 'sequential', False,
+                                                numWorkers=0)
+    print(f"Capturing data for model checkpoint after epoch: {startEpoch-1}")
+    captureStep(captureLoader, cpcModel, cpcCriterion, captureOptions, startEpoch-1)
 
 
 def main(args):
@@ -541,19 +550,26 @@ def main(args):
     cpcCriterion = torch.nn.DataParallel(cpcCriterion,
                                          device_ids=range(args.nGPU)).cuda()
     
-    run(True if not args.onlyCapture else False,
-        trainDataset,
-        valDataset,
-        (captureDataset, captureOptions),
-        batchSize,
-        args.samplingType,
-        cpcModel,
-        cpcCriterion,
-        args.nEpoch,
-        args.pathCheckpoint,
-        optimizer,
-        scheduler,
-        logs)
+    if not args.onlyCapture:
+        run(trainDataset,
+            valDataset,
+            (captureDataset, captureOptions),
+            batchSize,
+            args.samplingType,
+            cpcModel,
+            cpcCriterion,
+            args.nEpoch,
+            args.pathCheckpoint,
+            optimizer,
+            scheduler,
+            logs)
+    else:
+        onlyCapture(
+            (captureDataset, captureOptions),
+            batchSize,
+            cpcModel,
+            cpcCriterion,
+            logs)
 
 
 def parseArgs(argv):

@@ -329,8 +329,8 @@ class CPCUnsupersivedCriterion(BaseCriterion):
                 assert o in ('pred', 'align')
             captureRes = {}
             if 'pred' in captureOptions:
-                # need to remove 'predict self loop' stuff from captured data
-                captureRes['pred'] = predictions[:,:,:,1:]
+                # 1st sting in last dim can be self loop - need to keep as it's also being aligned
+                captureRes['pred'] = predictions
             if 'align' in captureOptions:
                 readableAligns = aligns.view(batchSize, windowSize, self.nMatched)
                 captureRes['align'] = readableAligns
