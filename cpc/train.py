@@ -100,7 +100,7 @@ def trainStep(dataLoader,
         batchData = batchData.cuda(non_blocking=True)
         label = label.cuda(non_blocking=True)
         c_feature, encoded_data, label = cpcModel(batchData, label)
-        allLosses, allAcc = cpcCriterion(c_feature, encoded_data, label)
+        allLosses, allAcc, _ = cpcCriterion(c_feature, encoded_data, label, None)
         totLoss = allLosses.sum()
 
         totLoss.backward()
@@ -158,7 +158,7 @@ def valStep(dataLoader,
 
         with torch.no_grad():
             c_feature, encoded_data, label = cpcModel(batchData, label)
-            allLosses, allAcc = cpcCriterion(c_feature, encoded_data, label)
+            allLosses, allAcc, _ = cpcCriterion(c_feature, encoded_data, label, None)
 
         if "locLoss_val" not in logs:
             logs["locLoss_val"] = np.zeros(allLosses.size(1))
@@ -174,8 +174,77 @@ def valStep(dataLoader,
     return logs
 
 
+def captureStep(
+            dataLoader,
+            cpcModel,
+            cpcCriterion,
+            captureOptions,
+            epochNr):
+
+    cpcCriterion.eval()
+    cpcModel.eval()
+    logs = {}
+    cpcCriterion.eval()
+    cpcModel.eval()
+    iter = 0
+
+    capturePath = captureOptions['path']
+    whatToSave = captureOptions['what']
+    cpcCaptureOpts = []
+    if 'pred' in whatToSave:
+        cpcCaptureOpts.append('pred')
+    if 'align' in whatToSave:
+        cpcCaptureOpts.append('align')
+
+    # they merge (perhaps each speaker's) audio into one long chunk
+    # and AFAIU sample can begin in one file and end in other one
+    # so won't try to mess up with tracking filenames, saving samples just as 1, 2, etc.
+
+    batchBegin = 0
+    epochDir = os.path.join(capturePath, str(epochNr))
+    if not os.path.exists(epochDir):
+        os.makedirs(epochDir)
+    for sub in whatToSave:
+        if not os.path.exists(os.path.join(epochDir, sub)):
+            os.makedirs(os.path.join(epochDir, sub))
+
+    for step, fulldata in enumerate(dataLoader):
+
+        batchData, label = fulldata
+        batchEnd = batchBegin + batchData.shape[0] - 1
+
+        batchData = batchData.cuda(non_blocking=True)
+        label = label.cuda(non_blocking=True)
+
+        with torch.no_grad():
+
+            c_feature, encoded_data, label = cpcModel(batchData, label)
+            allLosses, allAcc, captured = cpcCriterion(c_feature, encoded_data, label, cpcCaptureOpts)
+        
+            # saving it with IDs like that assumes deterministic order of elements
+            # which is there as dataLoader is a sequential one here
+            if 'repr' in whatToSave:
+                # encoded data shape: batch_size x len x repr_dim
+                torch.save(encoded_data.cpu(), os.path.join(epochDir, 'repr', f'repr_batch{batchBegin}-{batchEnd}.pt'))
+            if 'ctx' in whatToSave:
+                # ctx data shape: also batch_size x len x repr_dim
+                torch.save(c_feature.cpu(), os.path.join(epochDir, 'ctx', f'ctx_batch{batchBegin}-{batchEnd}.pt'))
+            for cpcCaptureThing in cpcCaptureOpts:
+                # pred shape (CPC-CTC): batch_size x (len - num_matched) x repr_dim x num_predicts (or num_predicts +1 if self loop allowed)
+                # align shape (CPC-CTC): batch_size x (len - num_matched) x num_matched
+                torch.save(captured[cpcCaptureThing].cpu(), os.path.join(epochDir, cpcCaptureThing, 
+                            f'{cpcCaptureThing}_batch{batchBegin}-{batchEnd}.pt'))
+
+            # TODO maybe later can write that with process pool or something??? but not even sure if makes sense
+
+        batchBegin += batchData.shape[0]
+
+    return
+
+
 def run(trainDataset,
         valDataset,
+        captureDatasetWithOptions,
         batchSize,
         samplingMode,
         cpcModel,
@@ -186,11 +255,21 @@ def run(trainDataset,
         scheduler,
         logs):
 
-    print(f"Running {nEpoch} epochs")
     startEpoch = len(logs["epoch"])
+    print(f"Running {nEpoch} epochs, now at {startEpoch}")
     bestAcc = 0
     bestStateDict = None
     start_time = time.time()
+
+    captureDataset, captureOptions = captureDatasetWithOptions
+    assert (captureDataset is None and captureOptions is None) \
+        or (captureDataset is not None and captureOptions is not None)
+    if captureOptions is not None:
+        captureEachEpochs = captureOptions['eachEpochs']
+
+    print(f'DS sizes: train {str(len(trainDataset)) if trainDataset is not None else "-"}, '
+        f'val {str(len(valDataset)) if valDataset is not None else "-"}, capture '
+        f'{str(len(captureDataset)) if captureDataset is not None else "-"}')
 
     for epoch in range(startEpoch, nEpoch):
 
@@ -198,21 +277,29 @@ def run(trainDataset,
         utils.cpu_stats()
 
         trainLoader = trainDataset.getDataLoader(batchSize, samplingMode,
-                                                 True, numWorkers=0)
-
+                                                True, numWorkers=0)
+        
         valLoader = valDataset.getDataLoader(batchSize, 'sequential', False,
-                                             numWorkers=0)
-
+                                            numWorkers=0)
+        
+        if captureDataset is not None and epoch % captureEachEpochs == 0:
+            captureLoader = captureDataset.getDataLoader(batchSize, 'sequential', False,
+                                                numWorkers=0)
+        
         print("Training dataset %d batches, Validation dataset %d batches, batch size %d" %
-              (len(trainLoader), len(valLoader), batchSize))
+            (len(trainLoader), len(valLoader), batchSize))
 
         locLogsTrain = trainStep(trainLoader, cpcModel, cpcCriterion,
-                                 optimizer, scheduler, logs["logging_step"])
+                                optimizer, scheduler, logs["logging_step"])
 
         locLogsVal = valStep(valLoader, cpcModel, cpcCriterion)
 
+        if captureDataset is not None and epoch % captureEachEpochs == 0:
+            print(f"Capturing data for epoch {epoch}")
+            captureStep(captureLoader, cpcModel, cpcCriterion, captureOptions, epoch)
+
         print(f'Ran {epoch + 1} epochs '
-              f'in {time.time() - start_time:.2f} seconds')
+            f'in {time.time() - start_time:.2f} seconds')
 
         torch.cuda.empty_cache()
 
@@ -236,12 +323,38 @@ def run(trainDataset,
             criterionStateDict = fl.get_module(cpcCriterion).state_dict()
 
             fl.save_checkpoint(modelStateDict, criterionStateDict,
-                               optimizer.state_dict(), bestStateDict,
-                               f"{pathCheckpoint}_{epoch}.pt")
+                            optimizer.state_dict(), bestStateDict,
+                            f"{pathCheckpoint}_{epoch}.pt")
             utils.save_logs(logs, pathCheckpoint + "_logs.json")
 
 
+def onlyCapture(
+        captureDatasetWithOptions,
+        batchSize,
+        cpcModel,
+        cpcCriterion,
+        logs
+):
+    startEpoch = len(logs["epoch"])
+    captureDataset, captureOptions = captureDatasetWithOptions
+    assert (captureDataset is not None and captureOptions is not None)
+    if captureOptions is not None:
+        captureEachEpochs = captureOptions['eachEpochs']
+    print(f'Capture DS size: {str(len(captureDataset))}')
+
+    captureLoader = captureDataset.getDataLoader(batchSize, 'sequential', False,
+                                                numWorkers=0)
+    print(f"Capturing data for model checkpoint after epoch: {startEpoch-1}")
+    captureStep(captureLoader, cpcModel, cpcCriterion, captureOptions, startEpoch-1)
+
+
 def main(args):
+
+    # import ptvsd
+    # ptvsd.enable_attach(('0.0.0.0', 7309))
+    # print("Attach debugger now")
+    # ptvsd.wait_for_attach()
+
     args = parseArgs(args)
 
     utils.set_seed(args.random_seed)
@@ -271,53 +384,92 @@ def main(args):
                                      extension=args.file_extension,
                                      loadCache=not args.ignore_cache)
 
-    print(f'Found files: {len(seqNames)} seqs, {len(speakers)} speakers')
-    # Datasets
-    if args.pathTrain is not None:
-        seqTrain = filterSeqs(args.pathTrain, seqNames)
+    if not args.onlyCapture:
+        print(f'Found files: {len(seqNames)} seqs, {len(speakers)} speakers')
+        # Datasets
+        if args.pathTrain is not None:
+            seqTrain = filterSeqs(args.pathTrain, seqNames)
+        else:
+            seqTrain = seqNames
+
+        if args.pathVal is None:
+            random.shuffle(seqTrain)
+            sizeTrain = int(0.99 * len(seqTrain))
+            seqTrain, seqVal = seqTrain[:sizeTrain], seqTrain[sizeTrain:]
+            print(f'Found files: {len(seqTrain)} train, {len(seqVal)} val')
+        else:
+            seqVal = filterSeqs(args.pathVal, seqNames)
+
+    if args.pathCaptureDS is not None:
+        assert args.pathCaptureSave is not None
+        whatToSave = []
+        for argVal, name in zip([args.saveRepr, args.saveCtx, args.savePred, args.saveAlign], ['repr', 'ctx', 'pred', 'align']):
+            if argVal:
+                whatToSave.append(name)
+        assert len(whatToSave) > 0
+        captureOptions = {
+            'path': args.pathCaptureSave,
+            'eachEpochs': args.captureEachEpochs,
+            'what': whatToSave
+        }
+        seqCapture = filterSeqs(args.pathCaptureDS, seqNames, 
+                                percentage=args.captureDSfreq, totalNum=args.captureDStotNr)
+        print(f'Capture files: {len(seqCapture)}')
     else:
-        seqTrain = seqNames
+        seqCapture = None
+        captureOptions = None
 
-    if args.pathVal is None:
-        random.shuffle(seqTrain)
-        sizeTrain = int(0.99 * len(seqTrain))
-        seqTrain, seqVal = seqTrain[:sizeTrain], seqTrain[sizeTrain:]
-        print(f'Found files: {len(seqTrain)} train, {len(seqVal)} val')
+    if not args.onlyCapture:
+        if args.debug:
+            seqTrain = seqTrain[-1000:]
+            seqVal = seqVal[-100:]
+
+        phoneLabels, nPhones = None, None
+        # TODO implement label usage in some less horrible format
+        if args.supervised and args.pathPhone is not None:
+            print("Loading the phone labels at " + args.pathPhone)
+            phoneLabels, nPhones = parseSeqLabels(args.pathPhone)
+            print(f"{nPhones} phones found")
+
+        print("")
+        print(f'Loading audio data at {args.pathDB}')
+        print("Loading the training dataset")
+        trainDataset = AudioBatchData(args.pathDB,
+                                    args.sizeWindow,
+                                    seqTrain,
+                                    phoneLabels,
+                                    len(speakers),
+                                    nProcessLoader=args.n_process_loader,
+                                    MAX_SIZE_LOADED=args.max_size_loaded)
+        print("Training dataset loaded")
+        print("")
+
+        print("Loading the validation dataset")
+        valDataset = AudioBatchData(args.pathDB,
+                                    args.sizeWindow,
+                                    seqVal,
+                                    phoneLabels,
+                                    len(speakers),
+                                    nProcessLoader=args.n_process_loader)
+        print("Validation dataset loaded")
+        print("")
     else:
-        seqVal = filterSeqs(args.pathVal, seqNames)
+        phoneLabels, nPhones = None, None
+        trainDataset = None
+        valDataset = None
 
-    if args.debug:
-        seqTrain = seqTrain[-1000:]
-        seqVal = seqVal[-100:]
-
-    phoneLabels, nPhones = None, None
-    if args.supervised and args.pathPhone is not None:
-        print("Loading the phone labels at " + args.pathPhone)
-        phoneLabels, nPhones = parseSeqLabels(args.pathPhone)
-        print(f"{nPhones} phones found")
-
-    print("")
-    print(f'Loading audio data at {args.pathDB}')
-    print("Loading the training dataset")
-    trainDataset = AudioBatchData(args.pathDB,
-                                  args.sizeWindow,
-                                  seqTrain,
-                                  phoneLabels,
-                                  len(speakers),
-                                  nProcessLoader=args.n_process_loader,
-                                  MAX_SIZE_LOADED=args.max_size_loaded)
-    print("Training dataset loaded")
-    print("")
-
-    print("Loading the validation dataset")
-    valDataset = AudioBatchData(args.pathDB,
-                                args.sizeWindow,
-                                seqVal,
-                                phoneLabels,
-                                len(speakers),
-                                nProcessLoader=args.n_process_loader)
-    print("Validation dataset loaded")
-    print("")
+    if seqCapture is not None:
+        print("Loading the capture dataset")
+        captureDataset = AudioBatchData(args.pathDB,
+                                    args.sizeWindow,
+                                    seqCapture,
+                                    phoneLabels,
+                                    len(speakers),
+                                    nProcessLoader=args.n_process_loader)
+        print("Capture dataset loaded")
+        print("")
+    else:
+        captureDataset = None
 
     if args.load is not None:
         cpcModel, args.hiddenGar, args.hiddenEncoder = \
@@ -348,7 +500,7 @@ def main(args):
 
     cpcCriterion.cuda()
     cpcModel.cuda()
-
+    
     # Optimizer
     g_params = list(cpcCriterion.parameters()) + list(cpcModel.parameters())
 
@@ -398,22 +550,33 @@ def main(args):
     cpcCriterion = torch.nn.DataParallel(cpcCriterion,
                                          device_ids=range(args.nGPU)).cuda()
     
-    run(trainDataset,
-        valDataset,
-        batchSize,
-        args.samplingType,
-        cpcModel,
-        cpcCriterion,
-        args.nEpoch,
-        args.pathCheckpoint,
-        optimizer,
-        scheduler,
-        logs)
+    if not args.onlyCapture:
+        run(trainDataset,
+            valDataset,
+            (captureDataset, captureOptions),
+            batchSize,
+            args.samplingType,
+            cpcModel,
+            cpcCriterion,
+            args.nEpoch,
+            args.pathCheckpoint,
+            optimizer,
+            scheduler,
+            logs)
+    else:
+        onlyCapture(
+            (captureDataset, captureOptions),
+            batchSize,
+            cpcModel,
+            cpcCriterion,
+            logs)
 
 
 def parseArgs(argv):
     # Run parameters
     parser = argparse.ArgumentParser(description='Trainer')
+
+    print(len(argv))
 
     # Default arguments:
     parser = set_default_cpc_config(parser)
@@ -430,6 +593,19 @@ def parseArgs(argv):
     group_db.add_argument('--pathVal', type=str, default=None,
                           help='Path to a .txt file containing the list of the '
                           'validation sequences.')
+    # stuff below for capturing data
+    group_db.add_argument('--onlyCapture', action='store_true',
+                          help='Only capture data from learned model for one epoch, ignore training; '
+                          'conflicts with pathTrain, pathVal etc. arguments')
+    group_db.add_argument('--pathCaptureDS', type=str, default=None,
+                          help='Path to a .txt file containing the list of the '
+                          'data capturing sequences; additionally it can be specified to log a total number of N, or n percent of set '
+                          '(e.g. pass validation path and specify to sample from that)')
+    group_db.add_argument('--captureDSfreq', type=int, default=None,
+                          help='percentage of pathCaptureDS set to use for capturing; conflicts with --captureDStotNr')
+    group_db.add_argument('--captureDStotNr', type=int, default=None,
+                          help='total number of data points to capture data for; conflicts with --captureDSfreq')
+    # end of capturing data part here
     group_db.add_argument('--n_process_loader', type=int, default=8,
                           help='Number of processes to call to load the '
                           'dataset')
@@ -459,6 +635,14 @@ def parseArgs(argv):
     group_save.add_argument('--save_step', type=int, default=5,
                             help="Frequency (in epochs) at which a checkpoint "
                             "should be saved")
+    # stuff below for capturing data
+    group_save.add_argument('--pathCaptureSave', type=str, default=None, )
+    group_save.add_argument('--captureEachEpochs', type=int, default=10, help='how often to save capture data')
+    group_save.add_argument('--saveRepr', action='store_true', help='if to save representations after the encoder')
+    group_save.add_argument('--saveCtx', action='store_true', help='if to save LSTM-based contexts produced in CPC model')
+    group_save.add_argument('--savePred', action='store_true', help='if to save CPC predictions')
+    group_save.add_argument('--saveAlign', action='store_true', help='if to save CTC alignments with CPC predictions - only for CPC-CTC variant')
+    # end of capturing data part here
 
     group_load = parser.add_argument_group('Load')
     group_load.add_argument('--load', type=str, default=None, nargs='*',

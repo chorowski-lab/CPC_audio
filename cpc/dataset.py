@@ -182,6 +182,7 @@ class AudioBatchData(Dataset):
         return idSpeaker
 
     def __len__(self):
+        # all audio is glued together, totSize is num of frames and sizeWindow is perhaps sample size
         return self.totSize // self.sizeWindow
 
     def __getitem__(self, idx):
@@ -504,7 +505,8 @@ def parseSeqLabels(pathLabels):
     return output, maxPhone + 1
 
 
-def filterSeqs(pathTxt, seqCouples):
+def filterSeqs(pathTxt, seqCouples, percentage=None, totalNum=None):
+    assert(percentage is None or totalNum is None)
     with open(pathTxt, 'r') as f:
         inSeqs = [p.replace('\n', '') for p in f.readlines()]
 
@@ -519,4 +521,24 @@ def filterSeqs(pathTxt, seqCouples):
             break
         if seq == inSeqs[index]:
             output.append(x)
+    if percentage is not None:
+        assert(percentage < 100)
+        originalOutput = output
+        output = []
+        for i, elem in enumerate(originalOutput):
+            if (100. * len(output) / float(i+1)) < float(percentage):
+                output.append(elem)
+    elif totalNum is not None:
+        lastCaptured = -1.
+        lastIdCaptured = -1
+        captureEach = max(float(len(output)) / float(totalNum), 1.)
+        originalOutput = output
+        output = []
+        for i, elem in enumerate(originalOutput):
+            toCapture = int(round(lastCaptured + captureEach))
+            if i == lastIdCaptured or i < toCapture:
+                continue
+            lastIdCaptured = i
+            lastCaptured += captureEach
+            output.append(elem)
     return output
