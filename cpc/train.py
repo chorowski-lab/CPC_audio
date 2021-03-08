@@ -18,6 +18,7 @@ import cpc.criterion.soft_align as sa
 import cpc.model as model
 import cpc.utils.misc as utils
 import cpc.feature_loader as fl
+import cpc.eval.linear_separability as linsep
 from cpc.cpc_default_config import set_default_cpc_config
 from cpc.dataset import AudioBatchData, findAllSeqs, filterSeqs, parseSeqLabels
 
@@ -245,6 +246,7 @@ def captureStep(
 def run(trainDataset,
         valDataset,
         captureDatasetWithOptions,
+        linsepClassificationTaskConfig,
         batchSize,
         samplingMode,
         cpcModel,
@@ -260,8 +262,10 @@ def run(trainDataset,
     bestAcc = 0
     bestStateDict = None
     start_time = time.time()
+    bestCPCepoch = -1
 
     captureDataset, captureOptions = captureDatasetWithOptions
+    linsepEachEpochs, linsepFun = linsepClassificationTaskConfig
     assert (captureDataset is None and captureOptions is None) \
         or (captureDataset is not None and captureOptions is not None)
     if captureOptions is not None:
@@ -298,20 +302,34 @@ def run(trainDataset,
             print(f"Capturing data for epoch {epoch}")
             captureStep(captureLoader, cpcModel, cpcCriterion, captureOptions, epoch)
 
+        currentAccuracy = float(locLogsVal["locAcc_val"].mean())
+        if currentAccuracy > bestAcc:
+            bestStateDict = deepcopy(fl.get_module(cpcModel).state_dict())  # added deepcopy - TODO check
+            bestCPCepoch = epoch
+
+        locLogsLinsep = {}
+        # this performs linsep task for the best CPC model up to date
+        if linsepEachEpochs is not None:
+            #cpcModel.cpu()  # freeing space in cuda for another CPC model, loaded best one
+            # TODO check details how it works, maybe those .cpu() and .cuda() below don't make sense
+            cpcModelCurrentStateDict = deepcopy(fl.get_module(cpcModel).state_dict().cpu())
+            cpcModel.load_state_dict(bestStateDict)
+            locLogsLinsep = linsepFun(epoch, cpcModel, bestCPCepoch)
+            cpcModel.load_state_dict(cpcModelCurrentStateDict.cuda())
+            #cpcModel.cuda()
+
         print(f'Ran {epoch + 1} epochs '
             f'in {time.time() - start_time:.2f} seconds')
 
         torch.cuda.empty_cache()
 
-        currentAccuracy = float(locLogsVal["locAcc_val"].mean())
-        if currentAccuracy > bestAcc:
-            bestStateDict = fl.get_module(cpcModel).state_dict()
-
-        for key, value in dict(locLogsTrain, **locLogsVal).items():
+        for key, value in dict(locLogsTrain, **locLogsVal, **locLogsLinsep).items():
             if key not in logs:
                 logs[key] = [None for x in range(epoch)]
             if isinstance(value, np.ndarray):
                 value = value.tolist()
+            while len(logs[key]) < len(logs["epoch"]):
+                logs[key].append(None)  # for not-every-epoch-logged things
             logs[key].append(value)
 
         logs["epoch"].append(epoch)
@@ -425,7 +443,6 @@ def main(args):
             seqVal = seqVal[-100:]
 
         phoneLabels, nPhones = None, None
-        # TODO implement label usage in some less horrible format
         if args.supervised and args.pathPhone is not None:
             print("Loading the phone labels at " + args.pathPhone)
             phoneLabels, nPhones = parseSeqLabels(args.pathPhone)
@@ -472,9 +489,15 @@ def main(args):
         captureDataset = None
 
     if args.load is not None:
+        loadBestNotLast = args.onlyCapture or args.only_classif_metric_output
+        # added option for loading best state when not running actual training
+        # [!!!] caution / TODO? because of how they capture checkpoints,
+        #       they capture "best in this part of training" as best
+        #       so if best is in epoch 100 and training is paused and resumed from checkpoint
+        #       in epoch 150, checkpoint from epoch 200 has "best from epoch 150" saved as globally best
         cpcModel, args.hiddenGar, args.hiddenEncoder = \
-            fl.loadModel(args.load)
-
+            fl.loadModel(args.load, loadBestNotLast=loadBestNotLast)
+        CPChiddenGar, CPChiddenEncoder = args.hiddenGar, args.hiddenEncoder
     else:
         # Encoder network
         encoderNet = fl.getEncoder(args)
@@ -482,6 +505,8 @@ def main(args):
         arNet = fl.getAR(args)
 
         cpcModel = model.CPCModel(encoderNet, arNet)
+
+        CPChiddenGar, CPChiddenEncoder = cpcModel.gAR.getDimOutput(), cpcModel.gEncoder.getDimOutput()
 
     batchSize = args.nGPU * args.batchSizeGPU
     cpcModel.supervised = args.supervised
@@ -550,10 +575,153 @@ def main(args):
     cpcCriterion = torch.nn.DataParallel(cpcCriterion,
                                          device_ids=range(args.nGPU)).cuda()
     
-    if not args.onlyCapture:
+    if args.supervised_classif_metric:
+
+        linsep_batch_size = args.linsepBatchSizeGPU * args.nGPU
+
+        dim_features = CPChiddenEncoder if args.phone_get_encoded else CPChiddenGar
+
+        if args.path_phone_data:
+            phoneLabelsData, nPhonesInData = parseSeqLabels(args.path_phone_data)
+            
+            if not args.CTCphones:
+                print(f"Running phone separability with aligned phones")
+            else:
+                print(f"Running phone separability with CTC loss")
+
+            phoneme_db_train = AudioBatchData(args.pathDB, args.size_window, seqTrain,
+                                phoneLabelsData, len(speakers))
+            phoneme_db_val = AudioBatchData(args.pathDB, args.size_window, seqVal,
+                                        phoneLabelsData, len(speakers))
+
+            phoneme_train_loader = phoneme_db_train.getDataLoader(linsep_batch_size, "uniform", True,
+                                            numWorkers=0)
+
+            phoneme_val_loader = phoneme_db_val.getDataLoader(linsep_batch_size, 'sequential', False,
+                                        numWorkers=0)
+
+            def constructPhoneCriterionAndOptimizer():
+                if not args.CTCphones:
+                    # print(f"Running phone separability with aligned phones")
+                    phone_criterion = cr.PhoneCriterion(dim_features,
+                                                nPhonesInData, args.phone_get_encoded,
+                                                nLayers=args.linsep_net_layers)
+                else:
+                    # print(f"Running phone separability with CTC loss")
+                    phone_criterion = cr.CTCPhoneCriterion(dim_features,
+                                                    nPhonesInData, args.phone_get_encoded,
+                                                    nLayers=args.linsep_net_layers)
+                phone_criterion.cuda()
+                phone_criterion = torch.nn.DataParallel(phone_criterion, device_ids=range(args.nGPU))
+
+                # Optimizer
+                phone_g_params = list(phone_criterion.parameters())
+
+                phone_optimizer = torch.optim.Adam(phone_g_params, lr=args.linsep_lr,
+                                            betas=(args.linsep_beta1, args.linsep_beta2),
+                                            eps=args.linsep_epsilon)
+                
+                return phone_criterion, phone_optimizer
+        
+        if args.speaker_sep:
+            print(f"Running speaker separability")
+
+            # here phoneLabelsData should be None
+            speaker_db_train = AudioBatchData(args.pathDB, args.size_window, seqTrain,
+                                None, len(speakers))
+            speaker_db_val = AudioBatchData(args.pathDB, args.size_window, seqVal,
+                                        None, len(speakers))
+
+            speaker_train_loader = speaker_db_train.getDataLoader(linsep_batch_size, "uniform", True,
+                                            numWorkers=0)
+
+            speaker_val_loader = speaker_db_val.getDataLoader(linsep_batch_size, 'sequential', False,
+                                        numWorkers=0)
+
+            def constructSpeakerCriterionAndOptimizer():
+                speaker_criterion = cr.SpeakerCriterion(dim_features, len(speakers),
+                                                        nLayers=args.linsep_net_layers)
+                speaker_criterion.cuda()
+                speaker_criterion = torch.nn.DataParallel(speaker_criterion, device_ids=range(args.nGPU))
+
+                speaker_g_params = list(speaker_criterion.parameters())
+
+                speaker_optimizer = torch.optim.Adam(speaker_g_params, lr=args.linsep_lr,
+                                            betas=(args.linsep_beta1, args.linsep_beta2),
+                                            eps=args.linsep_epsilon)
+
+                return speaker_criterion, speaker_optimizer
+
+        
+
+        
+
+        def runLinsepClassificationTraining(numOfEpoch, cpcMdl, cpcBestEpoch):
+            log_path_for_epoch = os.path.join(args.linsep_logs_dir, numOfEpoch)
+            if not os.path.isdir(log_path_for_epoch):
+                os.mkdir(log_path_for_epoch)
+            log_path_phoneme = os.path.join(log_path_for_epoch, "phoneme")
+            log_path_speaker = os.path.join(log_path_for_epoch, "speaker")
+            if not os.path.isdir(log_path_phoneme):
+                os.mkdir(log_path_phoneme)
+            if not os.path.isdir(log_path_speaker):
+                os.mkdir(log_path_speaker)
+            if args.linsep_checkpoint_dir:
+                checpoint_path_for_epoch = os.path.join(args.linsep_checkpoint_dir, numOfEpoch)
+                checkpoint_path_phoneme = os.path.join(checpoint_path_for_epoch, "phoneme")
+                checkpoint_path_speaker = os.path.join(checpoint_path_for_epoch, "speaker")
+                if not os.path.isdir(checkpoint_path_phoneme):
+                    os.mkdir(checkpoint_path_phoneme)
+                if not os.path.isdir(checkpoint_path_speaker):
+                    os.mkdir(checkpoint_path_speaker)
+            locLogsPhone = {}
+            locLogsSpeaker = {}
+            if args.path_phone_data:
+                phone_criterion, phone_optimizer = constructPhoneCriterionAndOptimizer()
+                locLogsPhone = linsep.trainLinsepClassification(
+                    cpcMdl,
+                    phone_criterion,  # combined with classification model before
+                    phoneme_train_loader,
+                    phoneme_val_loader,
+                    phone_optimizer,
+                    log_path_phoneme,
+                    args.linsep_task_logging_step,
+                    checkpoint_path_phoneme,
+                    args.linsep_n_epoch,
+                    cpcBestEpoch)
+                del phone_criterion
+                del phone_optimizer
+            if args.speaker_sep:
+                speaker_criterion, speaker_optimizer = constructSpeakerCriterionAndOptimizer()
+                locLogsSpeaker = linsep.trainLinsepClassification(
+                    cpcMdl,
+                    speaker_criterion,  # combined with classification model before
+                    speaker_train_loader,
+                    speaker_val_loader,
+                    speaker_optimizer,
+                    log_path_speaker,
+                    args.linsep_task_logging_step,
+                    checkpoint_path_speaker,
+                    args.linsep_n_epoch,
+                    cpcBestEpoch)
+                del speaker_criterion
+                del speaker_optimizer
+
+            locLogsPhone = {"phone_" + k: v for k, v in locLogsPhone.items()}
+            locLogsSpeaker = {"speaker_" + k: v for k, v in locLogsSpeaker.items()}
+            return {**locLogsPhone, **locLogsSpeaker}
+
+        linsepClassificationTaskConfig = (args.linsep_classif_each_epochs,
+                                            runLinsepClassificationTraining)
+
+    else:
+        linsepClassificationTaskConfig = (None, None)
+
+    if not args.onlyCapture and not args.only_classif_metric_output:
         run(trainDataset,
             valDataset,
             (captureDataset, captureOptions),
+            linsepClassificationTaskConfig,
             batchSize,
             args.samplingType,
             cpcModel,
@@ -563,13 +731,19 @@ def main(args):
             optimizer,
             scheduler,
             logs)
-    else:
+    if args.onlyCapture:  
+    # caution [!] - see caution note about checkpoint loadBestNotLast
         onlyCapture(
             (captureDataset, captureOptions),
             batchSize,
             cpcModel,
             cpcCriterion,
             logs)
+    if args.only_classif_metric_output:
+    # caution [!] - see caution note about checkpoint loadBestNotLast
+        trainedEpoch = len(logs["epoch"]) - 1
+        # runPhonemeClassificationTraining created above if args.supervised_classif_metric
+        linsepClassificationTaskConfig(trainedEpoch, cpcModel, "none")  # best epoch nr not traced
 
 
 def parseArgs(argv):
@@ -621,13 +795,59 @@ def parseArgs(argv):
                                   help='(Depreciated) Disable the CPC loss and activate '
                                   'the supervised mode. By default, the supervised '
                                   'training method is the speaker classification.')
-    group_supervised.add_argument('--pathPhone', type=str, default=None,
-                                  help='(Supervised mode only) Path to a .txt '
-                                  'containing the phone labels of the dataset. If given '
-                                  'and --supervised, will train the model using a '
-                                  'phone classification task.')
+    # group_supervised.add_argument('--pathPhone', type=str, default=None,
+    #                               help='(Supervised mode only) Path to a .txt '
+    #                               'containing the phone labels of the dataset. If given '
+    #                               'and --supervised, will train the model using a '
+    #                               'phone classification task.')
     group_supervised.add_argument('--CTC', action='store_true')
-
+    # supervised metric
+    group_supervised_metric = parser.add_argument_group(
+        'Mode with computing additional supervised phoneme classification accuracy, withou influencing CPC training')
+    group_supervised_metric.add_argument('--supervised_classif_metric',
+                        action='store_true', help='Compute the metric')
+    group_supervised_metric.add_argument('--path_phone_data', type=str, default=None,
+                        help="Path to the phone labels. If given, will"
+                        " compute the phone separability.")
+    group_supervised_metric.add_argument('--speaker_sep', action='store_true',
+                        help="If given, will"
+                        " compute the speaker separability.")
+    group_supervised_metric.add_argument('--CTCphones', action='store_true',
+                        help="Use the CTC loss (for phone separability only)")
+    group_supervised_metric.add_argument('--linsepBatchSizeGPU', type=int, default=8,
+                        help='Batch size per GPU for phoneme classification.')
+    group_supervised_metric.add_argument('--linsep_n_epoch', type=int, default=10)
+    group_supervised_metric.add_argument('--phone_get_encoded', action='store_true',
+                        help="If activated, will work with the output of the "
+                        " convolutional encoder (see CPC's architecture).")
+    group_supervised_metric.add_argument('--linsep_lr', type=float, default=2e-4,
+                        help='Learning rate for phoneme classification.')
+    group_supervised_metric.add_argument('--linsep_beta1', type=float, default=0.9,
+                        help='Value of beta1 for the Adam optimizer for phoneme classification.')
+    group_supervised_metric.add_argument('--linsep_beta2', type=float, default=0.999,
+                        help='Value of beta2 for the Adam optimizer for phoneme classification.')
+    group_supervised_metric.add_argument('--linsep_epsilon', type=float, default=2e-8,
+                        help='Value of epsilon for the Adam optimizer for phoneme classification.')
+    group_supervised_metric.add_argument('--only_classif_metric_output',
+                        type=str, default=None,
+                        help="Don't train CPC, just compute classification accuracy on given checkpoint "
+                        '(classification net itself is trained) and store in given path; '
+                        'conflicts with regular CPC training; need to specify --supervised_classif_metric '
+                        'and corresponding args')
+    group_supervised_metric.add_argument('--linsep_logs_dir', type=str, default=None,
+                        help='Path (root) where to log more detailed phoneme classification training data.')
+    group_supervised_metric.add_argument('--linsep_checpoint_dir', type=str, default=None,
+                        help='Path (root) where to save best checkpoint for each classification training performed.')
+    group_supervised_metric.add_argument('--linsep_task_logging_step', type=int, default=1,
+                        help='how often to save detailed phoneme classification training data')
+    group_supervised_metric.add_argument('--linsep_classif_each_epochs', type=int, default=20,
+                        help='How often to perform classification task - classification net is then '
+                        'trained on train DS representations and assesed on val DS representations '
+                        'that are produced after that epoch in eval mode')
+    group_supervised_metric.add_argument('--linsep_net_layers', type=str, default='1',
+                        help='Description of how big net to use for classification (layers have num_phonemes neurons) ' 
+                        'with 1, there is just a linear net used without additional hidden layers')
+    
     group_save = parser.add_argument_group('Save')
     group_save.add_argument('--pathCheckpoint', type=str, default=None,
                             help="Path of the output directory.")

@@ -268,11 +268,19 @@ class CPCUnsupersivedCriterion(BaseCriterion):
 
 class SpeakerCriterion(BaseCriterion):
 
-    def __init__(self, dimEncoder, nSpeakers):
+    def __init__(self, dimEncoder, nSpeakers, nLayers=1):
 
         super(SpeakerCriterion, self).__init__()
-        self.linearSpeakerClassifier = nn.Linear(
-            dimEncoder, nSpeakers)
+        # self.linearSpeakerClassifier = nn.Linear(
+        #     dimEncoder, nSpeakers)
+        if nLayers == 1:
+            self.linearSpeakerClassifier = nn.Linear(dimEncoder, nSpeakers)
+        else:
+            outLayers = [nn.Linear(dimEncoder, nSpeakers)]
+            for l in range(nLayers - 1):
+                outLayers.append(nn.ReLU())
+                outLayers.append(nn.Linear(nSpeakers, nSpeakers))
+            self.linearSpeakerClassifier = nn.Sequential(*outLayers)
         self.lossCriterion = nn.CrossEntropyLoss()
         self.entropyCriterion = nn.LogSoftmax(dim=1)
 
@@ -330,10 +338,17 @@ class PhoneCriterion(BaseCriterion):
 
 class CTCPhoneCriterion(BaseCriterion):
 
-    def __init__(self, dimEncoder, nPhones, onEncoder):
+    def __init__(self, dimEncoder, nPhones, onEncoder, nLayers=1):
 
         super(CTCPhoneCriterion, self).__init__()
-        self.PhoneCriterionClassifier = nn.Linear(dimEncoder, nPhones + 1)
+        if nLayers == 1:
+            self.PhoneCriterionClassifier = nn.Linear(dimEncoder, nPhones + 1)
+        else:
+            outLayers = [nn.Linear(dimEncoder, nPhones + 1)]
+            for l in range(nLayers - 1):
+                outLayers.append(nn.ReLU())
+                outLayers.append(nn.Linear(nPhones + 1, nPhones + 1))
+            self.PhoneCriterionClassifier = nn.Sequential(*outLayers)
         self.lossCriterion = nn.CTCLoss(blank=nPhones, zero_infinity=True)
         self.onEncoder = onEncoder
         if onEncoder:
