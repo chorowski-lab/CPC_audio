@@ -191,18 +191,20 @@ class AudioBatchData(Dataset):
             print(idx)
 
         outData = self.data[idx:(self.sizeWindow + idx)].view(1, -1)
-        label = torch.tensor(self.getSpeakerLabel(idx), dtype=torch.long)
+        labelData = {}
+        labelData['speaker'] = torch.tensor(self.getSpeakerLabel(idx), dtype=torch.long)
         if self.phoneSize > 0:
             label_phone = torch.tensor(self.getPhonem(idx), dtype=torch.long)
-            if not self.doubleLabels:
-                label = label_phone
-        else:
-            label_phone = torch.zeros(1)
+            labelData['phone'] = label_phone
+            # if not self.doubleLabels:
+            #     label = label_phone
+        # else:
+        #     label_phone = torch.zeros(1)
 
-        if self.doubleLabels:
-            return outData, label, label_phone
+        # if self.doubleLabels:
+        #     return outData, label, label_phone
 
-        return outData, label
+        return outData, labelData
 
     def getNSpeakers(self):
         return len(self.speakers)
