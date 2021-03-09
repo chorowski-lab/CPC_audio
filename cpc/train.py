@@ -605,6 +605,7 @@ def main(args):
         linsep_batch_size = args.linsepBatchSizeGPU * args.nGPU
 
         dim_features = CPChiddenEncoder if args.phone_get_encoded else CPChiddenGar
+        dim_ctx_features = CPChiddenGar  # for speakers using CNN encodings is not supported; could add but not very useful perhaps
 
         phoneLabelsData = None
         if args.path_phone_data:
@@ -642,7 +643,7 @@ def main(args):
             print(f"Running speaker separability")
 
             def constructSpeakerCriterionAndOptimizer():
-                speaker_criterion = cr.SpeakerCriterion(dim_features, len(speakers),
+                speaker_criterion = cr.SpeakerCriterion(dim_ctx_features, len(speakers),
                                                         nLayers=args.linsep_net_layers)
                 speaker_criterion.cuda()
                 speaker_criterion = torch.nn.DataParallel(speaker_criterion, device_ids=range(args.nGPU))
