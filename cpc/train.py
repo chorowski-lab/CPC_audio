@@ -404,7 +404,7 @@ def main(args):
                                      extension=args.file_extension,
                                      loadCache=not args.ignore_cache)
 
-    if not args.onlyCapture:
+    if not args.onlyCapture or args.only_classif_metric:
         print(f'Found files: {len(seqNames)} seqs, {len(speakers)} speakers')
         # Datasets
         if args.pathTrain is not None:
@@ -429,15 +429,16 @@ def main(args):
                 whatToSave.append('phone_align')
             if args.CPCCTC:
                 whatToSave.append('cpcctc_align')
-        for argVal, name in zip([args.captureRepr, 
-                                 args.captureCtx, 
-                                 args.captureSpeakerAlign, 
-                                 args.capturePhoneAlign, 
-                                 args.capturePred, 
-                                 args.captureCPCCTCalign], 
-                                ['repr', 'ctx', 'speaker_align', 'phone_align', 'pred', 'cpcctc_align']):
-            if argVal:
-                whatToSave.append(name)
+        else:
+            for argVal, name in zip([args.captureRepr, 
+                                    args.captureCtx, 
+                                    args.captureSpeakerAlign, 
+                                    args.capturePhoneAlign, 
+                                    args.capturePred, 
+                                    args.captureCPCCTCalign], 
+                                    ['repr', 'ctx', 'speaker_align', 'phone_align', 'pred', 'cpcctc_align']):
+                if argVal:
+                    whatToSave.append(name)
         assert len(whatToSave) > 0
         captureOptions = {
             'path': args.pathCaptureSave,
@@ -495,7 +496,7 @@ def main(args):
             print("Loading the phone labels at " + args.path_phone_data)
             phoneLabelsForCapture, _ = parseSeqLabels(args.path_phone_data)
         else:
-            assert not args.savePhoneAlign
+            assert not args.capturePhoneAlign
             phoneLabelsForCapture = None
             
         print("Loading the capture dataset")
@@ -605,6 +606,7 @@ def main(args):
 
         dim_features = CPChiddenEncoder if args.phone_get_encoded else CPChiddenGar
 
+        phoneLabelsData = None
         if args.path_phone_data:
             phoneLabelsData, nPhonesInData = parseSeqLabels(args.path_phone_data)
             
@@ -612,17 +614,6 @@ def main(args):
                 print(f"Running phone separability with aligned phones")
             else:
                 print(f"Running phone separability with CTC loss")
-
-            phoneme_db_train = AudioBatchData(args.pathDB, args.sizeWindow, seqTrain,
-                                phoneLabelsData, len(speakers))
-            phoneme_db_val = AudioBatchData(args.pathDB, args.sizeWindow, seqVal,
-                                        phoneLabelsData, len(speakers))
-
-            phoneme_train_loader = phoneme_db_train.getDataLoader(linsep_batch_size, "uniform", True,
-                                            numWorkers=0)
-
-            phoneme_val_loader = phoneme_db_val.getDataLoader(linsep_batch_size, 'sequential', False,
-                                        numWorkers=0)
 
             def constructPhoneCriterionAndOptimizer():
                 if not args.CTCphones:
@@ -650,18 +641,6 @@ def main(args):
         if args.speaker_sep:
             print(f"Running speaker separability")
 
-            # here phoneLabelsData should be None
-            speaker_db_train = AudioBatchData(args.pathDB, args.sizeWindow, seqTrain,
-                                None, len(speakers))
-            speaker_db_val = AudioBatchData(args.pathDB, args.sizeWindow, seqVal,
-                                        None, len(speakers))
-
-            speaker_train_loader = speaker_db_train.getDataLoader(linsep_batch_size, "uniform", True,
-                                            numWorkers=0)
-
-            speaker_val_loader = speaker_db_val.getDataLoader(linsep_batch_size, 'sequential', False,
-                                        numWorkers=0)
-
             def constructSpeakerCriterionAndOptimizer():
                 speaker_criterion = cr.SpeakerCriterion(dim_features, len(speakers),
                                                         nLayers=args.linsep_net_layers)
@@ -676,9 +655,16 @@ def main(args):
 
                 return speaker_criterion, speaker_optimizer
 
-        
+        linsep_db_train = AudioBatchData(args.pathDB, args.sizeWindow, seqTrain,
+                                phoneLabelsData, len(speakers))
+        linsep_db_val = AudioBatchData(args.pathDB, args.sizeWindow, seqVal,
+                                    phoneLabelsData, len(speakers))
 
-        
+        linsep_train_loader = linsep_db_train.getDataLoader(linsep_batch_size, "uniform", True,
+                                        numWorkers=0)
+
+        linsep_val_loader = linsep_db_val.getDataLoader(linsep_batch_size, 'sequential', False,
+                                    numWorkers=0)
 
         def runLinsepClassificationTraining(numOfEpoch, cpcMdl, cpcStateEpoch):
             log_path_for_epoch = os.path.join(args.linsep_logs_dir, str(numOfEpoch))
@@ -705,8 +691,8 @@ def main(args):
                 locLogsPhone = linsep.trainLinsepClassification(
                     cpcMdl,
                     phone_criterion,  # combined with classification model before
-                    phoneme_train_loader,
-                    phoneme_val_loader,
+                    linsep_train_loader,
+                    linsep_val_loader,
                     phone_optimizer,
                     log_path_phoneme,
                     args.linsep_task_logging_step,
@@ -721,8 +707,8 @@ def main(args):
                 locLogsSpeaker = linsep.trainLinsepClassification(
                     cpcMdl,
                     speaker_criterion,  # combined with classification model before
-                    speaker_train_loader,
-                    speaker_val_loader,
+                    linsep_train_loader,
+                    linsep_val_loader,
                     speaker_optimizer,
                     log_path_speaker,
                     args.linsep_task_logging_step,
@@ -808,7 +794,7 @@ def parseArgs(argv):
     group_db.add_argument('--captureDSfreq', type=int, default=None,
                           help='percentage of pathCaptureDS set to use for capturing; conflicts with --captureDStotNr')
     group_db.add_argument('--captureDStotNr', type=int, default=None,
-                          help='total number of data points to capture data for; conflicts with --captureDSfreq')
+                          help='total number of *AUDIO FILES* to capture data for; number of chunks will be different.')
     # end of capturing data part here
     group_db.add_argument('--n_process_loader', type=int, default=8,
                           help='Number of processes to call to load the '
