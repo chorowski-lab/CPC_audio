@@ -316,7 +316,7 @@ def run(trainDataset,
 
         locLogsLinsep = {}
         # this performs linsep task for the best CPC model up to date
-        if linsepEachEpochs is not None and epoch % linsepEachEpochs == 0:
+        if linsepEachEpochs is not None and epoch !=0 and epoch % linsepEachEpochs == 0:
             # capturing for current CPC state after this epoch, relying on CPC internal accuracy is vague
             locLogsLinsep = linsepFun(epoch, cpcModel, epoch)
 
