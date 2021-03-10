@@ -433,7 +433,8 @@ def main(args):
             for argVal, name in zip([args.captureRepr, 
                                     args.captureCtx, 
                                     args.captureSpeakerAlign, 
-                                    args.capturePhoneAlign, 
+                                    args.capturePhoneAlign,
+                                    args.capturePred,
                                     args.captureCPCCTCalign], 
                                     ['repr', 'ctx', 'speaker_align', 'phone_align', 'pred', 'cpcctc_align']):
                 if argVal:
