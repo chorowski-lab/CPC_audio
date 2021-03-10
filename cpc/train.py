@@ -21,6 +21,7 @@ import cpc.feature_loader as fl
 import cpc.eval.linear_separability as linsep
 from cpc.cpc_default_config import set_default_cpc_config
 from cpc.dataset import AudioBatchData, findAllSeqs, filterSeqs, parseSeqLabels
+import cpc.stats.stat_utils as statutil
 
 
 def getCriterion(args, downsampling, nSpeakers, nPhones):
@@ -182,6 +183,7 @@ def captureStep(
             cpcModel,
             cpcCriterion,
             captureOptions,
+            captureStatsCollector,
             epochNr):
 
     cpcCriterion.eval()
@@ -202,6 +204,9 @@ def captureStep(
     # they merge (perhaps each speaker's) audio into one long chunk
     # and AFAIU sample can begin in one file and end in other one
     # so won't try to mess up with tracking filenames, saving samples just as 1, 2, etc.
+
+    if captureStatsCollector:
+        captureStatsCollector.zeroStats()
 
     batchBegin = 0
     epochDir = os.path.join(capturePath, str(epochNr))
@@ -245,10 +250,26 @@ def captureStep(
                 torch.save(captured[cpcCaptureThing].cpu(), os.path.join(epochDir, cpcCaptureThing, 
                             f'{cpcCaptureThing}_batch{batchBegin}-{batchEnd}.pt'))
 
+            if captureStatsCollector:
+
+                allBatchData = {}
+                allBatchData['repr'] = encoded_data
+                allBatchData['ctx'] = c_feature
+                allBatchData['speaker_align'] = labelSpeaker
+                if 'phone' in labelData:
+                    allBatchData['phone_align'] = labelData['phone']
+                # ones below are only ones that need to be captured(saved) in order to be available for stats
+                for cpcCaptureThing in captured:
+                    allBatchData[cpcCaptureThing] = captured[cpcCaptureThing]
+
+                captureStatsCollector.batchUpdate(allBatchData)
+
             # TODO maybe later can write that with process pool or something??? but not even sure if makes sense
 
         batchBegin += batchData.shape[0]
 
+    if captureStatsCollector:
+        captureStatsCollector.logStats(epochNr)
     return
 
 
@@ -272,7 +293,7 @@ def run(trainDataset,
     bestStateDict = None
     start_time = time.time()
     
-    captureDataset, captureOptions = captureDatasetWithOptions
+    captureDataset, captureOptions, captureStatsCollector = captureDatasetWithOptions
     linsepEachEpochs, linsepFun = linsepClassificationTaskConfig
     assert (captureDataset is None and captureOptions is None) \
         or (captureDataset is not None and captureOptions is not None)
@@ -308,7 +329,7 @@ def run(trainDataset,
 
         if captureDataset is not None and epoch % captureEachEpochs == 0:
             print(f"Capturing data for epoch {epoch}")
-            captureStep(captureLoader, cpcModel, cpcCriterion, captureOptions, epoch)
+            captureStep(captureLoader, cpcModel, cpcCriterion, captureOptions, captureStatsCollector, epoch)
 
         currentAccuracy = float(locLogsVal["locAcc_val"].mean())
         if currentAccuracy > bestAcc:
@@ -356,7 +377,7 @@ def onlyCapture(
         logs
 ):
     startEpoch = len(logs["epoch"])
-    captureDataset, captureOptions = captureDatasetWithOptions
+    captureDataset, captureOptions, captureStatsCollector = captureDatasetWithOptions
     assert (captureDataset is not None and captureOptions is not None)
     if captureOptions is not None:
         captureEachEpochs = captureOptions['eachEpochs']
@@ -365,7 +386,7 @@ def onlyCapture(
     captureLoader = captureDataset.getDataLoader(batchSize, 'sequential', False,
                                                 numWorkers=0)
     print(f"Capturing data for model checkpoint after epoch: {startEpoch-1}")
-    captureStep(captureLoader, cpcModel, cpcCriterion, captureOptions, startEpoch-1)
+    captureStep(captureLoader, cpcModel, cpcCriterion, captureOptions, captureStatsCollector, startEpoch-1)
 
 
 def main(args):
@@ -439,7 +460,7 @@ def main(args):
                                     ['repr', 'ctx', 'speaker_align', 'phone_align', 'pred', 'cpcctc_align']):
                 if argVal:
                     whatToSave.append(name)
-        assert len(whatToSave) > 0
+        ###assert len(whatToSave) > 0
         captureOptions = {
             'path': args.pathCaptureSave,
             'eachEpochs': args.captureEachEpochs,
@@ -508,8 +529,14 @@ def main(args):
                                     nProcessLoader=args.n_process_loader)
         print("Capture dataset loaded")
         print("")
+
+        if args.captureSetStats:
+            captureSetStatsCollector = statutil.constructStatCollectorFromSpecs(args.captureSetStats)
+        else:
+            captureSetStatsCollector = None
     else:
         captureDataset = None
+        captureSetStatsCollector = None
 
     if args.load is not None:
         # loadBestNotLast = args.onlyCapture or args.only_classif_metric
@@ -733,7 +760,7 @@ def main(args):
     if not args.onlyCapture and not args.only_classif_metric:
         run(trainDataset,
             valDataset,
-            (captureDataset, captureOptions),
+            (captureDataset, captureOptions, captureSetStatsCollector),
             linsepClassificationTaskConfig,
             batchSize,
             args.samplingType,
@@ -749,7 +776,7 @@ def main(args):
     #               to use specific checkpoint provide full checkpoint file path
     #               will use "last state" and not "best in internal CPC accuracy" anyway
         onlyCapture(
-            (captureDataset, captureOptions),
+            (captureDataset, captureOptions, captureSetStatsCollector),
             batchSize,
             cpcModel,
             cpcCriterion,
@@ -869,6 +896,14 @@ def parseArgs(argv):
                         help='Description of how big net to use for classification (layers have num_phonemes neurons) ' 
                         'with 1, there is just a linear net used without additional hidden layers')
     
+    group_stats = parser.add_argument_group(
+        'Args for specifying stats to compute for validation and capture DS')
+    # group_stats.add_argument('--valSetStats', type=str, default=None,
+    #                     help='For validation DS.')
+    # validation DS has smaller number of info - will need to specify stats accordingly
+    group_stats.add_argument('--captureSetStats', type=str, default=None,
+                        help='For capture DS.')
+
     group_save = parser.add_argument_group('Save')
     group_save.add_argument('--pathCheckpoint', type=str, default=None,
                             help="Path of the output directory.")
