@@ -152,6 +152,11 @@ class AudioBatchData(Dataset):
         tmpData = []
 
         for speaker, seqName, seq in self.nextData:
+
+            # sometimes some data may be missing
+            if self.phoneLabelsDict is not None and seqName not in self.phoneLabelsDict:
+                continue
+            
             while self.speakers[indexSpeaker] < speaker:
                 indexSpeaker += 1
                 self.speakerLabel.append(speakerSize)

@@ -434,7 +434,6 @@ def main(args):
                                     args.captureCtx, 
                                     args.captureSpeakerAlign, 
                                     args.capturePhoneAlign, 
-                                    args.capturePred, 
                                     args.captureCPCCTCalign], 
                                     ['repr', 'ctx', 'speaker_align', 'phone_align', 'pred', 'cpcctc_align']):
                 if argVal:
@@ -559,7 +558,7 @@ def main(args):
                                  betas=(args.beta1, args.beta2),
                                  eps=args.epsilon)
 
-    if loadOptimizer:
+    if loadOptimizer and not args.onlyCapture and not args.only_classif_metric:
         print("Loading optimizer " + args.load[0])
         state_dict = torch.load(args.load[0], 'cpu')
         if "optimizer" in state_dict:
@@ -883,6 +882,7 @@ def parseArgs(argv):
     group_save.add_argument('--captureCtx', action='store_true', help='if to save LSTM-based contexts produced in CPC model')
     group_save.add_argument('--captureSpeakerAlign', action='store_true', help='if to save speaker alignments')
     group_save.add_argument('--capturePhoneAlign', action='store_true', help='if to save phone alignments')
+    # below ONLY for CPC-CTC
     group_save.add_argument('--capturePred', action='store_true', help='if to save CPC predictions')
     group_save.add_argument('--captureCPCCTCalign', action='store_true', help='if to save CTC alignments with CPC predictions - only for CPC-CTC variant')
     group_save.add_argument('--captureEverything', action='store_true', help='save everythong valid in this config')

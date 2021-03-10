@@ -248,7 +248,8 @@ class CPCUnsupersivedCriterion(BaseCriterion):
                 assert o in ('pred',)
             captureRes = {}
             if 'pred' in captureOptions:
-                captureRes['pred'] = predictions
+                assert False   # not supported yet, predictions here are in some very weird format it seems
+                captureRes['pred'] = None
 
         outLosses = [0 for x in range(self.nPredicts)]
         outAcc = [0 for x in range(self.nPredicts)]
