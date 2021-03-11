@@ -251,7 +251,6 @@ def captureStep(
                             f'{cpcCaptureThing}_batch{batchBegin}-{batchEnd}.pt'))
 
             if captureStatsCollector:
-
                 allBatchData = {}
                 allBatchData['repr'] = encoded_data
                 allBatchData['ctx'] = c_feature

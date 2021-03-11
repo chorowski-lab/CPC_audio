@@ -15,7 +15,7 @@ def euclideanDistSq(vecs1, vecs2):
 
 def cosineDist(vecs1, vecs2):
     cosSim = (vecs1*vecs2).sum(1) / (torch.sqrt(torch.square(vecs1).sum(1)) * torch.sqrt(torch.square(vecs2).sum(1)))
-    return -cosSim + 1
+    return -cosSim + 1.
 
 def cosineCorr(vecs1, vecs2):
     cosSim = (vecs1*vecs2).sum(1) / (torch.sqrt(torch.square(vecs1).sum(1)) * torch.sqrt(torch.square(vecs2).sum(1)))
@@ -54,6 +54,8 @@ class ReprDiffStat(statTempl.Stat):
         occurences = {}
         l = 0
         for d in distances:
+            if math.isnan(d):
+                continue
             l += 1
             df = math.floor(d) * self.stepSize
             if df in occurences:

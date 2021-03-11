@@ -21,6 +21,7 @@ class StatsCollector:
     def batchUpdate(self, batch):
         if self.zeroed:
             self.statValues = [stat.computeForBatch(batch) for stat in self.stats]
+            self.zeroed = False
         else:
             oldValues = self.statValues
             newValues = [stat.computeForBatch(batch) for stat in self.stats]
