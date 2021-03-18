@@ -473,7 +473,7 @@ def main(args):
 
     if args.load is not None:
         cpcModel, args.hiddenGar, args.hiddenEncoder = \
-            fl.loadModel(args.load)
+            fl.loadModel(args.load, load_nullspace=args.nullspace)
 
     else:
         # Encoder network
@@ -486,12 +486,13 @@ def main(args):
     batchSize = args.nGPU * args.batchSizeGPU
     cpcModel.supervised = args.supervised
 
+    downsampling = cpcModel.cpc.gEncoder.DOWNSAMPLING if isinstance(cpcModel, model.CPCModelNullspace) else cpcModel.gEncoder.DOWNSAMPLING
     # Training criterion
     if args.load is not None and args.loadCriterion:
-        cpcCriterion = loadCriterion(args.load[0], cpcModel.gEncoder.DOWNSAMPLING,
+        cpcCriterion = loadCriterion(args.load[0],  downsampling,
                                      len(speakers), nPhones)
     else:
-        cpcCriterion = getCriterion(args, cpcModel.gEncoder.DOWNSAMPLING,
+        cpcCriterion = getCriterion(args, downsampling,
                                     len(speakers), nPhones)
 
     if loadOptimizer:
@@ -635,6 +636,7 @@ def parseArgs(argv):
     group_save.add_argument('--save_step', type=int, default=5,
                             help="Frequency (in epochs) at which a checkpoint "
                             "should be saved")
+
     # stuff below for capturing data
     group_save.add_argument('--pathCaptureSave', type=str, default=None, )
     group_save.add_argument('--captureEachEpochs', type=int, default=10, help='how often to save capture data')
@@ -657,6 +659,8 @@ def parseArgs(argv):
     group_load.add_argument('--restart', action='store_true',
                             help="If any checkpoint is found, ignore it and "
                             "restart the training from scratch.")
+    group_load.add_argument('--nullspace', action='store_true',
+                            help="Additionally load nullspace")
 
     group_gpu = parser.add_argument_group('GPUs')
     group_gpu.add_argument('--nGPU', type=int, default=-1,
