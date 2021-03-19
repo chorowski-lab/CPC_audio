@@ -472,8 +472,20 @@ def main(args):
         captureDataset = None
 
     if args.load is not None:
+        if args.gru_level is not None and args.gru_level > 0:
+            updateConfig = argparse.Namespace(nLevelsGRU=args.gru_level)
+        else:
+            updateConfig = None
+
         cpcModel, args.hiddenGar, args.hiddenEncoder = \
-            fl.loadModel(args.load, load_nullspace=args.nullspace)
+            fl.loadModel(args.load, load_nullspace=args.nullspace, updateConfig=updateConfig)
+
+        if args.gru_level is not None and args.gru_level > 0:
+            # Keep hidden units at LSTM layers on sequential batches
+            if args.nullspace:
+                cpcModel.cpc.gAR.keepHidden = True
+            else:
+                cpcModel.gAR.keepHidden = True
 
     else:
         # Encoder network
@@ -616,6 +628,9 @@ def parseArgs(argv):
     group_db.add_argument('--max_size_loaded', type=int, default=4000000000,
                           help='Maximal amount of data (in byte) a dataset '
                           'can hold in memory at any given time')
+    group_db.add_argument('--gru_level', type=int, default=-1,
+                          help='Hidden level of the LSTM autoregressive model to be taken'
+                          '(default: -1, last layer).')
     group_supervised = parser.add_argument_group(
         'Supervised mode (depreciated)')
     group_supervised.add_argument('--supervised', action='store_true',

@@ -164,7 +164,7 @@ def getAR(args):
     return arNet
 
 
-def loadModel(pathCheckpoints, loadStateDict=True, load_nullspace=False):
+def loadModel(pathCheckpoints, loadStateDict=True, load_nullspace=False, updateConfig=None):
     models = []
     hiddenGar, hiddenEncoder = 0, 0
     for path in pathCheckpoints:
@@ -175,11 +175,17 @@ def loadModel(pathCheckpoints, loadStateDict=True, load_nullspace=False):
             (len(locArgs.load) > 1 or
              os.path.dirname(locArgs.load[0]) != os.path.dirname(path))
 
+        if updateConfig is not None and not doLoad:
+            print(f"Updating the configuartion file with ")
+            print(f'{json.dumps(vars(updateConfig), indent=4, sort_keys=True)}')
+            loadArgs(locArgs, updateConfig)
+
         if doLoad:
-            m_, hg, he = loadModel(locArgs.load, loadStateDict=False)
+            m_, hg, he = loadModel(locArgs.load, loadStateDict=False, updateConfig=updateConfig)
             hiddenGar += hg
             hiddenEncoder += he
         else:
+            print('LocArgs:', locArgs)
             encoderNet = getEncoder(locArgs)
 
             arNet = getAR(locArgs)
