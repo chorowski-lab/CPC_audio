@@ -104,6 +104,206 @@ class CPCEncoder(nn.Module):
         x = F.relu(self.batchNorm4(self.conv4(x)))
         return x
 
+class Smartpool(nn.Module):
+    def __init__(
+        self,
+        factor,
+        search_perc,
+        in_channels=512,
+        entire_batch=False,
+        mlp2=False
+    ):
+        """Smart pooling algorithm
+
+        Args:
+            factor: factor by which the sequence's length will be reduced
+            search_perc: percentage of length of sequence after smartpooling to search for border. Ideally the border is located somewhere in +-search_perc
+        """
+        super().__init__()
+
+        self.search_perc = search_perc
+        self.factor = factor
+        self.entire_batch = entire_batch
+        self.register_buffer("filters", torch.FloatTensor([[[[-1,1],[1,-1]]]]), persistent=False)
+        self.in_channels = in_channels
+        self.mlp = nn.Sequential(
+            nn.Linear(self.in_channels, 2048),
+            nn.Dropout(0.1),
+            nn.GELU(),
+            nn.Linear(2048, 2048),
+            nn.Dropout(0.1),
+            nn.GELU(),
+            nn.Linear(2048, 1),
+            nn.Sigmoid())
+        
+        if mlp2 == True:
+            self.mlp2 = nn.Sequential(
+                nn.Linear(2, 256),
+                nn.Dropout(0.1),
+                nn.GELU(),
+                nn.Linear(256,512),
+                nn.Dropout(0.1),
+                nn.GELU(),
+                nn.Linear(512,256),
+                nn.Dropout(0.1),
+                nn.GELU(),
+                nn.Linear(256,1))
+        else:
+            self.mlp2 = None
+            
+        self.visualization = False
+
+    def warp(self, X, new_lens):
+        new_lens_cs = new_lens.cumsum(1)
+        #print(f"new_lens_cs (shape {new_lens_cs.shape}) last elements: {new_lens_cs[:,-1]}")
+        # This really searches for the low boundary of each new pixel
+        try:
+            pixel_contributions = new_lens_cs.view(new_lens_cs.shape[0], -1, 1) - torch.arange(torch.round(new_lens_cs[0, -1]).item(), device=X.device).view(1, 1, -1)
+        except:
+            print(f"new_lens_cs (shape {new_lens_cs.shape}) last elements: {new_lens_cs[:,-1]}")
+        pixel_contributions = pixel_contributions.view(X.size(0), X.size(1), pixel_contributions.size(2))
+        # Zero out the negative contributions, i.e. pixels which come before each row                              
+        pixel_contributions = torch.max(torch.tensor(0.0, device=X.device), pixel_contributions)       
+
+        # # This contains the cumulated pixel lengths for all pixels in each 
+        # pixel_contributions
+    
+        pixel_contributions = pixel_contributions.unsqueeze(1)
+        interp_weights = F.conv2d(pixel_contributions, self.filters, padding=1)
+        interp_weights = interp_weights[:,:,:-1,1:] # Removing padding
+        interp_weights = interp_weights.squeeze(1)
+
+        # # Each column corresponds to a new element. Its values are the 
+        # # weights associated with the original data.
+        # interp_weights
+
+        interp_weights = interp_weights.transpose(1, 2)
+        Xnew = interp_weights @ X
+        return Xnew, interp_weights
+
+    def nonzero_interval_length(self, x, dim):
+        nonz = (x > 0)
+        _, low = ((nonz.cumsum(dim) == 1) & nonz).max(dim, keepdim=True)
+        rev_cumsum = nonz.long().flip(dim).cumsum(dim).flip(dim)
+        _, high = ((rev_cumsum == 1) & nonz).max(dim, keepdim=True)
+        
+        return high - low + 1
+
+    def forward(self, features):
+        B,T,C = features.size()
+
+        padding_mask = torch.zeros(B,T, dtype=torch.bool, device=features.device)
+        padding_per_batch = (padding_mask > 0).sum(1)
+        total_T = padding_mask.numel() - padding_per_batch.sum() if self.entire_batch else (T - padding_per_batch).view(-1, 1)
+        
+        new_lens = self.mlp(features).view(B,T)
+        new_lens = new_lens / new_lens.sum(1, keepdim=True) * (total_T / self.factor) # Reducing the original length T by some factor 
+        
+        if self.visualization:
+            return new_lens
+       
+        features, interp_weights = self.warp(features, new_lens)
+        
+        if self.mlp2 is not None:
+            features = self.mlp2(features)
+
+        return features
+    
+    def set_visualization(self, value):
+        self.visualization = value
+
+class DoXTimes(nn.Module):
+    def __init__(self, model, classifier, features=None):
+        super().__init__()
+        self.model = model
+        self.classifier = classifier
+        self.features = features
+        
+    def forward(self, x):
+        #print('1', x.shape)
+        
+        #print('2', x.shape)
+        if self.features is not None:
+
+            x = x.unsqueeze(1)
+            x = self.features(x)
+            x = x.squeeze(2)
+                
+        #print('3', x.shape)
+        x = x.transpose(1,2)
+        B = x.shape[0]
+        #x = torch.cat([self.model(x[i].unsqueeze(0)) for i in range(B)])
+        x = self.model(x)
+        #print('4', x.shape)
+        x = self.classifier(x)
+        x = x.view(B * x.shape[1], -1)
+        return x
+    
+    def visualize(self, x):
+        self.model.set_visualization(True)
+        if self.features is not None:
+            x = x.unsqueeze(1)
+            x = self.features(x)
+            x = x.squeeze(2)
+                
+        #print('3', x.shape)
+        x = x.transpose(1,2)
+        B = x.shape[0]
+        x = torch.cat([self.model(x[i].unsqueeze(0)) for i in range(B)])
+        
+        x = x.squeeze(1)
+        self.model.set_visualization(False)
+        return x
+
+class CPCSmartpoolEncoder(nn.Module):
+
+    def __init__(self,
+                 sizeHidden=512,
+                 normMode="layerNorm"):
+
+        super(CPCSmartpoolEncoder, self).__init__()
+
+        validModes = ["batchNorm", "instanceNorm", "ID", "layerNorm"]
+        if normMode not in validModes:
+            raise ValueError(f"Norm mode must be in {validModes}")
+
+        if normMode == "instanceNorm":
+            def normLayer(x): return nn.InstanceNorm1d(x, affine=True)
+        elif normMode == "ID":
+            normLayer = IDModule
+        elif normMode == "layerNorm":
+            normLayer = ChannelNorm
+        else:
+            normLayer = nn.BatchNorm1d
+
+        self.dimEncoded = sizeHidden
+        self.conv0 = nn.Conv1d(1, sizeHidden, 10, stride=5, padding=3)
+        self.batchNorm0 = normLayer(sizeHidden)
+        self.conv1 = nn.Conv1d(sizeHidden, sizeHidden, 8, stride=4, padding=2)
+        self.batchNorm1 = normLayer(sizeHidden)
+        self.conv2 = nn.Conv1d(sizeHidden, sizeHidden, 4,
+                               stride=2, padding=1)
+        self.batchNorm2 = normLayer(sizeHidden)
+        self.conv3 = nn.Conv1d(sizeHidden, sizeHidden, 4, stride=2, padding=1)
+        self.batchNorm3 = normLayer(sizeHidden)
+        #self.conv4 = nn.Conv1d(sizeHidden, sizeHidden, 4, stride=2, padding=1)
+        self.conv4 = Smartpool(2, 0.3, sizeHidden)
+        self.batchNorm4 = normLayer(sizeHidden)
+        self.DOWNSAMPLING = 160
+
+    def getDimOutput(self):
+        return self.conv3.out_channels
+
+    def forward(self, x):
+        x = F.relu(self.batchNorm0(self.conv0(x)))
+        x = F.relu(self.batchNorm1(self.conv1(x)))
+        x = F.relu(self.batchNorm2(self.conv2(x)))
+        x = F.relu(self.batchNorm3(self.conv3(x)))
+        x = self.conv4(x.transpose(1,2)).transpose(1,2)
+        x = F.relu(self.batchNorm4(x))
+        #x = F.relu(self.batchNorm4(self.conv4(x)))
+        return x
+
 
 class MFCCEncoder(nn.Module):
 
@@ -288,6 +488,23 @@ class CPCModel(nn.Module):
         cFeature = self.gAR(encodedData)
         return cFeature, encodedData, label
 
+class CPCModelNullspace(nn.Module):
+
+    def __init__(self,
+                 cpc,
+                 nullspace):
+
+        super(CPCModelNullspace, self).__init__()
+        self.cpc = cpc
+        self.nullspace = nn.Linear(nullspace.shape[0], nullspace.shape[1], bias=False)
+        self.nullspace.weight = nn.Parameter(nullspace.T)
+        self.gEncoder = self.cpc.gEncoder
+
+    def forward(self, batchData, label):
+        cFeature, encodedData, label = self.cpc(batchData, label)
+        cFeature = self.nullspace(cFeature)
+        encodedData = self.nullspace(encodedData)
+        return cFeature, encodedData, label
 
 class ConcatenatedModel(nn.Module):
 

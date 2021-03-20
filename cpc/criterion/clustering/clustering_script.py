@@ -71,6 +71,14 @@ def parseArgs(argv):
                         help='Load the last checkpoint from the same directory as the output.')
     parser.add_argument('--save-last', type=int, default=5,
                         help='Number of last checkpoints to be saved (default: 5).')
+    parser.add_argument('--n_process_loader', type=int, default=8,
+                          help='Number of processes to call to load the '
+                          'dataset')
+    parser.add_argument('--max_size_loaded', type=int, default=4000000000,
+                          help='Maximal amount of data (in byte) a dataset '
+                          'can hold in memory at any given time')
+    parser.add_argument('--nullspace', action='store_true',
+                          help="Additionally load nullspace")
     return parser.parse_args(argv)
 
 
@@ -117,7 +125,9 @@ if __name__ == "__main__":
                              args.sizeWindow,
                              seqNames,
                              None,
-                             len(speakers))
+                             len(speakers),
+                             nProcessLoader=args.n_process_loader,
+                             MAX_SIZE_LOADED=args.max_size_loaded)
     print(f"Dataset loaded in {time.time()-start_time} seconds !")
     print("")
 
@@ -128,12 +138,13 @@ if __name__ == "__main__":
     print(f"Length of dataLoader: {len(trainLoader)}")
     print("")
 
-    #if args.level_gru is None:
-    #    updateConfig = None
-    #else:
-    #    updateConfig = argparse.Namespace(nLevelsGRU=args.level_gru)
+    if args.level_gru is None:
+        updateConfig = None
+    else:
+        updateConfig = argparse.Namespace(nLevelsGRU=args.level_gru)
 
-    model = loadModel([args.pathCheckpoint])[0]#, updateConfig=updateConfig)[0]
+    model = loadModel([args.pathCheckpoint], updateConfig=updateConfig, load_nullspace=args.nullspace)[0]
+    #model = loadModel([args.pathCheckpoint])[0]#, updateConfig=updateConfig)[0]
     featureMaker = FeatureModule(model, args.encoder_layer)
     print("Checkpoint loaded!")
     print("")

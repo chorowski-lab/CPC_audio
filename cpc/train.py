@@ -12,6 +12,7 @@ from copy import deepcopy
 import random
 import psutil
 import sys
+#import torchaudio
 
 import cpc.criterion as cr
 import cpc.model as model
@@ -299,9 +300,20 @@ def main(args):
     print("")
 
     if args.load is not None:
-        cpcModel, args.hiddenGar, args.hiddenEncoder = \
-            fl.loadModel(args.load)
+        if args.gru_level is not None and args.gru_level > 0:
+            updateConfig = argparse.Namespace(nLevelsGRU=args.gru_level)
+        else:
+            updateConfig = None
 
+        cpcModel, args.hiddenGar, args.hiddenEncoder = \
+            fl.loadModel(args.load, load_nullspace=args.nullspace, updateConfig=updateConfig)
+
+        if args.gru_level is not None and args.gru_level > 0:
+            # Keep hidden units at LSTM layers on sequential batches
+            if args.nullspace:
+                cpcModel.cpc.gAR.keepHidden = True
+            else:
+                cpcModel.gAR.keepHidden = True
     else:
         # Encoder network
         encoderNet = fl.getEncoder(args)
@@ -313,12 +325,13 @@ def main(args):
     batchSize = args.nGPU * args.batchSizeGPU
     cpcModel.supervised = args.supervised
 
+    downsampling = cpcModel.cpc.gEncoder.DOWNSAMPLING if isinstance(cpcModel, model.CPCModelNullspace) else cpcModel.gEncoder.DOWNSAMPLING
     # Training criterion
     if args.load is not None and args.loadCriterion:
-        cpcCriterion = loadCriterion(args.load[0], cpcModel.gEncoder.DOWNSAMPLING,
+        cpcCriterion = loadCriterion(args.load[0],  downsampling,
                                      len(speakers), nPhones)
     else:
-        cpcCriterion = getCriterion(args, cpcModel.gEncoder.DOWNSAMPLING,
+        cpcCriterion = getCriterion(args, downsampling,
                                     len(speakers), nPhones)
 
     if loadOptimizer:
@@ -347,6 +360,8 @@ def main(args):
         if not os.path.isdir(args.pathCheckpoint):
             os.mkdir(args.pathCheckpoint)
         args.pathCheckpoint = os.path.join(args.pathCheckpoint, "checkpoint")
+        with open(args.pathCheckpoint + "_args.json", 'w') as file:
+            json.dump(vars(args), file, indent=2)
 
     scheduler = None
     if args.schedulerStep > 0:
@@ -415,6 +430,10 @@ def parseArgs(argv):
     group_db.add_argument('--max_size_loaded', type=int, default=4000000000,
                           help='Maximal amount of data (in byte) a dataset '
                           'can hold in memory at any given time')
+    group_db.add_argument('--gru_level', type=int, default=-1,
+                        help='Hidden level of the LSTM autoregressive model to be taken'
+                        '(default: -1, last layer).')
+    
     group_supervised = parser.add_argument_group(
         'Supervised mode (depreciated)')
     group_supervised.add_argument('--supervised', action='store_true',
@@ -449,6 +468,8 @@ def parseArgs(argv):
     group_load.add_argument('--restart', action='store_true',
                             help="If any checkpoint is found, ignore it and "
                             "restart the training from scratch.")
+    group_load.add_argument('--nullspace', action='store_true',
+                            help="Additionally load nullspace")
 
     group_gpu = parser.add_argument_group('GPUs')
     group_gpu.add_argument('--nGPU', type=int, default=-1,
@@ -489,6 +510,11 @@ def parseArgs(argv):
 
 
 if __name__ == "__main__":
+    #import ptvsd
+    #ptvsd.enable_attach(('0.0.0.0', 7310))
+    #print("Attach debugger now")
+    #ptvsd.wait_for_attach()
+
     torch.multiprocessing.set_start_method('spawn')
     args = sys.argv[1:]
     main(args)
