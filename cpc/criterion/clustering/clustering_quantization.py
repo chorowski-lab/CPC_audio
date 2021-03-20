@@ -10,6 +10,8 @@ import torch
 from cpc.dataset import findAllSeqs
 from cpc.feature_loader import buildFeature, FeatureModule, loadModel, buildFeature_batch
 from cpc.criterion.clustering import kMeanCluster
+#from cpc.criterion.research.clustering import kMeanCluster
+
 
 def readArgs(pathArgs):
     print(f"Loading args from {pathArgs}")
@@ -18,6 +20,7 @@ def readArgs(pathArgs):
         
     return args
 
+
 def loadClusterModule(pathCheckpoint, norm_vec_len=False):
     print(f"Loading ClusterModule at {pathCheckpoint}")
     state_dict = torch.load(pathCheckpoint)
@@ -25,7 +28,7 @@ def loadClusterModule(pathCheckpoint, norm_vec_len=False):
         clusterModule = kMeanCluster(torch.zeros(1, state_dict["n_clusters"], state_dict["dim"]), norm_vec_len)
         clusterModule.load_state_dict(state_dict["state_dict"])
     else: #dpmeans
-        clusterModule = kMeanCluster(state_dict["mu"], norm_vec_len)
+        clusterModule = kMeanCluster(state_dict["mu"])
     clusterModule = clusterModule.cuda()
     return clusterModule
 
@@ -67,6 +70,7 @@ def parseArgs(argv):
                         'when --separate-speaker is activated.')
     parser.add_argument('--separate-speaker', action='store_true',
                         help="Separate each speaker with a different output file.")
+
 
     parser.add_argument('--norm_vec_len', action='store_true',
                         help="Normalize vector lengths.")

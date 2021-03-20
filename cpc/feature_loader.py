@@ -112,6 +112,7 @@ def getCheckpointData(pathDir):
     if os.path.exists(os.path.join(pathDir, 'checkpoint_logs.json')):
         with open(os.path.join(pathDir, 'checkpoint_logs.json'), 'rb') as file:
             logs = json.load(file)
+
     
     # args_json = os.path.join(pathDir, 'checkpoint_args.json')
     # try:
@@ -121,6 +122,7 @@ def getCheckpointData(pathDir):
     # except Exception as e:
     #     print("WARNING: failed to load {args_json}: {e}")
     #     args = argparse.Namespace()
+
 
     with open(os.path.join(pathDir, 'checkpoint_args.json'), 'rb') as file:
         args = json.load(file)
@@ -140,6 +142,9 @@ def getEncoder(args):
     elif args.encoder_type == 'lfb':
         from .model import LFBEnconder
         return LFBEnconder(args.hiddenEncoder)
+    elif args.encoder_type == 'smart':
+        from .model import CPCSmartpoolEncoder
+        return CPCSmartpoolEncoder(args.hiddenEncoder, args.normMode)
     else:
         from .model import CPCEncoder
         return CPCEncoder(args.hiddenEncoder, args.normMode)

@@ -79,6 +79,9 @@ def parseArgs(argv):
                           help='Maximal amount of data (in byte) a dataset '
                           'can hold in memory at any given time')
 
+    parser.add_argument('--nullspace', action='store_true',
+                          help="Additionally load nullspace")
+
     parser.add_argument('--norm_vec_len', action='store_true',
                         help="Normalize vector lengths.")
 
@@ -86,7 +89,8 @@ def parseArgs(argv):
 
 # python cpc/criterion/clustering/clustering_script.py --pathDB /pio/data/zerospeech2021/LibriSpeech/dev-clean \
 # --recursionLevel 1 --nClusters 50 --MAX_ITER 10 --level_gru 2 --save --load --batchSizeGPU 200 --max_size_loaded 40000000 \
-# --n_process_loader 2 --norm_vec_len ../nspChp/48/checkpoint_9.pt ../nspChp/try2/try2chp.pt
+# --n_process_loader 2 --nullspace --norm_vec_len ../nspChp/64ok/checkpoint_9.pt ../nspChp/tryNew64-11/try11chp.pt
+
 
 if __name__ == "__main__":
     torch.cuda.empty_cache()
@@ -144,12 +148,15 @@ if __name__ == "__main__":
     print(f"Length of dataLoader: {len(trainLoader)}")
     print("")
 
-    #if args.level_gru is None:
-    #    updateConfig = None
-    #else:
-    #    updateConfig = argparse.Namespace(nLevelsGRU=args.level_gru)
 
-    model = loadModel([args.pathCheckpoint])[0]#, updateConfig=updateConfig)[0]
+    if args.level_gru is None:
+        updateConfig = None
+    else:
+        updateConfig = argparse.Namespace(nLevelsGRU=args.level_gru)
+
+    model = loadModel([args.pathCheckpoint], updateConfig=updateConfig, load_nullspace=args.nullspace)[0]
+    #model = loadModel([args.pathCheckpoint])[0]#, updateConfig=updateConfig)[0]
+
     featureMaker = FeatureModule(model, args.encoder_layer)
     print("Checkpoint loaded!")
     print("")
@@ -177,10 +184,12 @@ if __name__ == "__main__":
                             save_last=args.save_last,
                             norm_vec_len=args.norm_vec_len).cpu()
 
+
     print(f'Ran clustering '
           f'in {time.time() - start_time:.2f} seconds')
 
     clusterModule = kMeanCluster(clusters, norm_vec_len=args.norm_vec_len)
+
     out_state_dict["state_dict"] = clusterModule.state_dict()
     out_state_dict["encoder_layer"] = args.encoder_layer
     out_state_dict["n_clusters"] = args.nClusters

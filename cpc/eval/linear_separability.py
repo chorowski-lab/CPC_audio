@@ -16,6 +16,7 @@ import cpc.criterion as cr
 import cpc.feature_loader as fl
 import cpc.utils.misc as utils
 from cpc.dataset import AudioBatchData, findAllSeqs, filterSeqs, parseSeqLabels
+from cpc.model import CPCModelNullspace
 
 
 def train_step(feature_maker, criterion, data_loader, optimizer):
@@ -172,6 +173,24 @@ def parse_args(argv):
                         " changed.")
     parser.add_argument('--size_window', type=int, default=20480,
                         help="Number of frames to consider in each batch.")
+    parser.add_argument('--n_process_loader', type=int, default=8,
+                          help='Number of processes to call to load the '
+                          'dataset')
+    parser.add_argument('--max_size_loaded', type=int, default=4000000000,
+                          help='Maximal amount of data (in byte) a dataset '
+                          'can hold in memory at any given time')
+    parser.add_argument("--model", type=str, default="cpc",
+                          help="Pre-trained model architecture ('cpc' [default] or 'wav2vec2').")
+    parser.add_argument("--path_fairseq", type=str, default="/pio/scratch/1/i273233/fairseq",
+                          help="Path to the root of fairseq repo.")
+    parser.add_argument("--mode", type=str, default="phonemes",
+                          help="Mode for example phonemes, speakers, speakers_factorized, phonemes_nullspace")
+    parser.add_argument("--path_speakers_factorized", type=str, default="/pio/scratch/1/i273233/linear_separability/cpc/cpc_official_speakers_factorized/checkpoint_9.pt",
+                          help="Path to the checkpoint from speakers factorized")
+    parser.add_argument('--dim_inter', type=int, default=128, help="Dimension between factorized matrices (dim_features x dim_inter) x (dim_inter x len(speakers)) ")
+    parser.add_argument('--gru_level', type=int, default=-1,
+                        help='Hidden level of the LSTM autoregressive model to be taken'
+                        '(default: -1, last layer).')
     args = parser.parse_args(argv)
     if args.nGPU < 0:
         args.nGPU = torch.cuda.device_count()
@@ -194,17 +213,88 @@ def main(argv):
                                      extension=args.file_extension,
                                      loadCache=not args.ignore_cache)
 
-    model, hidden_gar, hidden_encoder = fl.loadModel(args.load,
+    if args.model == "cpc":
+        def loadCPCFeatureMaker(pathCheckpoint, gru_level=-1, get_encoded=False, keep_hidden=True):
+            """
+            Load CPC Feature Maker from CPC checkpoint file.
+            """
+            # Set LSTM level
+            if gru_level is not None and gru_level > 0:
+                updateConfig = argparse.Namespace(nLevelsGRU=gru_level)
+            else:
+                updateConfig = None
+
+            # Load CPC model
+            model, nHiddenGar, nHiddenEncoder = fl.loadModel(pathCheckpoint, updateConfig=updateConfig)
+            
+            # Keep hidden units at LSTM layers on sequential batches
+            model.gAR.keepHidden = keep_hidden
+
+            # Build CPC Feature Maker from CPC model
+            #featureMaker = fl.FeatureModule(model, get_encoded=get_encoded)
+
+            #return featureMaker
+            return model, nHiddenGar, nHiddenEncoder
+
+        if args.gru_level is not None and args.gru_level > 0:
+            model, hidden_gar, hidden_encoder = loadCPCFeatureMaker(args.load, gru_level=args.gru_level)
+        else:
+            model, hidden_gar, hidden_encoder = fl.loadModel(args.load,
                                                      loadStateDict=not args.no_pretraining)
-    model.cuda()
-    model = torch.nn.DataParallel(model, device_ids=range(args.nGPU))
 
-    dim_features = hidden_encoder if args.get_encoded else hidden_gar
+        dim_features = hidden_encoder if args.get_encoded else hidden_gar
+    else:
+        sys.path.append(os.path.abspath(args.path_fairseq))
+        from fairseq import checkpoint_utils
 
+        def loadCheckpoint(path_checkpoint, path_data):
+            """
+            Load lstm_lm model from checkpoint.
+            """
+            # Set up the args Namespace
+            model_args = argparse.Namespace(
+                task="language_modeling",
+                output_dictionary_size=-1,
+                data=path_data,
+                path=path_checkpoint
+                )
+            
+            # Load model
+            models, _model_args = checkpoint_utils.load_model_ensemble([model_args.path])
+            model = models[0]
+            return model
+
+        model = loadCheckpoint(args.load[0], args.pathDB)
+        dim_features = 768
+
+    dim_inter = args.dim_inter
     # Now the criterion
+
+    if args.mode == "phonemes_nullspace" or args.mode == "speakers_nullspace":
+        speakers_factorized = cr.SpeakerDoubleCriterion(dim_features, dim_inter, len(speakers))
+        speakers_factorized.load_state_dict(torch.load(args.path_speakers_factorized)["cpcCriterion"])
+        for param in speakers_factorized.parameters():
+            param.requires_grad = False
+
+        def my_nullspace(At, rcond=None):
+            ut, st, vht = torch.Tensor.svd(At, some=False,compute_uv=True)
+            vht=vht.T        
+            Mt, Nt = ut.shape[0], vht.shape[1] 
+            if rcond is None:
+                rcondt = torch.finfo(st.dtype).eps * max(Mt, Nt)
+            tolt = torch.max(st) * rcondt
+            numt= torch.sum(st > tolt, dtype=int)
+            nullspace = vht[numt:,:].T.cpu().conj()
+            # nullspace.backward(torch.ones_like(nullspace),retain_graph=True)
+            return nullspace
+
+        dim_features = dim_features - dim_inter
+        nullspace = my_nullspace(speakers_factorized.linearSpeakerClassifier[0].weight)
+        model = CPCModelNullspace(model, nullspace)
+
     phone_labels = None
     if args.pathPhone is not None:
-        phone_labels, n_phones = parseSeqLabels(args.pathPhone)
+        phone_labels, n_phones = parseSeqLabels(args.pathPhone)      
         if not args.CTC:
             print(f"Running phone separability with aligned phones")
             criterion = cr.PhoneCriterion(dim_features,
@@ -215,9 +305,15 @@ def main(argv):
                                              n_phones, args.get_encoded)
     else:
         print(f"Running speaker separability")
-        criterion = cr.SpeakerCriterion(dim_features, len(speakers))
+        if args.mode == "speakers_factorized":
+            criterion = cr.SpeakerDoubleCriterion(dim_features, dim_inter, len(speakers))
+        else:
+            criterion = cr.SpeakerCriterion(dim_features, len(speakers))
     criterion.cuda()
     criterion = torch.nn.DataParallel(criterion, device_ids=range(args.nGPU))
+
+    model.cuda()
+    model = torch.nn.DataParallel(model, device_ids=range(args.nGPU))
 
     # Dataset
     seq_train = filterSeqs(args.pathTrain, seqNames)
@@ -228,9 +324,10 @@ def main(argv):
         seq_val = seq_val[:100]
 
     db_train = AudioBatchData(args.pathDB, args.size_window, seq_train,
-                              phone_labels, len(speakers))
+                              phone_labels, len(speakers), nProcessLoader=args.n_process_loader,
+                                  MAX_SIZE_LOADED=args.max_size_loaded)
     db_val = AudioBatchData(args.pathDB, args.size_window, seq_val,
-                            phone_labels, len(speakers))
+                            phone_labels, len(speakers), nProcessLoader=args.n_process_loader)
 
     batch_size = args.batchSizeGPU * args.nGPU
 
@@ -270,6 +367,11 @@ def main(argv):
 
 
 if __name__ == "__main__":
+    #import ptvsd
+    #ptvsd.enable_attach(('0.0.0.0', 7310))
+    #print("Attach debugger now")
+    #ptvsd.wait_for_attach()
+    
     torch.multiprocessing.set_start_method('spawn')
     args = sys.argv[1:]
     main(args)
