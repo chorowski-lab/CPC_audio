@@ -9,8 +9,8 @@ from time import time
 
 import torch
 from cpc.dataset import findAllSeqs
-#from cpc.feature_loader import buildFeature, buildFeature_batch
-from cpc.feature_loader import buildFeature
+from cpc.feature_loader import buildFeature, buildFeature_batch
+#from cpc.feature_loader import buildFeature
 
 from utils.utils_functions import readArgs, writeArgs, loadCPCFeatureMaker, loadClusterModule
 
@@ -106,6 +106,7 @@ def main(argv):
         num_splits = int(num_splits)
 
     # Find all sequences
+    print(f"nobatch: {args.nobatch}")
     print("")
     print(f"Looking for all {args.file_extension} files in {args.pathDB}")
     seqNames, _ = findAllSeqs(args.pathDB,
