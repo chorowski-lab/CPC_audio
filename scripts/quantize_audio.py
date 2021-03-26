@@ -10,7 +10,6 @@ from time import time
 import torch
 from cpc.dataset import findAllSeqs
 from cpc.feature_loader import buildFeature, buildFeature_batch
-#from cpc.feature_loader import buildFeature
 
 from utils.utils_functions import readArgs, writeArgs, loadCPCFeatureMaker, loadClusterModule
 
@@ -83,7 +82,7 @@ def parseArgs(argv):
                         help="Normalize vector lengths.")
     return parser.parse_args(argv)
 
-# 
+# some example with nullspace and normalization making choice of closest center cosine-dist:
 # python scripts/quantize_audio.py \
 # ../nspChp/tryNew64-11/try11chp.pt /pio/data/zerospeech2021/dataset/phonetic/dev-clean  ../quantizedLibriSpeechdev-new64-try11/  \
 # --nobatch --nullspace --norm_vec_len --file_extension wav
@@ -233,31 +232,22 @@ def main(argv):
         featureMaker.cuda()
     def cpc_feature_function(x): 
         if args.nobatch is False:
-            # TODO this option currently crashes; try uncommenting import, but not sure if imported code is updated (if Jarek changed sth)
             res0 = buildFeature_batch(featureMaker, x,
                                                     seqNorm=False,
                                                     strict=args.strict,
                                                     maxSizeSeq=args.max_size_seq,
                                                     batch_size=args.batch_size)
-            if args.norm_vec_len:  # normalizing just here, can construct other stuff without normalization arg
-                # print("0", args.batch_size, res0.shape)
+            if args.norm_vec_len:  
                 res0Lengths = torch.sqrt((res0*res0).sum(2))
-                # print("0", args.batch_size, res0Lengths.shape)
                 res0 = res0 / res0Lengths.view(*(res0Lengths.shape), 1)
-            # res0Lengths2 = torch.sqrt((res0*res0).sum(2))
-            # print("lengths: min, max", res0Lengths2.min(), res0Lengths2.max())
             return res0
         else:
             res0 = buildFeature(featureMaker, x,
                                 seqNorm=False,
                                 strict=args.strict)
-            if args.norm_vec_len:  # normalizing just here, can construct other stuff without normalization arg
-                #print("1", res0.shape)
+            if args.norm_vec_len:  
                 res0Lengths = torch.sqrt((res0*res0).sum(2))
-                #print("1", res0Lengths.shape)
                 res0 = res0 / res0Lengths.view(*(res0Lengths.shape), 1)
-                # res0Lengths2 = torch.sqrt((res0*res0).sum(2))
-                # print("lengths: min, max", res0Lengths2.min(), res0Lengths2.max())
             return res0
     print("CPC FeatureMaker loaded!")
 

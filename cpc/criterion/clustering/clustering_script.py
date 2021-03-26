@@ -87,6 +87,7 @@ def parseArgs(argv):
 
     return parser.parse_args(argv)
 
+# some example with nullspace and normalization making dists cosine:
 # python cpc/criterion/clustering/clustering_script.py --pathDB /pio/data/zerospeech2021/LibriSpeech/dev-clean \
 # --recursionLevel 1 --nClusters 50 --MAX_ITER 10 --level_gru 2 --save --load --batchSizeGPU 200 --max_size_loaded 40000000 \
 # --n_process_loader 2 --nullspace --norm_vec_len ../nspChp/64ok/checkpoint_9.pt ../nspChp/tryNew64-11/try11chp.pt

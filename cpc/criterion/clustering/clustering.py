@@ -25,19 +25,14 @@ class kMeanCluster(nn.Module):
     def forward(self, features):
         B, S, D = features.size()
         if self.norm_vec_len:
-            #print("kMeanCluster", features.shape)
             featuresLengths = torch.sqrt((features*features).sum(2))
-            #print("kMeanCluster", featuresLengths.shape)
             features = features / featuresLengths.view(*(featuresLengths.shape), 1)
         Ck = self.Ck
         
         if self.norm_vec_len:
-            #print("centers", Ck.shape)
             CkLengths = torch.sqrt((Ck*Ck).sum(2))
-            #print("centers", CkLengths.shape)
             Ck = Ck / CkLengths.view(*(CkLengths.shape), 1)
             clen = torch.sqrt((Ck*Ck).sum(2))
-            #print("center lengths after norm min, max", clen.min().item(), clen.max().item())
         features = features.contiguous().view(B*S, 1, -1)
         return ((features - Ck)**2).sum(dim=2).view(-1, S, self.k)
 
@@ -54,24 +49,15 @@ class kMeanClusterStep(torch.nn.Module):
     def forward(self, locF):
 
         if self.norm_vec_len:
-            # print("step", locF.shape)
             locFLengths = torch.sqrt((locF*locF).sum(2))
-            # print("step", locFLengths.shape)
             locF = locF / locFLengths.view(*(locFLengths.shape), 1)
-            # locFLengths2 = torch.sqrt((locF*locF).sum(2))
-            # print("step lengths after norm min, max", locFLengths2.min().item(), locFLengths2.max().item())
-        # ckl = torch.sqrt((self.Ck*self.Ck).sum(2))
-        # print("cluster lengths after norm min, max", ckl.min().item(), ckl.max().item())
+            
         index = ((locF - self.Ck)**2).mean(dim=2).min(dim=1)[1]
         Ck1 = torch.cat([locF[index == p].sum(dim=0, keepdim=True)
                          for p in range(self.k)], dim=1)
-        # locFLengths2 = torch.sqrt((locF*locF).sum(2))
-        # print("step lengths 2 after norm min, max", locFLengths2.min().item(), locFLengths2.max().item())
         nItems = torch.cat([(index == p).sum(dim=0, keepdim=True)
                             for p in range(self.k)], dim=0).view(1, -1)
-        # print(Ck1.shape, nItems, (Ck1 / nItems.view(1,-1,1)).shape)
-        # Ck1NormLengths = ((Ck1 / nItems.view(1,-1,1)) * (Ck1 / nItems.view(1,-1,1))).sum(-1)
-        # print("lengths of update:", Ck1NormLengths.shape, Ck1NormLengths.min().item(), Ck1NormLengths.max().item())
+        
         return Ck1, nItems
 
 
@@ -105,14 +91,10 @@ def kMeanGPU(dataLoader, featureMaker, k, n_group=1,
             N, D = Ck.size()
             indexes = torch.randperm(N)[:k]
             Ck = Ck[indexes].view(k, D)  #(1, k, D)
-            # centers will be normalized from the very beginning, later only norm other stuff
+            # centers will be normalized from the very beginning and kept like that, later only norm points (AND re-normalize centers after each epoch-iter)
             if norm_vec_len:
-                # print("centers", Ck.shape)
                 CkLengths = torch.sqrt((Ck*Ck).sum(1))
-                # print("centers", CkLengths.shape)
                 Ck = Ck / CkLengths.view(-1, 1)
-                # CkLengths2 = torch.sqrt((Ck*Ck).sum(1))
-                # print("********** cluster lengths after norm min, max", CkLengths2.min(), CkLengths2.max())
             Ck = Ck.view(1, k, D)
     else:
         Ck = start_clusters
@@ -123,12 +105,8 @@ def kMeanGPU(dataLoader, featureMaker, k, n_group=1,
 
     clusterStep = kMeanClusterStep(k, D, norm_vec_len=norm_vec_len).cuda()
     clusterStep = torch.nn.DataParallel(clusterStep)
-    # CkLengths2 = torch.sqrt((Ck[0]*Ck[0]).sum(1))
-    # print("********** cluster lengths after norm min, max", CkLengths2.min(), CkLengths2.max())
     clusterStep.module.Ck.copy_(Ck)
-    # CkLengths2 = torch.sqrt((clusterStep.module.Ck[0]*clusterStep.module.Ck[0]).sum(1))
-    # print("!!!!!!!!!!!!!!! set cluster lengths after norm min, max", CkLengths2.min().item(), CkLengths2.max().item())
-
+    
     bar = progressbar.ProgressBar(maxval=MAX_ITER)
     bar.start()
     iter, stored = 0, 0
@@ -169,10 +147,6 @@ def kMeanGPU(dataLoader, featureMaker, k, n_group=1,
 
             lastDiff = (clusterStep.module.Ck - Ck1).norm(dim=2).max().item()
             nItems = int(nItemsClusters.sum().cpu().detach().item())
-            # CkLengths2 = torch.sqrt((clusterStep.module.Ck[0]*clusterStep.module.Ck[0]).sum(1))
-            # print("!!!!!!!!!!!!!!! prev cluster lengths after norm min, max", CkLengths2.min().item(), CkLengths2.max().item())
-            # Ck1Lengths2 = torch.sqrt((Ck1[0]*Ck1[0]).sum(1))
-            # print("!!!!!!!!!!!!!!!1 cluster lengths after norm min, max", Ck1Lengths2.min().item(), Ck1Lengths2.max().item())
             info=f"ITER {iter} done in {time()-start_time:.2f} seconds. nItems: {nItems}. Difference with last checkpoint: {lastDiff}"
             print(info)
             with open(join(save_dir, "training_logs.txt"), "a") as f:

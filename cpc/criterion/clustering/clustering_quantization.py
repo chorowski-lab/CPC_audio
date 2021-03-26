@@ -200,24 +200,18 @@ def main(argv):
                                                     maxSizeSeq=args.max_size_seq,
                                                     batch_size=args.batch_size)
             if args.norm_vec_len:
-                # print("0", args.batch_size, res0.shape)
+                # [!] we actually used CPC_audio/scripts/quantize_audio.py for that in the end
                 res0Lengths = torch.sqrt((res0*res0).sum(2))
-                # print("0", args.batch_size, res0Lengths.shape)
                 res0 = res0 / res0Lengths.view(*(res0Lengths.shape), 1)
-            # res0Lengths2 = torch.sqrt((res0*res0).sum(2))
-            # print("lengths: min, max", res0Lengths2.min(), res0Lengths2.max())
             return res0
         else:
             res0 = buildFeature(featureMaker, x,
                                 seqNorm=False,
                                 strict=args.strict)
             if args.norm_vec_len:
-                #print("1", res0.shape)
+                # [!] we actually used CPC_audio/scripts/quantize_audio.py for that in the end
                 res0Lengths = torch.sqrt((res0*res0).sum(2))
-                #print("1", res0Lengths.shape)
                 res0 = res0 / res0Lengths.view(*(res0Lengths.shape), 1)
-                # res0Lengths2 = torch.sqrt((res0*res0).sum(2))
-                # print("lengths: min, max", res0Lengths2.min(), res0Lengths2.max())
             return res0
     print("CPC FeatureMaker loaded!")
     
