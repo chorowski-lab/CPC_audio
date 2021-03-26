@@ -142,9 +142,6 @@ def getEncoder(args):
     elif args.encoder_type == 'lfb':
         from .model import LFBEnconder
         return LFBEnconder(args.hiddenEncoder)
-    elif args.encoder_type == 'smart':
-        from .model import CPCSmartpoolEncoder
-        return CPCSmartpoolEncoder(args.hiddenEncoder, args.normMode)
     else:
         from .model import CPCEncoder
         return CPCEncoder(args.hiddenEncoder, args.normMode)

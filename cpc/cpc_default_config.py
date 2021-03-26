@@ -64,7 +64,7 @@ def set_default_cpc_config(parser):
                        choices=['reverse', 'none'],
                        help='Some variations on CPC.')
     group.add_argument('--encoder_type', type=str,
-                       choices=['cpc', 'mfcc', 'lfb', 'smart'],
+                       choices=['cpc', 'mfcc', 'lfb'],
                        default='cpc',
                        help='Replace the encoder network by mfcc features '
                        'or learned filter banks')
