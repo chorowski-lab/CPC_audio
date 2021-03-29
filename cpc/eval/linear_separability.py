@@ -19,7 +19,7 @@ from cpc.dataset import AudioBatchData, findAllSeqs, filterSeqs, parseSeqLabels
 from cpc.model import CPCModelNullspace
 
 
-def train_step(feature_maker, criterion, data_loader, optimizer):
+def train_step(feature_maker, criterion, data_loader, optimizer, centerPushSettings):
 
     if feature_maker.optimize:
         feature_maker.train()
@@ -34,6 +34,10 @@ def train_step(feature_maker, criterion, data_loader, optimizer):
         c_feature, encoded_data, _ = feature_maker(batch_data, None)
         if not feature_maker.optimize:
             c_feature, encoded_data = c_feature.detach(), encoded_data.detach()
+        if centerPushSettings:
+            centers, pushDeg = centerPushSettings
+            c_feature = utils.pushToClosestForBatch(c_feature, centers, deg=pushDeg)
+            encoded_data = utils.pushToClosestForBatch(encoded_data, centers, deg=pushDeg)
         all_losses, all_acc = criterion(c_feature, encoded_data, label)
         totLoss = all_losses.sum()
         totLoss.backward()
@@ -48,7 +52,7 @@ def train_step(feature_maker, criterion, data_loader, optimizer):
     return logs
 
 
-def val_step(feature_maker, criterion, data_loader):
+def val_step(feature_maker, criterion, data_loader, centerPushSettings):
 
     feature_maker.eval()
     criterion.eval()
@@ -59,6 +63,10 @@ def val_step(feature_maker, criterion, data_loader):
         with torch.no_grad():
             batch_data, label = fulldata
             c_feature, encoded_data, _ = feature_maker(batch_data, None)
+            if centerPushSettings:
+                centers, pushDeg = centerPushSettings
+                c_feature = utils.pushToClosestForBatch(c_feature, centers, deg=pushDeg)
+                encoded_data = utils.pushToClosestForBatch(encoded_data, centers, deg=pushDeg)
             all_losses, all_acc = criterion(c_feature, encoded_data, label)
 
             logs["locLoss_val"] += np.asarray([all_losses.mean().item()])
@@ -76,7 +84,8 @@ def run(feature_maker,
         optimizer,
         logs,
         n_epochs,
-        path_checkpoint):
+        path_checkpoint,
+        centerPushSettings):
 
     start_epoch = len(logs["epoch"])
     best_acc = -1
@@ -86,8 +95,8 @@ def run(feature_maker,
     for epoch in range(start_epoch, n_epochs):
 
         logs_train = train_step(feature_maker, criterion, train_loader,
-                                optimizer)
-        logs_val = val_step(feature_maker, criterion, val_loader)
+                                optimizer, centerPushSettings)
+        logs_val = val_step(feature_maker, criterion, val_loader, centerPushSettings)
         print('')
         print('_'*50)
         print(f'Ran {epoch + 1} epochs '
@@ -191,6 +200,10 @@ def parse_args(argv):
     parser.add_argument('--gru_level', type=int, default=-1,
                         help='Hidden level of the LSTM autoregressive model to be taken'
                         '(default: -1, last layer).')
+
+    parser.add_argument('--centerpushFile', type=str, default=None, help="path to checkpoint containing cluster centers")
+    parser.add_argument('--centerpushDeg', type=float, default=None, help="part of (euclidean) distance to push to the center")
+
     args = parser.parse_args(argv)
     if args.nGPU < 0:
         args.nGPU = torch.cuda.device_count()
@@ -362,8 +375,23 @@ def main(argv):
     with open(f"{args.pathCheckpoint}_args.json", 'w') as file:
         json.dump(vars(args), file, indent=2)
 
+    if args.centerpushFile:
+        clustersFileExt = args.centerpushFile.split('.')[-1]
+        assert clustersFileExt in ('pt', 'npy', 'txt')
+        if clustersFileExt == 'npy':
+            centers = np.load(args.centerpushFile)
+        elif clustersFileExt == 'txt':
+            centers = np.genfromtxt(args.centerpushFile)
+        elif clustersFileExt == 'pt':  # assuming it's a checkpoint
+            centers = torch.load(args.centerpushFile, map_location=torch.device('cpu'))['state_dict']['Ck']
+            centers = torch.reshape(centers, centers.shape[1:]).numpy()
+        centers = torch.tensor(centers).cuda()
+        centerPushSettings = (centers, args.centerpushDeg)
+    else:
+        centerPushSettings = None
+
     run(model, criterion, train_loader, val_loader, optimizer, logs,
-        args.n_epoch, args.pathCheckpoint)
+        args.n_epoch, args.pathCheckpoint, centerPushSettings)
 
 
 if __name__ == "__main__":
