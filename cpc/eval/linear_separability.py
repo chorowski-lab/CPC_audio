@@ -16,9 +16,11 @@ import cpc.criterion as cr
 import cpc.feature_loader as fl
 import cpc.utils.misc as utils
 from cpc.dataset import AudioBatchData, findAllSeqs, filterSeqs, parseSeqLabels
+from cpc.model import CPCModelNullspace
 
 
-def train_step(feature_maker, criterion, data_loader, optimizer, label_key):
+
+def train_step(feature_maker, criterion, data_loader, optimizer, label_key, centerPushSettings):
 
     if feature_maker.optimize:
         feature_maker.train()
@@ -34,7 +36,13 @@ def train_step(feature_maker, criterion, data_loader, optimizer, label_key):
         c_feature, encoded_data, _ = feature_maker(batch_data, None)
         if not feature_maker.optimize:
             c_feature, encoded_data = c_feature.detach(), encoded_data.detach()
-        all_losses, all_acc  = criterion(c_feature, encoded_data, label)
+
+        if centerPushSettings:
+            centers, pushDeg = centerPushSettings
+            c_feature = utils.pushToClosestForBatch(c_feature, centers, deg=pushDeg)
+            encoded_data = utils.pushToClosestForBatch(encoded_data, centers, deg=pushDeg)
+        all_losses, all_acc = criterion(c_feature, encoded_data, label)
+
         totLoss = all_losses.sum()
         totLoss.backward()
         optimizer.step()
@@ -48,7 +56,7 @@ def train_step(feature_maker, criterion, data_loader, optimizer, label_key):
     return logs
 
 
-def val_step(feature_maker, criterion, data_loader, label_key):
+def val_step(feature_maker, criterion, data_loader, label_key, centerPushSettings):
 
     feature_maker.eval()
     criterion.eval()
@@ -60,6 +68,10 @@ def val_step(feature_maker, criterion, data_loader, label_key):
             batch_data, label_data = fulldata
             label = label_data[label_key]
             c_feature, encoded_data, _ = feature_maker(batch_data, None)
+            if centerPushSettings:
+                centers, pushDeg = centerPushSettings
+                c_feature = utils.pushToClosestForBatch(c_feature, centers, deg=pushDeg)
+                encoded_data = utils.pushToClosestForBatch(encoded_data, centers, deg=pushDeg)
             all_losses, all_acc = criterion(c_feature, encoded_data, label)
 
             logs["locLoss_val"] += np.asarray([all_losses.mean().item()])
@@ -78,7 +90,8 @@ def run(feature_maker,
         logs,
         n_epochs,
         path_checkpoint,
-        label_key):
+        label_key,
+        centerPushSettings):
 
     start_epoch = len(logs["epoch"])
     best_acc = -1
@@ -88,8 +101,9 @@ def run(feature_maker,
     for epoch in range(start_epoch, n_epochs):
 
         logs_train = train_step(feature_maker, criterion, train_loader,
-                                optimizer, label_key)
-        logs_val = val_step(feature_maker, criterion, val_loader, label_key)
+                                optimizer, label_key, centerPushSettings)
+        logs_val = val_step(feature_maker, criterion, val_loader, label_key, centerPushSettings)
+
         print('')
         print('_'*50)
         print(f'Ran {epoch + 1} epochs '
@@ -141,7 +155,8 @@ def trainLinsepClassification(
         path_best_checkpoint,
         n_epochs,
         cpc_epoch,
-        label_key):
+        label_key,
+        centerpushSettings=None):
 
     wasOptimizeCPC = feature_maker.optimize if hasattr(feature_maker, 'optimize') else None
     feature_maker.eval()
@@ -158,8 +173,8 @@ def trainLinsepClassification(
     for epoch in range(start_epoch, n_epochs):
 
         logs_train = train_step(feature_maker, criterion, train_loader,
-                                optimizer, label_key)
-        logs_val = val_step(feature_maker, criterion, val_loader, label_key)
+                                optimizer, label_key, centerpushSettings=centerpushSettings)
+        logs_val = val_step(feature_maker, criterion, val_loader, label_key, centerpushSettings=centerpushSettings)
         print('')
         print('_'*50)
         print(f'Ran {epoch + 1} {label_key} classification epochs '
@@ -261,6 +276,28 @@ def parse_args(argv):
                         " changed.")
     parser.add_argument('--size_window', type=int, default=20480,
                         help="Number of frames to consider in each batch.")
+    parser.add_argument('--n_process_loader', type=int, default=8,
+                          help='Number of processes to call to load the '
+                          'dataset')
+    parser.add_argument('--max_size_loaded', type=int, default=4000000000,
+                          help='Maximal amount of data (in byte) a dataset '
+                          'can hold in memory at any given time')
+    parser.add_argument("--model", type=str, default="cpc",
+                          help="Pre-trained model architecture ('cpc' [default] or 'wav2vec2').")
+    parser.add_argument("--path_fairseq", type=str, default="/pio/scratch/1/i273233/fairseq",
+                          help="Path to the root of fairseq repo.")
+    parser.add_argument("--mode", type=str, default="phonemes",
+                          help="Mode for example phonemes, speakers, speakers_factorized, phonemes_nullspace")
+    parser.add_argument("--path_speakers_factorized", type=str, default="/pio/scratch/1/i273233/linear_separability/cpc/cpc_official_speakers_factorized/checkpoint_9.pt",
+                          help="Path to the checkpoint from speakers factorized")
+    parser.add_argument('--dim_inter', type=int, default=128, help="Dimension between factorized matrices (dim_features x dim_inter) x (dim_inter x len(speakers)) ")
+    parser.add_argument('--gru_level', type=int, default=-1,
+                        help='Hidden level of the LSTM autoregressive model to be taken'
+                        '(default: -1, last layer).')
+
+    parser.add_argument('--centerpushFile', type=str, default=None, help="path to checkpoint containing cluster centers")
+    parser.add_argument('--centerpushDeg', type=float, default=None, help="part of (euclidean) distance to push to the center")
+
     args = parser.parse_args(argv)
     if args.nGPU < 0:
         args.nGPU = torch.cuda.device_count()
@@ -283,18 +320,91 @@ def main(argv):
                                      extension=args.file_extension,
                                      loadCache=not args.ignore_cache)
 
-    model, hidden_gar, hidden_encoder = fl.loadModel(args.load,
+    if args.model == "cpc":
+        def loadCPCFeatureMaker(pathCheckpoint, gru_level=-1, get_encoded=False, keep_hidden=True):
+            """
+            Load CPC Feature Maker from CPC checkpoint file.
+            """
+            # Set LSTM level
+            if gru_level is not None and gru_level > 0:
+                updateConfig = argparse.Namespace(nLevelsGRU=gru_level)
+            else:
+                updateConfig = None
+
+            # Load CPC model
+            model, nHiddenGar, nHiddenEncoder = fl.loadModel(pathCheckpoint, updateConfig=updateConfig)
+            
+            # Keep hidden units at LSTM layers on sequential batches
+            model.gAR.keepHidden = keep_hidden
+
+            # Build CPC Feature Maker from CPC model
+            #featureMaker = fl.FeatureModule(model, get_encoded=get_encoded)
+
+            #return featureMaker
+            return model, nHiddenGar, nHiddenEncoder
+
+        if args.gru_level is not None and args.gru_level > 0:
+            model, hidden_gar, hidden_encoder = loadCPCFeatureMaker(args.load, gru_level=args.gru_level)
+        else:
+            model, hidden_gar, hidden_encoder = fl.loadModel(args.load,
                                                      loadStateDict=not args.no_pretraining)
-    model.cuda()
-    model = torch.nn.DataParallel(model, device_ids=range(args.nGPU))
 
-    dim_features = hidden_encoder if args.get_encoded else hidden_gar
+        dim_features = hidden_encoder if args.get_encoded else hidden_gar
+    else:
+        sys.path.append(os.path.abspath(args.path_fairseq))
+        from fairseq import checkpoint_utils
 
+        def loadCheckpoint(path_checkpoint, path_data):
+            """
+            Load lstm_lm model from checkpoint.
+            """
+            # Set up the args Namespace
+            model_args = argparse.Namespace(
+                task="language_modeling",
+                output_dictionary_size=-1,
+                data=path_data,
+                path=path_checkpoint
+                )
+            
+            # Load model
+            models, _model_args = checkpoint_utils.load_model_ensemble([model_args.path])
+            model = models[0]
+            return model
+
+        model = loadCheckpoint(args.load[0], args.pathDB)
+        dim_features = 768
+
+    dim_inter = args.dim_inter
     # Now the criterion
+
+    if args.mode == "phonemes_nullspace" or args.mode == "speakers_nullspace":
+        speakers_factorized = cr.SpeakerDoubleCriterion(dim_features, dim_inter, len(speakers))
+        speakers_factorized.load_state_dict(torch.load(args.path_speakers_factorized)["cpcCriterion"])
+        for param in speakers_factorized.parameters():
+            param.requires_grad = False
+
+        def my_nullspace(At, rcond=None):
+            ut, st, vht = torch.Tensor.svd(At, some=False,compute_uv=True)
+            vht=vht.T        
+            Mt, Nt = ut.shape[0], vht.shape[1] 
+            if rcond is None:
+                rcondt = torch.finfo(st.dtype).eps * max(Mt, Nt)
+            tolt = torch.max(st) * rcondt
+            numt= torch.sum(st > tolt, dtype=int)
+            nullspace = vht[numt:,:].T.cpu().conj()
+            # nullspace.backward(torch.ones_like(nullspace),retain_graph=True)
+            return nullspace
+
+        dim_features = dim_features - dim_inter
+        nullspace = my_nullspace(speakers_factorized.linearSpeakerClassifier[0].weight)
+        model = CPCModelNullspace(model, nullspace)
+
     phone_labels = None
     if args.pathPhone is not None:
+
         phone_labels, n_phones = parseSeqLabels(args.pathPhone)
         label_key = 'phone'
+
         if not args.CTC:
             print(f"Running phone separability with aligned phones")
             criterion = cr.PhoneCriterion(dim_features,
@@ -306,9 +416,15 @@ def main(argv):
     else:
         label_key = 'speaker'
         print(f"Running speaker separability")
-        criterion = cr.SpeakerCriterion(dim_features, len(speakers))
+        if args.mode == "speakers_factorized":
+            criterion = cr.SpeakerDoubleCriterion(dim_features, dim_inter, len(speakers))
+        else:
+            criterion = cr.SpeakerCriterion(dim_features, len(speakers))
     criterion.cuda()
     criterion = torch.nn.DataParallel(criterion, device_ids=range(args.nGPU))
+
+    model.cuda()
+    model = torch.nn.DataParallel(model, device_ids=range(args.nGPU))
 
     # Dataset
     seq_train = filterSeqs(args.pathTrain, seqNames)
@@ -319,9 +435,10 @@ def main(argv):
         seq_val = seq_val[:100]
 
     db_train = AudioBatchData(args.pathDB, args.size_window, seq_train,
-                              phone_labels, len(speakers))
+                              phone_labels, len(speakers), nProcessLoader=args.n_process_loader,
+                                  MAX_SIZE_LOADED=args.max_size_loaded)
     db_val = AudioBatchData(args.pathDB, args.size_window, seq_val,
-                            phone_labels, len(speakers))
+                            phone_labels, len(speakers), nProcessLoader=args.n_process_loader)
 
     batch_size = args.batchSizeGPU * args.nGPU
 
@@ -356,11 +473,31 @@ def main(argv):
     with open(f"{args.pathCheckpoint}_args.json", 'w') as file:
         json.dump(vars(args), file, indent=2)
 
+    if args.centerpushFile:
+        clustersFileExt = args.centerpushFile.split('.')[-1]
+        assert clustersFileExt in ('pt', 'npy', 'txt')
+        if clustersFileExt == 'npy':
+            centers = np.load(args.centerpushFile)
+        elif clustersFileExt == 'txt':
+            centers = np.genfromtxt(args.centerpushFile)
+        elif clustersFileExt == 'pt':  # assuming it's a checkpoint
+            centers = torch.load(args.centerpushFile, map_location=torch.device('cpu'))['state_dict']['Ck']
+            centers = torch.reshape(centers, centers.shape[1:]).numpy()
+        centers = torch.tensor(centers).cuda()
+        centerPushSettings = (centers, args.centerpushDeg)
+    else:
+        centerPushSettings = None
+
     run(model, criterion, train_loader, val_loader, optimizer, logs,
-        args.n_epoch, args.pathCheckpoint, label_key)
+        args.n_epoch, args.pathCheckpoint, label_key, centerPushSettings)
 
 
 if __name__ == "__main__":
+    #import ptvsd
+    #ptvsd.enable_attach(('0.0.0.0', 7310))
+    #print("Attach debugger now")
+    #ptvsd.wait_for_attach()
+    
     torch.multiprocessing.set_start_method('spawn')
     args = sys.argv[1:]
     main(args)

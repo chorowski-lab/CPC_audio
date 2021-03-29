@@ -288,6 +288,25 @@ class CPCModel(nn.Module):
         cFeature = self.gAR(encodedData)
         return cFeature, encodedData, label
 
+class CPCModelNullspace(nn.Module):
+
+    def __init__(self,
+                 cpc,
+                 nullspace):
+
+        super(CPCModelNullspace, self).__init__()
+        self.cpc = cpc
+        self.nullspace = nn.Linear(nullspace.shape[0], nullspace.shape[1], bias=False)
+        self.nullspace.weight = nn.Parameter(nullspace.T)
+        self.gEncoder = self.cpc.gEncoder
+
+
+    def forward(self, batchData, label):
+        cFeature, encodedData, label = self.cpc(batchData, label)
+        cFeature = self.nullspace(cFeature)
+        encodedData = self.nullspace(encodedData)
+        return cFeature, encodedData, label
+
 
 class ConcatenatedModel(nn.Module):
 
