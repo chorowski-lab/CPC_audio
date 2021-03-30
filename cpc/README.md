@@ -84,3 +84,16 @@ python train.py --pathDB /pio/scratch/1/i283340/MGR/zs/ds2
 --CPCCTCSelfLoop --CPCCTCSkipBeg 1 --CPCCTCSkipEnd 2
 ```
 
+Example with just capturing:
+```
+python train.py --pathDB /pio/data/zerospeech2021/LibriSpeech/train-clean-100 --onlyCapture \
+--pathCaptureDS /pio/scratch/2/jch/wav2vec/LibriSpeech100_labels_split/test_split.txt \
+--captureDStotNr 100 \
+--pathCaptureSave /pio/gluster/i283340/cpccapture/ls100_cpcctc_match12_pred8/ \
+--captureRepr --captureCtx --captureSpeakerAlign --capturePhoneAlign --capturePred --captureCPCCTCalign \
+--path_phone_data /pio/scratch/1/i283340/MGR/zs/phones/converted_aligned_phones.txt \
+--pathCheckpoint /pio/gluster/i283340/modelcpy/ls100_cpcctc_match12_pred8 \
+--file_extension .flac \
+--normMode layerNorm --dropout --rnnMode transformer --n_process_loader 1 --max_size_loaded 4000000000 --nLevelsGRU 2 \
+--batchSizeGPU 32 --limitNegsInBatch 8 --schedulerRamp 10 --nPredicts 8 --CPCCTC --CPCCTCNumMatched 12
+```
