@@ -8,6 +8,8 @@ import torchaudio
 
 import torch
 
+import math
+
 ###########################################
 # Networks
 ###########################################
@@ -272,21 +274,174 @@ class BiDIRAR(nn.Module):
 # Model
 ###########################################
 
+def seDistancesToCentroidsCpy(vecs, centroids, doNorm=False):
+    #print(torch.square(centroids).sum(1).view(1,-1).shape, torch.square(vecs).sum(1).view(-1,1).shape, torch.matmul(vecs, centroids.T).shape)
+    if len(vecs.shape) == 2:
+        vecs = vecs.view(1, *(vecs.shape))
+    B = vecs.shape[0]
+    N = vecs.shape[1]
+    k = centroids.shape[0]
+    # vecs: B x L x Dim
+    # centroids: k x Dim
+    if doNorm:
+        vecLengths = torch.sqrt((vecs*vecs).sum(-1))
+        vecs = vecs / vecLengths.view(B, N, 1)
+        centrLengths = torch.sqrt((centroids*centroids).sum(-1))
+        centroids = centroids / centrLengths.view(k, 1)
+        # print(vecLengths)
+        # print(centrLengths)
+        # vecLengths2 = (vecs*vecs).sum(-1)
+        # print(f'vec lengths after norm from {vecLengths2.min().item()} to {vecLengths2.max().item()}')
+        # centrLengths2 = (centroids*centroids).sum(-1)
+        # print(f'center lengths after norm from {centrLengths2.min().item()} to {centrLengths2.max().item()}')
+    # print(torch.square(centroids).sum(1).view(1, 1, -1).shape, torch.square(vecs).sum(-1).view(B, N, 1).shape,
+    #     (vecs.view(B, N, 1, -1) * centroids.view(1, 1, k, -1)).sum(-1).shape,
+    #     vecs.view(B, N, 1, -1).shape, centroids.view(1, 1, k, -1).shape)
+    return torch.square(centroids).sum(1).view(1, 1, -1) + torch.square(vecs).sum(-1).view(B, N, 1) \
+        - 2*(vecs.view(B, N, 1, -1) * centroids.view(1, 1, k, -1)).sum(-1)  #torch.matmul(vecs, centroids.T)
+
 
 class CPCModel(nn.Module):
 
     def __init__(self,
                  encoder,
-                 AR):
+                 AR, 
+                 fcmSettings=None):
 
         super(CPCModel, self).__init__()
         self.gEncoder = encoder
         self.gAR = AR
+        self.fcm = fcmSettings is not None
+        print(f'--------- FCM: {self.fcm} ----------')
+        if self.fcm:
+            # caution - need to set args.hiddenGar to same as args.FCMprotos
+            self.numProtos = fcmSettings["numProtos"]
+            self.mBeforeAR = fcmSettings["mBeforeAR"]
+            self.leftProtos = fcmSettings["leftProtos"]  # either m OR pushDeg
+            self.pushDegFeatureBeforeAR = fcmSettings["pushDegFeatureBeforeAR"]
+            self.mAfterAR = fcmSettings["mAfterAR"]
+            self.pushDegCtxAfterAR = fcmSettings["pushDegCtxAfterAR"]
+            self.pushDegAllAfterAR = fcmSettings["pushDegAllAfterAR"]
+            # encoder.getDimOutput() is what was fed to AR and had to be same as AR.getDimOutput() for sim
+            # now replacing encoder.getDimOutput() with self.numProto dims in case with m, leaving with pushDeg
+            assert self.mBeforeAR is None or self.mAfterAR is None
+            assert self.pushDegCtxAfterAR is None or self.pushDegAllAfterAR  is None  # if push both, use only the latter
+            if self.mBeforeAR is not None or self.mAfterAR is not None:
+                assert self.pushDegFeatureBeforeAR is None and self.pushDegCtxAfterAR is None and self.pushDegAllAfterAR is None
+            if self.mBeforeAR is not None:
+                assert self.numProtos == AR.getDimOutput()
+            #if self.leftProtos is not None and self.leftProtos > 0:
+            elif self.mAfterAR is not None:
+                pass  # in this case needed to pass correct AR output (changed) dim to criterion
+            elif self.pushDegFeatureBeforeAR is not None or self.pushDegCtxAfterAR is not None or self.pushDegAllAfterAR is not None:
+                # no dim change in those cases
+                assert encoder.getDimOutput() == AR.getDimOutput()
+                assert self.leftProtos is None
+            self.reprDim = encoder.getDimOutput()
+            print("----------------------Adding protos as parameter---------------------")
+            # seems it's needed to also add requires_grad on the tensor step
+            self.protos = nn.Parameter(torch.randn((self.numProtos, self.reprDim), requires_grad=True) / math.sqrt(self.reprDim), requires_grad=True)  # TODO check
 
     def forward(self, batchData, label):
         encodedData = self.gEncoder(batchData).permute(0, 2, 1)
+        #print("!", encodedData.shape)
+        if self.fcm:
+            # could just invoke with some of those as None but this way it's more readable I guess
+            if self.mBeforeAR is not None:
+                encodedData = CPCModel._FCMlikeBelong(encodedData, self.protos, self.mBeforeAR, None)
+            elif self.pushDegFeatureBeforeAR is not None:
+                encodedData = CPCModel._FCMlikeBelong(encodedData, self.protos, None, self.pushDegFeatureBeforeAR)
+        #print("!!", encodedData.shape)
         cFeature = self.gAR(encodedData)
+        if self.fcm:
+            
+            B = cFeature.shape[0]
+            N = cFeature.shape[1]
+
+            if self.mBeforeAR is not None:
+                # normalization - as encodedData is normalized, making LSTM's life easier
+                # and not forcing it to figure normalization out itself, when 
+                # making good things bigger only seems good up to 1 and later weird stuff happens
+                cFeatureLengths = torch.sqrt((cFeature*cFeature).sum(-1))
+                cFeature = cFeature / torch.clamp(cFeatureLengths.view(B, N, 1), min=0.00000001)
+
+                # cut "transition" protos after LSTM, before CPC criterion
+                # only makes sense in mBeforeAR case
+                if self.leftProtos and self.leftProtos > 0:
+                    encodedData = encodedData[:, :self.leftProtos]
+                    cFeature = cFeature[:, :self.leftProtos]
+
+            elif self.mAfterAR is not None:
+                encodedData = CPCModel._FCMlikeBelong(encodedData, self.protos, self.mAfterAR, None)
+                cFeature = CPCModel._FCMlikeBelong(cFeature, self.protos, self.mAfterAR, None)
+
+            if self.pushDegCtxAfterAR is not None:
+                cFeature = CPCModel._FCMlikeBelong(cFeature, self.protos, None, self.pushDegCtxAfterAR)
+
+            if self.pushDegAllAfterAR is not None:
+                encodedData = CPCModel._FCMlikeBelong(encodedData, self.protos, None, self.pushDegAllAfterAR)
+                cFeature = CPCModel._FCMlikeBelong(cFeature, self.protos, None, self.pushDegAllAfterAR)
+
         return cFeature, encodedData, label
+
+    @staticmethod
+    def _FCMlikeBelong(points, centers, m=None, pushDeg=None):  # for pushDeg no FCM; pushDeg OR m? TODO BUT COULD ALSO TRY THAT WEIGHTED PUSH
+
+        distsSq = seDistancesToCentroidsCpy(points, centers)
+        #print(distsSq.dtype)
+        dists = distsSq  #torch.sqrt(distsSq)  TODO avoiding nans
+        # dists: B x N x k
+
+        k = dists.shape[2]
+        N = points.shape[1]
+        B = points.shape[0]
+
+        #print(dists.shape)
+
+        if m is not None:
+            distsRev = 1. / torch.clamp(dists, min=0.00000001)  #torch.maximum(dists, torch.tensor(0.00000001).cuda())
+            # print("________________________")
+            # print(dists, distsRev)
+            # print('========================')
+            #print(distsRev.shape, k)
+            distsRev3dim = distsRev.view(*(distsRev.shape[:2]), 1, k)
+            dists3dim = dists.view(*dists.shape, 1)
+            distsDiv = dists3dim * distsRev3dim
+            powed = torch.pow(distsDiv, 1./(m-1.))  #2./(m-1.))  TODO avoiding nans
+            # print(distsDiv)
+            # print(powed)
+            denomin = torch.sum(powed, (-1))
+            # print(denomin)
+            res = 1. / torch.clamp(denomin, min=0.00000001)  #torch.maximum(denomin, torch.tensor(0.00000001).cuda())
+
+        elif pushDeg is not None:  # centerpush
+            #print(res.shape, centers.shape)
+            #print(res)
+            #print(points.view(points.shape[0], 1, points.shape[1]).shape, centers.view(1, centers.shape[0], centers.shape[1]).shape)
+            # diffs = points.view(points.shape[0], 1, points.shape[1]) - centers.view(1, centers.shape[0], centers.shape[1])
+            # #print(diffs.shape, res.shape)
+            # resNotSummed = (1 - deg * res.view(*res.shape, 1)) * diffs + centers  #torch.matmul(res, diffs) #+ centers #torch.matmul(res, centers)
+            # #print(resNotSummed.shape, res.shape)
+            # resNotAvg = k*res.view(*res.shape, 1) * resNotSummed   # TODO here add how close to go & also try to even more force far clusters not to affect
+            # #print(resNotAvg.shape)
+            # res = resNotAvg.mean((1,))
+            #print(res.shape)
+            #res = torch.matmul(res, centers)
+            #dists = dists.view(*dists.shape[1:])
+            #print("!!!!", dists.shape)
+            # print(dists.shape)
+            closest = dists.argmin(-1)
+            # print(points.shape, closest.shape, centers[closest].view(N, -1).shape)
+            diffs = centers[closest].view(B, N, -1) - points
+            res = pushDeg * diffs + points
+            # print(diffs.shape)
+
+        # print(distsRev3dim.shape, dists3dim.shape, distsDiv.shape, powed.shape, denomin.shape, res.shape)
+        #fcmNoPower = distsBy1 / distsBy1.sum(1).view(-1,1)  # it uses square distances, so it is like for m=2 NOT REALLY XD
+        # print(dists.shape, fcmNoPower.shape, k, distsBy1.sum(1).view(-1,1).shape)
+        # #fcm = torch.square(fcmNoPower)
+        # print(dists, distsBy1, distsBy1.sum(1), fcmNoPower)
+        return res
 
 
 class ConcatenatedModel(nn.Module):

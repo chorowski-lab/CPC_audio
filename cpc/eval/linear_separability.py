@@ -87,6 +87,8 @@ def run(feature_maker,
 
     for epoch in range(start_epoch, n_epochs):
 
+        sys.stdout.flush()
+
         logs_train = train_step(feature_maker, criterion, train_loader,
                                 optimizer, label_key)
         logs_val = val_step(feature_maker, criterion, val_loader, label_key)
@@ -156,6 +158,8 @@ def trainLinsepClassification(
     start_time = time.time()
 
     for epoch in range(start_epoch, n_epochs):
+
+        sys.stdout.flush()
 
         logs_train = train_step(feature_maker, criterion, train_loader,
                                 optimizer, label_key)

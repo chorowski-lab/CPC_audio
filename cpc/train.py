@@ -31,11 +31,28 @@ def getCriterion(args, downsampling, nSpeakers, nPhones):
             cpcCriterion = cr.NoneCriterion()
         else:
             sizeInputSeq = (args.sizeWindow // downsampling)
+
+            if args.FCMproject and args.FCMmBeforeAR:
+                # this could be replaced with encoder.getOutDim, but didn't want to change signature
+                encoderOutDimForCriterion = args.FCMprotos
+                # [!] args.hiddenGar already updated with possible FCM dim stuff in main train script
+                #     it is the actual AR dimension - so only needs to be changed here in case of FCMmAfterAR
+                #     changes the dimension after AR
+                ARoutDimForCriterion = args.hiddenGar  # but actually should also be == args.FCMprotos
+
+            elif args.FCMproject and args.FCMmAfterAR:
+                encoderOutDimForCriterion = args.FCMprotos
+                ARoutDimForCriterion = args.FCMprotos
+
+            else:
+                encoderOutDimForCriterion = args.hiddenEncoder
+                ARoutDimForCriterion = args.hiddenGar
+                
             if args.CPCCTC:
                 cpcCriterion = sa.CPCUnsupersivedCriterion(args.nPredicts,
                                                         args.CPCCTCNumMatched,
-                                                        args.hiddenGar,
-                                                        args.hiddenEncoder,
+                                                        ARoutDimForCriterion,
+                                                        encoderOutDimForCriterion,
                                                         args.negativeSamplingExt,
                                                         allowed_skips_beg=args.CPCCTCSkipBeg,
                                                         allowed_skips_end=args.CPCCTCSkipEnd,
@@ -50,8 +67,8 @@ def getCriterion(args, downsampling, nSpeakers, nPhones):
 
             else:
                 cpcCriterion = cr.CPCUnsupersivedCriterion(args.nPredicts,
-                                                        args.hiddenGar,
-                                                        args.hiddenEncoder,
+                                                        ARoutDimForCriterion,
+                                                        encoderOutDimForCriterion,
                                                         args.negativeSamplingExt,
                                                         mode=args.cpc_mode,
                                                         rnnMode=args.rnnMode,
@@ -306,6 +323,7 @@ def run(trainDataset,
     for epoch in range(startEpoch, nEpoch):
 
         print(f"Starting epoch {epoch}")
+        sys.stdout.flush()
         utils.cpu_stats()
 
         trainLoader = trainDataset.getDataLoader(batchSize, samplingMode,
@@ -401,7 +419,8 @@ def main(args):
     logs = {"epoch": [], "iter": [], "saveStep": args.save_step}
     loadOptimizer = False
     os.makedirs(args.pathCheckpoint, exist_ok=True)
-    json.dump(vars(args), open(os.path.join(args.pathCheckpoint, 'checkpoint_args.json'), 'wt'))
+    # needed to move thing below later, as adding some args later
+    #json.dump(vars(args), open(os.path.join(args.pathCheckpoint, 'checkpoint_args.json'), 'wt'))
     if args.pathCheckpoint is not None and not args.restart:
         cdata = fl.getCheckpointData(args.pathCheckpoint)
         if cdata is not None:
@@ -482,6 +501,11 @@ def main(args):
             print("Loading the phone labels at " + args.pathPhone)
             phoneLabels, nPhones = parseSeqLabels(args.pathPhone)
             print(f"{nPhones} phones found")
+        if args.supervised_classif_metric and args.path_phone_data is not None:
+            # so that can use same DS for train & for classif metric
+            print("Loading the phone labels at " + args.path_phone_data)
+            phoneLabels, nPhones = parseSeqLabels(args.path_phone_data)
+            print(f"{nPhones} phones found")
 
         print("")
         print(f'Loading audio data at {args.pathDB}')
@@ -537,6 +561,39 @@ def main(args):
         captureDataset = None
         captureSetStatsCollector = None
 
+    if args.FCMproject:
+        fcmSettings = {
+            "numProtos": args.FCMprotos, 
+            "mBeforeAR": args.FCMmBeforeAR, 
+            "leftProtos": args.FCMleaveProtos,
+            "pushDegFeatureBeforeAR": args.FCMpushDegFeatureBeforeAR, 
+            "mAfterAR": args.FCMmAfterAR,
+            "pushDegCtxAfterAR": args.FCMpushDegCtxAfterAR,
+            "pushDegAllAfterAR": args.FCMpushDegAllAfterAR
+        }
+    else:
+        fcmSettings = None
+
+    if fcmSettings is not None:  
+        #locArgsCpy = deepcopy(locArgs)
+        if fcmSettings["mBeforeAR"] is not None:
+            args.ARinputDim = fcmSettings["numProtos"]
+            args.hiddenGar = fcmSettings["numProtos"]
+        elif fcmSettings["mAfterAR"] is not None:
+            args.ARinputDim = args.hiddenEncoder
+            pass  # in this case need to only pass changed dim to criterion,
+                  # as there is no dim change inside encoder nor AR nets
+        else:  # otherwise just pushing to closest proto, without dim change
+            args.ARinputDim = args.hiddenEncoder
+    else:
+        #locArgsCpy = deepcopy(locArgs)
+        args.ARinputDim = args.hiddenEncoder
+
+    print(f"ARinputDim: {args.ARinputDim}")
+
+    # here args are ready, can dump
+    json.dump(vars(args), open(os.path.join(args.pathCheckpoint, 'checkpoint_args.json'), 'wt'))
+
     if args.load is not None:
         # loadBestNotLast = args.onlyCapture or args.only_classif_metric
         # could use this option for loading best state when not running actual training
@@ -547,7 +604,7 @@ def main(args):
         #     in epoch 150, checkpoint from epoch 200 has "best from epoch 150" saved as globally best
         #     (but this is internal-CPC-score best anyway, which is quite vague)
         cpcModel, args.hiddenGar, args.hiddenEncoder = \
-            fl.loadModel(args.load)
+            fl.loadModel(args.load, fcmSettings=fcmSettings)
         CPChiddenGar, CPChiddenEncoder = args.hiddenGar, args.hiddenEncoder
     else:
         # Encoder network
@@ -555,7 +612,7 @@ def main(args):
         # AR Network
         arNet = fl.getAR(args)
 
-        cpcModel = model.CPCModel(encoderNet, arNet)
+        cpcModel = model.CPCModel(encoderNet, arNet, fcmSettings=fcmSettings)
 
         CPChiddenGar, CPChiddenEncoder = cpcModel.gAR.getDimOutput(), cpcModel.gEncoder.getDimOutput()
 
@@ -619,6 +676,10 @@ def main(args):
             scheduler.step()
 
     print("cpcModel", cpcModel)
+    print("cpcModelParams", list(map(lambda x: x.shape, cpcModel.parameters())))
+    for name, param in cpcModel.named_parameters():
+        if param.requires_grad:
+            print(f"param: {name}, {param.data.shape}")
     print("cpcCriterion", cpcCriterion)
 
     cpcModel = torch.nn.DataParallel(cpcModel,
@@ -628,14 +689,24 @@ def main(args):
     
     if args.supervised_classif_metric:
 
+        print("--> setting up linsep things")
+
         linsep_batch_size = args.linsepBatchSizeGPU * args.nGPU
 
         dim_features = CPChiddenEncoder if args.phone_get_encoded else CPChiddenGar
         dim_ctx_features = CPChiddenGar  # for speakers using CNN encodings is not supported; could add but not very useful perhaps
+        if args.FCMmBeforeAR:
+            dim_features = args.FCMprotos if args.phone_get_encoded else CPChiddenGar
+            # ctx_features CPChiddenGar, as in this case it's just AR dim; it's also == args.FCMprotos
+        elif args.FCMmAfterAR:
+            # this case FCM is done at the end in CPC model on both features and ctx's
+            dim_features = args.FCMprotos
+            dim_ctx_features = args.FCMprotos
 
-        phoneLabelsData = None
+        #phoneLabelsData = None
         if args.path_phone_data:
-            phoneLabelsData, nPhonesInData = parseSeqLabels(args.path_phone_data)
+            #phoneLabelsData, nPhonesInData = parseSeqLabels(args.path_phone_data)
+            # ^ this is now done high above, and below same DS as above is used
             
             if not args.CTCphones:
                 print(f"Running phone separability with aligned phones")
@@ -646,12 +717,12 @@ def main(args):
                 if not args.CTCphones:
                     # print(f"Running phone separability with aligned phones")
                     phone_criterion = cr.PhoneCriterion(dim_features,
-                                                nPhonesInData, args.phone_get_encoded,
+                                                nPhones, args.phone_get_encoded,
                                                 nLayers=args.linsep_net_layers)
                 else:
                     # print(f"Running phone separability with CTC loss")
                     phone_criterion = cr.CTCPhoneCriterion(dim_features,
-                                                    nPhonesInData, args.phone_get_encoded,
+                                                    nPhones, args.phone_get_encoded,
                                                     nLayers=args.linsep_net_layers)
                 phone_criterion.cuda()
                 phone_criterion = torch.nn.DataParallel(phone_criterion, device_ids=range(args.nGPU))
@@ -682,16 +753,31 @@ def main(args):
 
                 return speaker_criterion, speaker_optimizer
 
-        linsep_db_train = AudioBatchData(args.pathDB, args.sizeWindow, seqTrain,
-                                phoneLabelsData, len(speakers))
-        linsep_db_val = AudioBatchData(args.pathDB, args.sizeWindow, seqVal,
-                                    phoneLabelsData, len(speakers))
+        # print("preparing linsep DBs")
 
-        linsep_train_loader = linsep_db_train.getDataLoader(linsep_batch_size, "uniform", True,
+        # linsep_db_train = AudioBatchData(args.pathDB, args.sizeWindow, seqTrain,
+        #                         phoneLabelsData, len(speakers),
+        #                                 nProcessLoader=args.n_process_loader,
+        #                                 MAX_SIZE_LOADED=args.max_size_loaded)
+
+        # print("linsep_db_train ready")
+
+        # linsep_db_val = AudioBatchData(args.pathDB, args.sizeWindow, seqVal,
+        #                             phoneLabelsData, len(speakers),
+        #                             nProcessLoader=args.n_process_loader,
+        #                             MAX_SIZE_LOADED=args.max_size_loaded)
+
+        # print("linsep_db_val ready")
+        #linsep_db_train
+        linsep_train_loader = trainDataset.getDataLoader(linsep_batch_size, "uniform", True,
                                         numWorkers=0)
 
-        linsep_val_loader = linsep_db_val.getDataLoader(linsep_batch_size, 'sequential', False,
+        print("linsep_train_loader ready")
+        # linsep_db_val
+        linsep_val_loader = valDataset.getDataLoader(linsep_batch_size, 'sequential', False,
                                     numWorkers=0)
+
+        print("linsep_val_loader ready")
 
         def runLinsepClassificationTraining(numOfEpoch, cpcMdl, cpcStateEpoch):
             log_path_for_epoch = os.path.join(args.linsep_logs_dir, str(numOfEpoch))
@@ -755,6 +841,8 @@ def main(args):
 
     else:
         linsepClassificationTaskConfig = (None, None)
+
+    print("-------> starting actual run <-------")
 
     if not args.onlyCapture and not args.only_classif_metric:
         run(trainDataset,
@@ -937,6 +1025,17 @@ def parseArgs(argv):
                             help="If any checkpoint is found, ignore it and "
                             "restart the training from scratch.")
 
+    group_fcm = parser.add_argument_group("FCM")
+    group_fcm.add_argument('--FCMproject', action='store_true')
+    group_fcm.add_argument('--FCMprotos', type=int, default=50)
+    group_fcm.add_argument('--FCMmBeforeAR', type=float, default=None)
+    group_fcm.add_argument('--FCMleaveProtos', type=int, default=None)  # only makes sense for mBeforeAR
+    group_fcm.add_argument('--FCMpushDegFeatureBeforeAR', type=float, default=None)
+    group_fcm.add_argument('--FCMmAfterAR', type=float, default=None)
+    group_fcm.add_argument('--FCMpushDegCtxAfterAR', type=float, default=None)
+    group_fcm.add_argument('--FCMpushDegAllAfterAR', type=float, default=None)
+    
+
     group_gpu = parser.add_argument_group('GPUs')
     group_gpu.add_argument('--nGPU', type=int, default=-1,
                            help="Number of GPU to use (default: use all "
@@ -947,6 +1046,8 @@ def parseArgs(argv):
                         help="Load only a very small amount of files for "
                         "debugging purposes.")
     args = parser.parse_args(argv)
+
+    
 
     if args.pathDB is None and (args.pathCheckpoint is None or args.restart):
         parser.print_help()

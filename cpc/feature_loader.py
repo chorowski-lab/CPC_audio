@@ -146,22 +146,27 @@ def getEncoder(args):
 def getAR(args):
     if args.arMode == 'transformer':
         from .transformers import buildTransformerAR
-        arNet = buildTransformerAR(args.hiddenEncoder, 1,
+        #print(f'=====args.ARinputDim: {args.ARinputDim}')
+        #raise Exception()
+        arNet = buildTransformerAR(args.ARinputDim, 1, #args.hiddenEncoder, 1,
                                    args.sizeWindow // 160, args.abspos)
-        args.hiddenGar = args.hiddenEncoder
+        args.hiddenGar = args.ARinputDim  #args.hiddenEncoder
     elif args.arMode == 'no_ar':
+        #raise Exception()
         from .model import NoAr
         arNet = NoAr()
     else:
+        #raise Exception()
         from .model import CPCAR
-        arNet = CPCAR(args.hiddenEncoder, args.hiddenGar,
+        arNet = CPCAR(args.ARinputDim, #args.hiddenEncoder,
+                      args.hiddenGar,
                       args.samplingType == "sequential",
                       args.nLevelsGRU,
                       mode=args.arMode,
                       reverse=args.cpc_mode == "reverse")
     return arNet
 
-def loadModel(pathCheckpoints, loadStateDict=True, loadBestNotLast=False):
+def loadModel(pathCheckpoints, loadStateDict=True, loadBestNotLast=False, fcmSettings=None):
     models = []
     hiddenGar, hiddenEncoder = 0, 0
     for path in pathCheckpoints:
@@ -173,14 +178,14 @@ def loadModel(pathCheckpoints, loadStateDict=True, loadBestNotLast=False):
              os.path.dirname(locArgs.load[0]) != os.path.dirname(path))
 
         if doLoad:
-            m_, hg, he = loadModel(locArgs.load, loadStateDict=False)
+            m_, hg, he = loadModel(locArgs.load, loadStateDict=False, loadBestNotLast=loadBestNotLast, fcmSettings=fcmSettings)
             hiddenGar += hg
             hiddenEncoder += he
         else:
             encoderNet = getEncoder(locArgs)
-
+            
             arNet = getAR(locArgs)
-            m_ = CPCModel(encoderNet, arNet)
+            m_ = CPCModel(encoderNet, arNet, fcmSettings=fcmSettings)
 
         if loadStateDict:
             print(f"Loading the state dict at {path}")
