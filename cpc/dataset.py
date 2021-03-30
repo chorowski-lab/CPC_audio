@@ -91,6 +91,7 @@ class AudioBatchData(Dataset):
             del self.seqLabel
 
     def prepare(self):
+        random.seed(767543)
         random.shuffle(self.seqNames)
         start_time = time.time()
 
