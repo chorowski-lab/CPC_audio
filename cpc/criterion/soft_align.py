@@ -285,8 +285,8 @@ class CPCUnsupersivedCriterion(BaseCriterion):
 
         # return outputs, labelLoss
 
-
     def forward(self, cFeature, encodedData, label, captureOptions=None):
+
 
         if self.mode == "reverse":
             encodedData = torch.flip(encodedData, [1])
@@ -397,5 +397,6 @@ class CPCUnsupersivedCriterion(BaseCriterion):
                 captureRes['locals'] = locals()
 
         return losses, outAcc, captureRes
+
 
 
