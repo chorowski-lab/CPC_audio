@@ -326,13 +326,13 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         captureRes = None
         if captureOptions != None:
             for o in captureOptions:
-                assert o in ('pred', 'align')
+                assert o in ('pred', 'cpcctc_align')
             captureRes = {}
             if 'pred' in captureOptions:
                 # 1st sting in last dim can be self loop - need to keep as it's also being aligned
                 captureRes['pred'] = predictions
-            if 'align' in captureOptions:
+            if 'cpcctc_align' in captureOptions:
                 readableAligns = aligns.view(batchSize, windowSize, self.nMatched)
-                captureRes['align'] = readableAligns
+                captureRes['cpcctc_align'] = readableAligns
 
         return losses, outAcc, captureRes

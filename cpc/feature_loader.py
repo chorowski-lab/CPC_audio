@@ -163,8 +163,7 @@ def getAR(args):
                       reverse=args.cpc_mode == "reverse")
     return arNet
 
-
-def loadModel(pathCheckpoints, loadStateDict=True, load_nullspace=False, updateConfig=None):
+def loadModel(pathCheckpoints, loadStateDict=True, load_nullspace=False, updateConfig=None, loadBestNotLast=False):
     models = []
     hiddenGar, hiddenEncoder = 0, 0
     for path in pathCheckpoints:
@@ -194,7 +193,6 @@ def loadModel(pathCheckpoints, loadStateDict=True, load_nullspace=False, updateC
         if loadStateDict:
             print(f"Loading the state dict at {path}")
             state_dict = torch.load(path, 'cpu')
-
             # CPCModelNullspace
             if load_nullspace:
                 dim_features = hiddenGar
@@ -203,8 +201,11 @@ def loadModel(pathCheckpoints, loadStateDict=True, load_nullspace=False, updateC
                 m_ = CPCModelNullspace(m_, fake_nullspace)
                 hiddenGar -= locArgs.dim_inter
                 hiddenEncoder -= locArgs.dim_inter
+            if not loadBestNotLast:
+                m_.load_state_dict(state_dict["gEncoder"], strict=False)
+            else:
+                m_.load_state_dict(state_dict["best"], strict=False)
 
-            m_.load_state_dict(state_dict["gEncoder"], strict=False)
         if not doLoad:
             hiddenGar += locArgs.hiddenGar
             hiddenEncoder += locArgs.hiddenEncoder
