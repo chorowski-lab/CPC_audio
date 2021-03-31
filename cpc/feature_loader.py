@@ -9,7 +9,7 @@ import json
 import argparse
 from .cpc_default_config import get_default_cpc_config
 from .dataset import parseSeqLabels
-from .model import CPCModel, ConcatenatedModel
+from .model import CPCModel, CPCModelNullspace, ConcatenatedModel
 
 
 class FeatureModule(torch.nn.Module):
@@ -108,8 +108,10 @@ def getCheckpointData(pathDir):
         return None
     checkpoints.sort(key=lambda x: int(os.path.splitext(x[11:])[0]))
     data = os.path.join(pathDir, checkpoints[-1])
-    with open(os.path.join(pathDir, 'checkpoint_logs.json'), 'rb') as file:
-        logs = json.load(file)
+    logs = None
+    if os.path.exists(os.path.join(pathDir, 'checkpoint_logs.json')):
+        with open(os.path.join(pathDir, 'checkpoint_logs.json'), 'rb') as file:
+            logs = json.load(file)
     
     # args_json = os.path.join(pathDir, 'checkpoint_args.json')
     # try:
@@ -161,7 +163,7 @@ def getAR(args):
                       reverse=args.cpc_mode == "reverse")
     return arNet
 
-def loadModel(pathCheckpoints, loadStateDict=True, loadBestNotLast=False):
+def loadModel(pathCheckpoints, loadStateDict=True, load_nullspace=False, updateConfig=None, loadBestNotLast=False):
     models = []
     hiddenGar, hiddenEncoder = 0, 0
     for path in pathCheckpoints:
@@ -172,11 +174,17 @@ def loadModel(pathCheckpoints, loadStateDict=True, loadBestNotLast=False):
             (len(locArgs.load) > 1 or
              os.path.dirname(locArgs.load[0]) != os.path.dirname(path))
 
+        if updateConfig is not None and not doLoad:
+            print(f"Updating the configuartion file with ")
+            print(f'{json.dumps(vars(updateConfig), indent=4, sort_keys=True)}')
+            loadArgs(locArgs, updateConfig)
+
         if doLoad:
-            m_, hg, he = loadModel(locArgs.load, loadStateDict=False)
+            m_, hg, he = loadModel(locArgs.load, loadStateDict=False, updateConfig=updateConfig)
             hiddenGar += hg
             hiddenEncoder += he
         else:
+            print('LocArgs:', locArgs)
             encoderNet = getEncoder(locArgs)
 
             arNet = getAR(locArgs)
@@ -185,10 +193,19 @@ def loadModel(pathCheckpoints, loadStateDict=True, loadBestNotLast=False):
         if loadStateDict:
             print(f"Loading the state dict at {path}")
             state_dict = torch.load(path, 'cpu')
+            # CPCModelNullspace
+            if load_nullspace:
+                dim_features = hiddenGar
+                dim_nullspace = dim_features - locArgs.dim_inter
+                fake_nullspace = torch.zeros(dim_features, dim_nullspace)
+                m_ = CPCModelNullspace(m_, fake_nullspace)
+                hiddenGar -= locArgs.dim_inter
+                hiddenEncoder -= locArgs.dim_inter
             if not loadBestNotLast:
                 m_.load_state_dict(state_dict["gEncoder"], strict=False)
             else:
                 m_.load_state_dict(state_dict["best"], strict=False)
+
         if not doLoad:
             hiddenGar += locArgs.hiddenGar
             hiddenEncoder += locArgs.hiddenEncoder

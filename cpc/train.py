@@ -512,6 +512,11 @@ def main(args):
         captureDataset = None
 
     if args.load is not None:
+        if args.gru_level is not None and args.gru_level > 0:
+            updateConfig = argparse.Namespace(nLevelsGRU=args.gru_level)
+        else:
+            updateConfig = None
+
         # loadBestNotLast = args.onlyCapture or args.only_classif_metric
         # could use this option for loading best state when not running actual training
         # but relying on CPC internal acc isn't very reliable
@@ -521,8 +526,15 @@ def main(args):
         #     in epoch 150, checkpoint from epoch 200 has "best from epoch 150" saved as globally best
         #     (but this is internal-CPC-score best anyway, which is quite vague)
         cpcModel, args.hiddenGar, args.hiddenEncoder = \
-            fl.loadModel(args.load)
-        CPChiddenGar, CPChiddenEncoder = args.hiddenGar, args.hiddenEncoder
+            fl.loadModel(args.load, load_nullspace=args.nullspace, updateConfig=updateConfig)
+        CPChiddenGar, CPChiddenEncoder = args.hiddenGar, args.hiddenEncoder            
+
+        if args.gru_level is not None and args.gru_level > 0:
+            # Keep hidden units at LSTM layers on sequential batches
+            if args.nullspace:
+                cpcModel.cpc.gAR.keepHidden = True
+            else:
+                cpcModel.gAR.keepHidden = True
     else:
         # Encoder network
         encoderNet = fl.getEncoder(args)
@@ -536,12 +548,13 @@ def main(args):
     batchSize = args.nGPU * args.batchSizeGPU
     cpcModel.supervised = args.supervised
 
+    downsampling = cpcModel.cpc.gEncoder.DOWNSAMPLING if isinstance(cpcModel, model.CPCModelNullspace) else cpcModel.gEncoder.DOWNSAMPLING
     # Training criterion
     if args.load is not None and args.loadCriterion:
-        cpcCriterion = loadCriterion(args.load[0], cpcModel.gEncoder.DOWNSAMPLING,
+        cpcCriterion = loadCriterion(args.load[0],  downsampling,
                                      len(speakers), nPhones)
     else:
-        cpcCriterion = getCriterion(args, cpcModel.gEncoder.DOWNSAMPLING,
+        cpcCriterion = getCriterion(args, downsampling,
                                     len(speakers), nPhones)
 
     if loadOptimizer:
@@ -806,6 +819,9 @@ def parseArgs(argv):
     group_db.add_argument('--max_size_loaded', type=int, default=4000000000,
                           help='Maximal amount of data (in byte) a dataset '
                           'can hold in memory at any given time')
+    group_db.add_argument('--gru_level', type=int, default=-1,
+                          help='Hidden level of the LSTM autoregressive model to be taken'
+                          '(default: -1, last layer).')
     group_supervised = parser.add_argument_group(
         'Supervised mode (depreciated)')
     group_supervised.add_argument('--supervised', action='store_true',
@@ -876,6 +892,7 @@ def parseArgs(argv):
     group_save.add_argument('--save_step', type=int, default=5,
                             help="Frequency (in epochs) at which a checkpoint "
                             "should be saved")
+
     # stuff below for capturing data
     group_save.add_argument('--pathCaptureSave', type=str, default=None, )
     group_save.add_argument('--captureEachEpochs', type=int, default=10, help='how often to save capture data')
@@ -902,6 +919,8 @@ def parseArgs(argv):
     group_load.add_argument('--restart', action='store_true',
                             help="If any checkpoint is found, ignore it and "
                             "restart the training from scratch.")
+    group_load.add_argument('--nullspace', action='store_true',
+                            help="Additionally load nullspace")
 
     group_gpu = parser.add_argument_group('GPUs')
     group_gpu.add_argument('--nGPU', type=int, default=-1,
