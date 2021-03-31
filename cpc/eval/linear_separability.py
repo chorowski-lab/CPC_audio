@@ -20,8 +20,7 @@ from cpc.model import CPCModelNullspace
 
 
 
-def train_step(feature_maker, criterion, data_loader, optimizer, label_key, centerPushSettings):
-
+def train_step(feature_maker, criterion, data_loader, optimizer, label_key="speaker", centerPushSettings=None):
     if feature_maker.optimize:
         feature_maker.train()
     criterion.train()
@@ -56,7 +55,7 @@ def train_step(feature_maker, criterion, data_loader, optimizer, label_key, cent
     return logs
 
 
-def val_step(feature_maker, criterion, data_loader, label_key, centerPushSettings):
+def val_step(feature_maker, criterion, data_loader, label_key="speaker", centerPushSettings=None):
 
     feature_maker.eval()
     criterion.eval()
@@ -90,8 +89,8 @@ def run(feature_maker,
         logs,
         n_epochs,
         path_checkpoint,
-        label_key,
-        centerPushSettings):
+        label_key="speaker",
+        centerPushSettings=None):
 
     start_epoch = len(logs["epoch"])
     best_acc = -1
@@ -101,8 +100,8 @@ def run(feature_maker,
     for epoch in range(start_epoch, n_epochs):
 
         logs_train = train_step(feature_maker, criterion, train_loader,
-                                optimizer, label_key, centerPushSettings)
-        logs_val = val_step(feature_maker, criterion, val_loader, label_key, centerPushSettings)
+                                optimizer, label_key=label_key, centerPushSettings=centerPushSettings)
+        logs_val = val_step(feature_maker, criterion, val_loader, label_key=label_key, centerPushSettings=centerPushSettings)
 
         print('')
         print('_'*50)
@@ -155,7 +154,7 @@ def trainLinsepClassification(
         path_best_checkpoint,
         n_epochs,
         cpc_epoch,
-        label_key,
+        label_key="speaker",
         centerpushSettings=None):
 
     wasOptimizeCPC = feature_maker.optimize if hasattr(feature_maker, 'optimize') else None
@@ -489,7 +488,8 @@ def main(argv):
         centerPushSettings = None
 
     run(model, criterion, train_loader, val_loader, optimizer, logs,
-        args.n_epoch, args.pathCheckpoint, label_key, centerPushSettings)
+        args.n_epoch, args.pathCheckpoint, label_key=label_key, centerPushSettings=centerPushSettings)
+
 
 
 if __name__ == "__main__":

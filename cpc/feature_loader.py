@@ -115,6 +115,7 @@ def getCheckpointData(pathDir):
             logs = json.load(file)
     except Exception as e:
         print(f"WARNING: failed to load log: {e}")
+
     
     # args_json = os.path.join(pathDir, 'checkpoint_args.json')
     # try:
@@ -207,11 +208,11 @@ def loadModel(pathCheckpoints, loadStateDict=True, load_nullspace=False, updateC
                 m_ = CPCModelNullspace(m_, fake_nullspace)
                 hiddenGar -= locArgs.dim_inter
                 hiddenEncoder -= locArgs.dim_inter
-
             if not loadBestNotLast:
                 m_.load_state_dict(state_dict["gEncoder"], strict=False)
             else:
                 m_.load_state_dict(state_dict["best"], strict=False)
+
 
         if not doLoad:
             hiddenGar += locArgs.hiddenGar

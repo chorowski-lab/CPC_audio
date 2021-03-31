@@ -551,14 +551,23 @@ def main(args):
         captureSetStatsCollector = None
 
     if args.load is not None:
-
         if args.gru_level is not None and args.gru_level > 0:
             updateConfig = argparse.Namespace(nLevelsGRU=args.gru_level)
         else:
             updateConfig = None
 
+
+        # loadBestNotLast = args.onlyCapture or args.only_classif_metric
+        # could use this option for loading best state when not running actual training
+        # but relying on CPC internal acc isn't very reliable
+        # [!] caution - because of how they capture checkpoints,
+        #     they capture "best in this part of training" as "best" (apart from capturing current state)
+        #     so if best is in epoch 100 and training is paused and resumed from checkpoint
+        #     in epoch 150, checkpoint from epoch 200 has "best from epoch 150" saved as globally best
+        #     (but this is internal-CPC-score best anyway, which is quite vague)
         cpcModel, args.hiddenGar, args.hiddenEncoder = \
             fl.loadModel(args.load, load_nullspace=args.nullspace, updateConfig=updateConfig)
+        CPChiddenGar, CPChiddenEncoder = args.hiddenGar, args.hiddenEncoder            
 
         if args.gru_level is not None and args.gru_level > 0:
             # Keep hidden units at LSTM layers on sequential batches
@@ -566,8 +575,6 @@ def main(args):
                 cpcModel.cpc.gAR.keepHidden = True
             else:
                 cpcModel.gAR.keepHidden = True
-
-        CPChiddenGar, CPChiddenEncoder = args.hiddenGar, args.hiddenEncoder
 
     else:
         # Encoder network
