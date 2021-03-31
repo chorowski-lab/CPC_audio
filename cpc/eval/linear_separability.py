@@ -20,7 +20,7 @@ from cpc.model import CPCModelNullspace
 
 
 
-def train_step(feature_maker, criterion, data_loader, optimizer, label_key="speaker", centerPushSettings=None):
+def train_step(feature_maker, criterion, data_loader, optimizer, label_key="speaker", centerpushSettings=None):
     if feature_maker.optimize:
         feature_maker.train()
     criterion.train()
@@ -36,8 +36,8 @@ def train_step(feature_maker, criterion, data_loader, optimizer, label_key="spea
         if not feature_maker.optimize:
             c_feature, encoded_data = c_feature.detach(), encoded_data.detach()
 
-        if centerPushSettings:
-            centers, pushDeg = centerPushSettings
+        if centerpushSettings:
+            centers, pushDeg = centerpushSettings
             c_feature = utils.pushToClosestForBatch(c_feature, centers, deg=pushDeg)
             encoded_data = utils.pushToClosestForBatch(encoded_data, centers, deg=pushDeg)
         all_losses, all_acc = criterion(c_feature, encoded_data, label)
@@ -55,7 +55,7 @@ def train_step(feature_maker, criterion, data_loader, optimizer, label_key="spea
     return logs
 
 
-def val_step(feature_maker, criterion, data_loader, label_key="speaker", centerPushSettings=None):
+def val_step(feature_maker, criterion, data_loader, label_key="speaker", centerpushSettings=None):
 
     feature_maker.eval()
     criterion.eval()
@@ -67,8 +67,8 @@ def val_step(feature_maker, criterion, data_loader, label_key="speaker", centerP
             batch_data, label_data = fulldata
             label = label_data[label_key]
             c_feature, encoded_data, _ = feature_maker(batch_data, None)
-            if centerPushSettings:
-                centers, pushDeg = centerPushSettings
+            if centerpushSettings:
+                centers, pushDeg = centerpushSettings
                 c_feature = utils.pushToClosestForBatch(c_feature, centers, deg=pushDeg)
                 encoded_data = utils.pushToClosestForBatch(encoded_data, centers, deg=pushDeg)
             all_losses, all_acc = criterion(c_feature, encoded_data, label)
@@ -90,7 +90,7 @@ def run(feature_maker,
         n_epochs,
         path_checkpoint,
         label_key="speaker",
-        centerPushSettings=None):
+        centerpushSettings=None):
 
     start_epoch = len(logs["epoch"])
     best_acc = -1
@@ -100,8 +100,8 @@ def run(feature_maker,
     for epoch in range(start_epoch, n_epochs):
 
         logs_train = train_step(feature_maker, criterion, train_loader,
-                                optimizer, label_key=label_key, centerPushSettings=centerPushSettings)
-        logs_val = val_step(feature_maker, criterion, val_loader, label_key=label_key, centerPushSettings=centerPushSettings)
+                                optimizer, label_key=label_key, centerpushSettings=centerpushSettings)
+        logs_val = val_step(feature_maker, criterion, val_loader, label_key=label_key, centerpushSettings=centerpushSettings)
 
         print('')
         print('_'*50)
@@ -483,12 +483,12 @@ def main(argv):
             centers = torch.load(args.centerpushFile, map_location=torch.device('cpu'))['state_dict']['Ck']
             centers = torch.reshape(centers, centers.shape[1:]).numpy()
         centers = torch.tensor(centers).cuda()
-        centerPushSettings = (centers, args.centerpushDeg)
+        centerpushSettings = (centers, args.centerpushDeg)
     else:
-        centerPushSettings = None
+        centerpushSettings = None
 
     run(model, criterion, train_loader, val_loader, optimizer, logs,
-        args.n_epoch, args.pathCheckpoint, label_key=label_key, centerPushSettings=centerPushSettings)
+        args.n_epoch, args.pathCheckpoint, label_key=label_key, centerpushSettings=centerpushSettings)
 
 
 

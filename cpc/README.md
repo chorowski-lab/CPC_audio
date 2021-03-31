@@ -19,6 +19,15 @@ eval/: evaluation scripts.
 utils/: system utilities and misc.
 
 
+## Stats module (initial) description
+
+Under `stats` there are utils for computing stats. `stats/repr_diff_stat.py` is an example, `stats/stats_collector.py` is used to aggregate stats given as arguments to `train.py` and therefore each stat needs to be registered in `stats/stats_utils.py` similarly as `reprDiffStat` (`stats/repr_diff_stat.py`) is. 
+
+To compute stats for `train.py` run, use `--captureSetStats` which needs to be passed in format `stat1Name:arg1,arg2,arg3_stat2Name:arg1,arg2` where args are stat-specific (example: `reprDiff:cosine,ctx_repr,0.05,../reprDiffHistograms`).
+
+When specified like that (with `--captureSetStats`), stats are computed for "capture dataset" along with data capturing each specified number of epochs. One can specify to compute only stats and not capture data, but then captureDS still needs to be configured as described below under "CPC-CTC data capturing description". Example how to specify capture dataset: `--pathCaptureDS /pio/scratch/1/i283340/MGR/zs/sometries/ds2part.txt --captureEachEpochs 2`.
+
+
 ## Linear separability automation description:
 
 This can be combined with data capturing described in the section below
