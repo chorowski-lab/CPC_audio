@@ -243,10 +243,10 @@ def captureStep(
             # which is there as dataLoader is a sequential one here
             if 'conv_repr' in whatToSave:
                 # encoded data shape: batch_size x len x repr_dim
-                torch.save(encoded_data.cpu(), os.path.join(epochDir, 'conv_repr', f'repr_batch{batchBegin}-{batchEnd}.pt'))
+                torch.save(encoded_data.cpu(), os.path.join(epochDir, 'conv_repr', f'conv_repr_batch{batchBegin}-{batchEnd}.pt'))
             if 'ctx_repr' in whatToSave:
                 # ctx data shape: also batch_size x len x repr_dim
-                torch.save(c_feature.cpu(), os.path.join(epochDir, 'ctx_repr', f'ctx_batch{batchBegin}-{batchEnd}.pt'))
+                torch.save(c_feature.cpu(), os.path.join(epochDir, 'ctx_repr', f'ctx_repr_batch{batchBegin}-{batchEnd}.pt'))
             if 'speaker_align' in whatToSave:
                 # speaker data shape: batch_size (1-dim, each one in batch is whole by 1 speaker)
                 torch.save(labelSpeaker.cpu(), os.path.join(epochDir, 'speaker_align', f'speaker_align_batch{batchBegin}-{batchEnd}.pt'))
