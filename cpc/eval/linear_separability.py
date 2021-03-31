@@ -19,7 +19,7 @@ from cpc.dataset import AudioBatchData, findAllSeqs, filterSeqs, parseSeqLabels
 from cpc.model import CPCModelNullspace
 
 
-def train_step(feature_maker, criterion, data_loader, optimizer):
+def train_step(feature_maker, criterion, data_loader, optimizer, label_key):
 
     if feature_maker.optimize:
         feature_maker.train()
@@ -30,11 +30,12 @@ def train_step(feature_maker, criterion, data_loader, optimizer):
     for step, fulldata in enumerate(data_loader):
 
         optimizer.zero_grad()
-        batch_data, label = fulldata
+        batch_data, label_data = fulldata
+        label = label_data[label_key]
         c_feature, encoded_data, _ = feature_maker(batch_data, None)
         if not feature_maker.optimize:
             c_feature, encoded_data = c_feature.detach(), encoded_data.detach()
-        all_losses, all_acc = criterion(c_feature, encoded_data, label)
+        all_losses, all_acc  = criterion(c_feature, encoded_data, label)
         totLoss = all_losses.sum()
         totLoss.backward()
         optimizer.step()
@@ -48,7 +49,7 @@ def train_step(feature_maker, criterion, data_loader, optimizer):
     return logs
 
 
-def val_step(feature_maker, criterion, data_loader):
+def val_step(feature_maker, criterion, data_loader, label_key):
 
     feature_maker.eval()
     criterion.eval()
@@ -57,7 +58,8 @@ def val_step(feature_maker, criterion, data_loader):
     for step, fulldata in enumerate(data_loader):
 
         with torch.no_grad():
-            batch_data, label = fulldata
+            batch_data, label_data = fulldata
+            label = label_data[label_key]
             c_feature, encoded_data, _ = feature_maker(batch_data, None)
             all_losses, all_acc = criterion(c_feature, encoded_data, label)
 
@@ -76,7 +78,8 @@ def run(feature_maker,
         optimizer,
         logs,
         n_epochs,
-        path_checkpoint):
+        path_checkpoint,
+        label_key):
 
     start_epoch = len(logs["epoch"])
     best_acc = -1
@@ -86,8 +89,8 @@ def run(feature_maker,
     for epoch in range(start_epoch, n_epochs):
 
         logs_train = train_step(feature_maker, criterion, train_loader,
-                                optimizer)
-        logs_val = val_step(feature_maker, criterion, val_loader)
+                                optimizer, label_key)
+        logs_val = val_step(feature_maker, criterion, val_loader, label_key)
         print('')
         print('_'*50)
         print(f'Ran {epoch + 1} epochs '
@@ -117,6 +120,92 @@ def run(feature_maker,
                                optimizer.state_dict(), best_state,
                                f"{path_checkpoint}_{epoch}.pt")
             utils.save_logs(logs, f"{path_checkpoint}_logs.json")
+
+
+def save_linsep_best_checkpoint(cpc_model_state, classif_net_criterion_state, optimizer_state, 
+                    path_checkpoint):
+
+    state_dict = {"CPCmodel": cpc_model_state,
+                  "classifNetCriterionCombined": classif_net_criterion_state,
+                  "optimizer": optimizer_state}
+
+    torch.save(state_dict, path_checkpoint)
+
+def trainLinsepClassification(
+        feature_maker,
+        criterion,  # combined with classification model before
+        train_loader,
+        val_loader,
+        optimizer,
+        path_logs,
+        logs_save_step,
+        path_best_checkpoint,
+        n_epochs,
+        cpc_epoch,
+        label_key):
+
+    wasOptimizeCPC = feature_maker.optimize if hasattr(feature_maker, 'optimize') else None
+    feature_maker.eval()
+    feature_maker.optimize = False
+
+    start_epoch = 0
+    best_train_acc = -1
+    best_acc = -1
+    bect_epoch = -1
+    logs = {"epoch": [], "iter": [], "saveStep": logs_save_step}
+
+    start_time = time.time()
+
+    for epoch in range(start_epoch, n_epochs):
+
+        logs_train = train_step(feature_maker, criterion, train_loader,
+                                optimizer, label_key)
+        logs_val = val_step(feature_maker, criterion, val_loader, label_key)
+        print('')
+        print('_'*50)
+        print(f'Ran {epoch + 1} {label_key} classification epochs '
+              f'in {time.time() - start_time:.2f} seconds')
+        utils.show_logs("Training loss", logs_train)
+        utils.show_logs("Validation loss", logs_val)
+        print('_'*50)
+        print('')
+
+        if logs_val["locAcc_val"] > best_acc:
+            best_state_cpc = deepcopy(fl.get_module(feature_maker).state_dict())
+            best_state_classif_crit = deepcopy(fl.get_module(criterion).state_dict())
+            optimizer_state_best_ep = optimizer.state_dict()
+            best_epoch = epoch
+            best_acc = logs_val["locAcc_val"]
+
+        if logs_train["locAcc_train"] > best_train_acc:
+            best_train_acc = logs_train["locAcc_train"]
+
+        logs["epoch"].append(epoch)
+        for key, value in dict(logs_train, **logs_val).items():
+            if key not in logs:
+                logs[key] = [None for x in range(epoch)]
+            if isinstance(value, np.ndarray):
+                value = value.tolist()
+            logs[key].append(value)
+
+        if (epoch % logs["saveStep"] == 0 and epoch > 0) or epoch == n_epochs - 1:
+            model_state_dict = fl.get_module(feature_maker).state_dict()
+            criterion_state_dict = fl.get_module(criterion).state_dict()
+
+            # fl.save_checkpoint(model_state_dict, criterion_state_dict,
+            #                    optimizer.state_dict(), best_state,
+            #                    f"{path_checkpoint}_{epoch}.pt")
+            utils.save_logs(logs, f"{path_logs}_logs.json")
+
+    if path_best_checkpoint:
+        save_linsep_best_checkpoint(best_state_cpc, best_state_classif_crit,
+                        optimizer_state_best_ep,  # TODO check if should save that epoch or last in optimizer
+                        os.path.join(path_best_checkpoint, f"{label_key}_classif_best-epoch{best_epoch}-cpc_epoch{cpc_epoch}.pt"))
+    feature_maker.optimize = wasOptimizeCPC
+    return {'num_epoch_trained': n_epochs,
+            'best_val_acc': best_acc,
+            'best_train_acc': best_train_acc
+            }
 
 
 def parse_args(argv):
@@ -294,7 +383,8 @@ def main(argv):
 
     phone_labels = None
     if args.pathPhone is not None:
-        phone_labels, n_phones = parseSeqLabels(args.pathPhone)      
+        phone_labels, n_phones = parseSeqLabels(args.pathPhone)
+        label_key = 'phone'
         if not args.CTC:
             print(f"Running phone separability with aligned phones")
             criterion = cr.PhoneCriterion(dim_features,
@@ -304,6 +394,7 @@ def main(argv):
             criterion = cr.CTCPhoneCriterion(dim_features,
                                              n_phones, args.get_encoded)
     else:
+        label_key = 'speaker'
         print(f"Running speaker separability")
         if args.mode == "speakers_factorized":
             criterion = cr.SpeakerDoubleCriterion(dim_features, dim_inter, len(speakers))
@@ -363,7 +454,7 @@ def main(argv):
         json.dump(vars(args), file, indent=2)
 
     run(model, criterion, train_loader, val_loader, optimizer, logs,
-        args.n_epoch, args.pathCheckpoint)
+        args.n_epoch, args.pathCheckpoint, label_key)
 
 
 if __name__ == "__main__":

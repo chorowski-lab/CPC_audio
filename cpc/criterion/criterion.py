@@ -222,7 +222,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
 
         return "orthoLoss", self.orthoLoss * self.wPrediction.orthoCriterion()
 
-    def forward(self, cFeature, encodedData, label):
+    def forward(self, cFeature, encodedData, label, captureOptions):
 
         if self.mode == "reverse":
             encodedData = torch.flip(encodedData, [1])
@@ -242,6 +242,15 @@ class CPCUnsupersivedCriterion(BaseCriterion):
 
         predictions = self.wPrediction(cFeature, sampledData)
 
+        captureRes = None
+        if captureOptions != None:
+            for o in captureOptions:
+                assert o in ('pred',)
+            captureRes = {}
+            if 'pred' in captureOptions:
+                assert False   # not supported yet, predictions here are in some very weird format it seems
+                captureRes['pred'] = None
+
         outLosses = [0 for x in range(self.nPredicts)]
         outAcc = [0 for x in range(self.nPredicts)]
 
@@ -254,16 +263,25 @@ class CPCUnsupersivedCriterion(BaseCriterion):
             outAcc[k] += torch.sum(predsIndex == labelLoss).float().view(1, -1)
 
         return torch.cat(outLosses, dim=1), \
-            torch.cat(outAcc, dim=1) / (windowSize * batchSize)
+            torch.cat(outAcc, dim=1) / (windowSize * batchSize), \
+                captureRes
 
 
 class SpeakerCriterion(BaseCriterion):
 
-    def __init__(self, dimEncoder, nSpeakers):
+    def __init__(self, dimEncoder, nSpeakers, nLayers=1):
 
         super(SpeakerCriterion, self).__init__()
-        self.linearSpeakerClassifier = nn.Linear(
-            dimEncoder, nSpeakers)
+        # self.linearSpeakerClassifier = nn.Linear(
+        #     dimEncoder, nSpeakers)
+        if nLayers == 1:
+            self.linearSpeakerClassifier = nn.Linear(dimEncoder, nSpeakers)
+        else:
+            outLayers = [nn.Linear(dimEncoder, nSpeakers)]
+            for l in range(nLayers - 1):
+                outLayers.append(nn.ReLU())
+                outLayers.append(nn.Linear(nSpeakers, nSpeakers))
+            self.linearSpeakerClassifier = nn.Sequential(*outLayers)
         self.lossCriterion = nn.CrossEntropyLoss()
         self.entropyCriterion = nn.LogSoftmax(dim=1)
 
@@ -344,10 +362,17 @@ class PhoneCriterion(BaseCriterion):
 
 class CTCPhoneCriterion(BaseCriterion):
 
-    def __init__(self, dimEncoder, nPhones, onEncoder):
+    def __init__(self, dimEncoder, nPhones, onEncoder, nLayers=1):
 
         super(CTCPhoneCriterion, self).__init__()
-        self.PhoneCriterionClassifier = nn.Linear(dimEncoder, nPhones + 1)
+        if nLayers == 1:
+            self.PhoneCriterionClassifier = nn.Linear(dimEncoder, nPhones + 1)
+        else:
+            outLayers = [nn.Linear(dimEncoder, nPhones + 1)]
+            for l in range(nLayers - 1):
+                outLayers.append(nn.ReLU())
+                outLayers.append(nn.Linear(nPhones + 1, nPhones + 1))
+            self.PhoneCriterionClassifier = nn.Sequential(*outLayers)
         self.lossCriterion = nn.CTCLoss(blank=nPhones, zero_infinity=True)
         self.onEncoder = onEncoder
         if onEncoder:

@@ -11,7 +11,8 @@ import soundfile as sf
 from pathlib import Path
 from copy import deepcopy
 from torch.multiprocessing import Pool
-#from multiprocessing.dummy import Pool
+from multiprocessing import dummy
+
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.sampler import Sampler, BatchSampler
 
@@ -50,7 +51,8 @@ class AudioBatchData(Dataset):
         self.dbPath = Path(path)
         self.sizeWindow = sizeWindow
         self.seqNames = [(s, self.dbPath / x) for s, x in seqNames]
-        self.reload_pool = Pool(nProcessLoader)
+        #self.reload_pool = Pool(nProcessLoader)
+        self.reload_pool = dummy.Pool(nProcessLoader)
 
         self.prepare()
         self.speakers = list(range(nSpeakers))
@@ -151,6 +153,11 @@ class AudioBatchData(Dataset):
         tmpData = []
 
         for speaker, seqName, seq in self.nextData:
+
+            # sometimes some data may be missing
+            if self.phoneLabelsDict is not None and seqName not in self.phoneLabelsDict:
+                continue
+            
             while self.speakers[indexSpeaker] < speaker:
                 indexSpeaker += 1
                 self.speakerLabel.append(speakerSize)
@@ -181,6 +188,7 @@ class AudioBatchData(Dataset):
         return idSpeaker
 
     def __len__(self):
+        # all audio is glued together, totSize is num of frames and sizeWindow is perhaps sample size
         return self.totSize // self.sizeWindow
 
     def __getitem__(self, idx):
@@ -189,18 +197,20 @@ class AudioBatchData(Dataset):
             print(idx)
 
         outData = self.data[idx:(self.sizeWindow + idx)].view(1, -1)
-        label = torch.tensor(self.getSpeakerLabel(idx), dtype=torch.long)
+        labelData = {}
+        labelData['speaker'] = torch.tensor(self.getSpeakerLabel(idx), dtype=torch.long)
         if self.phoneSize > 0:
             label_phone = torch.tensor(self.getPhonem(idx), dtype=torch.long)
-            if not self.doubleLabels:
-                label = label_phone
-        else:
-            label_phone = torch.zeros(1)
+            labelData['phone'] = label_phone
+            # if not self.doubleLabels:
+            #     label = label_phone
+        # else:
+        #     label_phone = torch.zeros(1)
 
-        if self.doubleLabels:
-            return outData, label, label_phone
+        # if self.doubleLabels:
+        #     return outData, label, label_phone
 
-        return outData, label
+        return outData, labelData
 
     def getNSpeakers(self):
         return len(self.speakers)
@@ -263,7 +273,11 @@ def loadFile(data):
     speaker, fullPath = data
     seqName = fullPath.stem
     seq = torchaudio.load(fullPath)[0].view(-1)
-
+    #     # Due to some issues happening when combining torchaudio.load
+    #     # with torch.multiprocessing we use soundfile to load the data
+    #     seq = torch.tensor(sf.read(str(fullPath))[0]).float()
+    #     if len(seq.size()) == 2:
+    #         seq = seq.mean(dim=1)
     return speaker, seqName, seq
 
 
@@ -501,7 +515,8 @@ def parseSeqLabels(pathLabels):
     return output, maxPhone + 1
 
 
-def filterSeqs(pathTxt, seqCouples):
+def filterSeqs(pathTxt, seqCouples, percentage=None, totalNum=None):
+    assert(percentage is None or totalNum is None)
     with open(pathTxt, 'r') as f:
         inSeqs = [p.replace('\n', '') for p in f.readlines()]
 
@@ -516,4 +531,24 @@ def filterSeqs(pathTxt, seqCouples):
             break
         if seq == inSeqs[index]:
             output.append(x)
+    if percentage is not None:
+        assert(percentage < 100)
+        originalOutput = output
+        output = []
+        for i, elem in enumerate(originalOutput):
+            if (100. * len(output) / float(i+1)) < float(percentage):
+                output.append(elem)
+    elif totalNum is not None:
+        lastCaptured = -1.
+        lastIdCaptured = -1
+        captureEach = max(float(len(output)) / float(totalNum), 1.)
+        originalOutput = output
+        output = []
+        for i, elem in enumerate(originalOutput):
+            toCapture = int(round(lastCaptured + captureEach))
+            if i == lastIdCaptured or i < toCapture:
+                continue
+            lastIdCaptured = i
+            lastCaptured += captureEach
+            output.append(elem)
     return output
