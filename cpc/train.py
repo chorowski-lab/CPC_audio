@@ -239,12 +239,12 @@ def captureStep(
         
             # saving it with IDs like that assumes deterministic order of elements
             # which is there as dataLoader is a sequential one here
-            if 'repr' in whatToSave:
+            if 'conv_repr' in whatToSave:
                 # encoded data shape: batch_size x len x repr_dim
-                torch.save(encoded_data.cpu(), os.path.join(epochDir, 'repr', f'repr_batch{batchBegin}-{batchEnd}.pt'))
-            if 'ctx' in whatToSave:
+                torch.save(encoded_data.cpu(), os.path.join(epochDir, 'conv_repr', f'repr_batch{batchBegin}-{batchEnd}.pt'))
+            if 'ctx_repr' in whatToSave:
                 # ctx data shape: also batch_size x len x repr_dim
-                torch.save(c_feature.cpu(), os.path.join(epochDir, 'ctx', f'ctx_batch{batchBegin}-{batchEnd}.pt'))
+                torch.save(c_feature.cpu(), os.path.join(epochDir, 'ctx_repr', f'ctx_batch{batchBegin}-{batchEnd}.pt'))
             if 'speaker_align' in whatToSave:
                 # speaker data shape: batch_size (1-dim, each one in batch is whole by 1 speaker)
                 torch.save(labelSpeaker.cpu(), os.path.join(epochDir, 'speaker_align', f'speaker_align_batch{batchBegin}-{batchEnd}.pt'))
@@ -452,19 +452,19 @@ def main(args):
         assert args.pathCaptureSave is not None
         whatToSave = []
         if args.captureEverything:
-            whatToSave = ['repr', 'ctx', 'speaker_align', 'pred']
+            whatToSave = ['conv_repr', 'ctx_repr', 'speaker_align', 'pred']
             if args.path_phone_data:
                 whatToSave.append('phone_align')
             if args.CPCCTC:
                 whatToSave.append('cpcctc_align')
         else:
-            for argVal, name in zip([args.captureRepr, 
-                                    args.captureCtx, 
+            for argVal, name in zip([args.captureConvRepr, 
+                                    args.captureCtxRepr, 
                                     args.captureSpeakerAlign, 
                                     args.capturePhoneAlign,
                                     args.capturePred,
                                     args.captureCPCCTCalign], 
-                                    ['repr', 'ctx', 'speaker_align', 'phone_align', 'pred', 'cpcctc_align']):
+                                    ['conv_repr', 'ctx_repr', 'speaker_align', 'phone_align', 'pred', 'cpcctc_align']):
                 if argVal:
                     whatToSave.append(name)
         ###assert len(whatToSave) > 0
@@ -937,8 +937,8 @@ def parseArgs(argv):
     # stuff below for capturing data
     group_save.add_argument('--pathCaptureSave', type=str, default=None, )
     group_save.add_argument('--captureEachEpochs', type=int, default=10, help='how often to save capture data')
-    group_save.add_argument('--captureRepr', action='store_true', help='if to save representations after the encoder')
-    group_save.add_argument('--captureCtx', action='store_true', help='if to save LSTM-based contexts produced in CPC model')
+    group_save.add_argument('--captureConvRepr', action='store_true', help='if to save representations after the encoder')
+    group_save.add_argument('--captureCtxRepr', action='store_true', help='if to save LSTM-based contexts produced in CPC model')
     group_save.add_argument('--captureSpeakerAlign', action='store_true', help='if to save speaker alignments')
     group_save.add_argument('--capturePhoneAlign', action='store_true', help='if to save phone alignments')
     # below ONLY for CPC-CTC
