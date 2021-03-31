@@ -40,6 +40,12 @@ def getCriterion(args, downsampling, nSpeakers, nPhones):
                                                         allowed_skips_beg=args.CPCCTCSkipBeg,
                                                         allowed_skips_end=args.CPCCTCSkipEnd,
                                                         predict_self_loop=args.CPCCTCSelfLoop,
+                                                        learn_blank=args.CPCCTCLearnBlank,
+                                                        normalize_enc=args.CPCCTCNormalizeEncs,
+                                                        normalize_preds=args.CPCCTCNormalizePreds,
+                                                        masq_rules=args.CPCCTCMasq,
+                                                        loss_temp=args.CPCCTCLossTemp,
+                                                        no_negs_in_match_window=args.CPCCTCNoNegsMatchWin,
                                                         limit_negs_in_batch=args.limitNegsInBatch,
                                                         mode=args.cpc_mode,
                                                         rnnMode=args.rnnMode,
@@ -370,12 +376,10 @@ def onlyCapture(
 
 
 def main(args):
-
     # import ptvsd
     # ptvsd.enable_attach(('0.0.0.0', 7309))
     # print("Attach debugger now")
     # ptvsd.wait_for_attach()
-
     args = parseArgs(args)
 
     utils.set_seed(args.random_seed)
@@ -605,6 +609,7 @@ def main(args):
             scheduler = utils.SchedulerCombiner([scheduler_ramp, scheduler],
                                                 [0, args.schedulerRamp])
     if scheduler is not None:
+        print(f'Redoing {len(logs["epoch"])} scheduler steps')
         for i in range(len(logs["epoch"])):
             scheduler.step()
 

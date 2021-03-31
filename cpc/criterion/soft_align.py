@@ -16,7 +16,7 @@ class _SOFT_ALIGN(autograd.Function):
 
     """
     @staticmethod
-    def _alignment_cost(log_probs, allowed_skips_beg, allowed_skips_end):
+    def _alignment_cost(log_probs, allowed_skips_beg, allowed_skips_end, force_forbid_blank):
         # log_probs is BS x WIN_LEN x NUM_PREDS
         bs, win_len, num_preds = log_probs.size()
         assert win_len >=  num_preds
@@ -26,10 +26,12 @@ class _SOFT_ALIGN(autograd.Function):
         fake_ctc_labels = torch.arange(1, num_preds+1, dtype=torch.int).expand(bs, num_preds)
 
         # append impossible BLANK probabilities
-        ctc_log_probs = torch.cat((
-            torch.empty(padded_win_len, bs, 1, device=log_probs.device).fill_(-1000),
-            padded_log_probs.permute(1, 0, 2).contiguous()
-        ), 2)
+        ctc_log_probs = padded_log_probs.permute(1, 0, 2).contiguous()
+        if force_forbid_blank:
+            ctc_log_probs = torch.cat((
+                torch.empty(padded_win_len, bs, 1, device=log_probs.device).fill_(-1000),
+                ctc_log_probs
+            ), 2)
         # Now ctc_log_probs is win_size x BS x (num_preds + 1)
         assert ctc_log_probs.is_contiguous()
 
@@ -48,11 +50,11 @@ class _SOFT_ALIGN(autograd.Function):
         return losses
 
     @staticmethod
-    def forward(ctx, log_probs, allowed_skips_beg=0, allowed_skips_end=0):
+    def forward(ctx, log_probs, allowed_skips_beg=0, allowed_skips_end=0, force_forbid_blank=True):
         log_probs = log_probs.detach().requires_grad_()
         with torch.enable_grad():
             losses = _SOFT_ALIGN._alignment_cost(
-                log_probs, allowed_skips_beg, allowed_skips_end)
+                log_probs, allowed_skips_beg, allowed_skips_end, force_forbid_blank)
             losses.sum().backward()
             grads = log_probs.grad.detach()
         _, alignment = grads.min(-1)
@@ -64,7 +66,7 @@ class _SOFT_ALIGN(autograd.Function):
     def backward(ctx, grad_output, _):
         grads, = ctx.saved_tensors
         grad_output = grad_output.to(grads.device)
-        return grads * grad_output.view(-1, 1, 1), None, None
+        return grads * grad_output.view(-1, 1, 1), None, None, None
 
 soft_align = _SOFT_ALIGN.apply
 
@@ -144,6 +146,8 @@ class PredictionNetwork(nn.Module):
         return torch.cat(out, 3)
 
 
+
+
 class CPCUnsupersivedCriterion(BaseCriterion):
 
     def __init__(self,
@@ -155,6 +159,12 @@ class CPCUnsupersivedCriterion(BaseCriterion):
                  allowed_skips_beg=0,     # number of predictions that we can skip at the beginning
                  allowed_skips_end=0,     # number of predictions that we can skip at the end
                  predict_self_loop=False, # always predict a repetition of the first symbol
+                 no_negs_in_match_window=False,  # prevent sampling negatives from the matching window
+                 learn_blank=False,       # try to use the blank symbol
+                 normalize_enc=False,
+                 normalize_preds=False,
+                 masq_rules="",
+                 loss_temp=1.0,
                  limit_negs_in_batch=None,
                  mode=None,
                  rnnMode=False,
@@ -174,17 +184,35 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         else:
             self.speakerEmb = None
 
-        
+        self.normalize_enc = normalize_enc
+        self.normalize_preds = normalize_preds
+        self.loss_temp = loss_temp
         self.nMatched = nMatched
+        self.no_negs_in_match_window = no_negs_in_match_window
         self.wPrediction = PredictionNetwork(
             nPredicts, dimOutputAR, dimOutputEncoder, rnnMode=rnnMode,
             dropout=dropout, sizeInputSeq=sizeInputSeq - nMatched)
+        self.learn_blank = learn_blank
+        if learn_blank:
+            self.blank_proto = torch.nn.Parameter(torch.zeros(1, 1, dimOutputEncoder, 1))
+        else:
+            self.register_parameter('blank_proto', None)
         self.nPredicts = nPredicts
         self.negativeSamplingExt = negativeSamplingExt
         self.allowed_skips_beg = allowed_skips_beg
         self.allowed_skips_end = allowed_skips_end
         self.predict_self_loop = predict_self_loop
         self.limit_negs_in_batch = limit_negs_in_batch
+
+        if masq_rules:
+            masq_buffer = torch.zeros(self.nMatched, self.nPredicts)
+            for rule in masq_rules.split(','):
+                a,b,c,d = [int(a) if a.lower() != "none" else None for a in rule.split(':')]
+                masq_buffer[a:b,c:d] = 1
+            print("!!!MasqBuffer: ", masq_buffer)
+            self.register_buffer("masq_buffer", masq_buffer.unsqueeze(0))
+        else:
+            self.register_buffer("masq_buffer", None)
 
         if mode not in [None, "reverse"]:
             raise ValueError("Invalid mode")
@@ -216,7 +244,11 @@ class CPCUnsupersivedCriterion(BaseCriterion):
             #     import pdb; pdb.set_trace()
         batchIdx = batchIdx.contiguous().view(-1)
 
-        seqIdx = torch.randint(low=1, high=nNegativeExt,
+        if self.no_negs_in_match_window:
+            idx_low = self.nMatched  # forbid sampling negatives in the prediction window
+        else:
+            idx_low = 1  # just forbid sampling own index for negative
+        seqIdx = torch.randint(low=idx_low, high=nNegativeExt,
                                size=(self.negativeSamplingExt
                                      * windowSize * batchSize, ),
                                device=encodedData.device)
@@ -253,7 +285,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
 
         # return outputs, labelLoss
 
-    def forward(self, cFeature, encodedData, label, captureOptions):
+    def forward(self, cFeature, encodedData, label, captureOptions, return_locals=False):
 
         if self.mode == "reverse":
             encodedData = torch.flip(encodedData, [1])
@@ -263,6 +295,9 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         windowSize = seqSize - self.nMatched
 
         cFeature = cFeature[:, :windowSize]
+
+        if self.normalize_enc:
+            encodedData = F.layer_norm(encodedData, (encodedData.size(-1),))
 
         # sampledData, labelLoss = self.sampleClean(encodedData, windowSize)
         # negatives: BS x Len x NumNegs x D
@@ -276,11 +311,25 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         # Predictions, BS x Len x D x nPreds
         predictions = self.wPrediction(cFeature)
         nPredicts = self.nPredicts
+
+        extra_preds = []
+
+        if self.learn_blank:
+            extra_preds.append(self.blank_proto.expand(batchSize, windowSize, self.blank_proto.size(2), 1))
+
         if self.predict_self_loop:
+            extra_preds.append(cFeature.unsqueeze(-1))
+
+        if extra_preds:
+            nPredicts += len(extra_preds)
+            extra_preds.append(predictions)
             predictions = torch.cat(
-                (cFeature.unsqueeze(-1), predictions), -1
+                extra_preds, -1
             )
-            nPredicts += 1
+
+        if self.normalize_preds:
+            predictions = F.layer_norm(predictions, (predictions.size(-1),))
+        
         #predictions = torch.cat(predictions, 1).permute(0, 2, 3, 1)
 
         # predictions = self.wPrediction(cFeature)
@@ -311,7 +360,14 @@ class CPCUnsupersivedCriterion(BaseCriterion):
             dim=0)[0]
         
         log_scores = log_scores.view(batchSize*windowSize, self.nMatched, nPredicts)
-        losses, aligns = soft_align(log_scores, self.allowed_skips_beg, self.allowed_skips_end)
+        # print('ls-stats', log_scores.mean().item(), log_scores.std().item())
+        if self.masq_buffer is not None:
+            masq_buffer = self.masq_buffer
+            if extra_preds:
+                masq_buffer = torch.cat([masq_buffer[:, :, :1]] * (len(extra_preds) - 1) + [masq_buffer], dim=2)
+            log_scores = log_scores.masked_fill(masq_buffer > 0, -1000)
+        losses, aligns = soft_align(log_scores / self.loss_temp, self.allowed_skips_beg, self.allowed_skips_end, not self.learn_blank)
+        losses = losses * self.loss_temp
 
         pos_is_selected = (pos_log_scores > neg_log_scores.max(2, keepdim=True)[0]).view(batchSize*windowSize, self.nMatched, nPredicts)
 
@@ -336,3 +392,8 @@ class CPCUnsupersivedCriterion(BaseCriterion):
                 captureRes['cpcctc_align'] = readableAligns
 
         return losses, outAcc, captureRes
+        if return_locals:
+            return losses, outAcc, captureRes, locals()
+        else:
+            return losses, outAcc, captureRes
+
