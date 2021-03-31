@@ -51,7 +51,7 @@ python train.py --pathDB /pio/data/zerospeech2021/LibriSpeech/train-clean-100 \
 --pathCaptureDS /pio/scratch/1/i283340/MGR/zs/sometries/ds2part.txt \
 --captureDStotNr 100 --captureEachEpochs 10 \
 --pathCaptureSave /pio/scratch/1/i283340/MGR/zs/capture/try2-001 \
---captureConvRepr --captureCtxRepr --captureSpeakerAlign --capturePhoneAlign --capturePred --captureCPCCTCalign \
+--captureConvRepr --captureCtxRepr --captureSpeakerAlign --capturePhoneAlign --capturePred --captureCPCCTCalign --captureCPCCTClogScores \
 --pathCheckpoint /pio/scratch/1/i283340/MGR/zs/checkpoints/cpcctc_tests2-001 \
 --file_extension .flac --n_process_loader 1 --max_size_loaded 40000000 \
 --batchSizeGPU 16 --nPredicts 8 --CPCCTC --CPCCTCNumMatched 12 \
@@ -64,7 +64,7 @@ python train.py --pathDB /pio/data/zerospeech2021/LibriSpeech/train-clean-100 \
 There are some new args added to group_save and group_db in train.py for capturing - options are also described in the ‘help’ argument in definitions in case I forget something here:
 - Data capturing is possible in 2 modes: capture once for a teached model (use --onlyCapture and --pathCheckpoint) or capture each N epochs during training each N epochs (don’t use --onlyCapture and only specify --captureEachEpochs and things from two bullets below)
 - The data is captured for a separately specified dataset I call captureDataset. This can e.g. be just same as valDataset. It is specified with --pathCaptureDS that is the path to .txt file with sequences in this DS. Additionally, --captureDSfreq OR --captureDStotNr can be used to sample only the part of sequences specified in the file - some percentage of those with freq one, and total number with totNr one. (example: --pathCaptureDS \<valDSpath\> --captureDStotNr 8 can be used to capture for just 8 audio files of the val dataset)
-- --pathCaptureSave tells where to save the data. Data for each epoch (for 1 epoch if --onlyCapture) is saved under \<that_dir\>/\<num_epoch\>/\<what_is_captured\>/ with file names {what_is_captured}_batch{batchBegin}-{batchEnd}.pt in one file each thing for each batch (example: ctx_repr_batch0-15.pt under ./captureRoot/0/ctx_repr/). What to capture is chosen with --captureConvRepr , --captureCtxRepr, --captureSpeakerAlign, --capturePhoneAlign, --capturePred , --captureCPCCTCalign args (so, those are: representations, LSTM-produced contexts, speaker alignments for the audio, phoneme alignments for the audio, CPC predictions, CPC-CTC alignments). Note that capturing speaker and phoneme alignments is necessary for their visualization, as it is later impossible to tell from what audio file particular batch was taken (audio files are glued together and chunked, and also randomly permuted). There is also --captureEverything added for convenience that captures everything that is valid for given run config, but it’s alway safer to specify exactly what to capture. For capturing phoneme alignments --path_phone_data needs to be specified (this is the path to a .txt file with phoneme alignments in their format, they provide it somewhere in repo’s main readme)
+- --pathCaptureSave tells where to save the data. Data for each epoch (for 1 epoch if --onlyCapture) is saved under \<that_dir\>/\<num_epoch\>/\<what_is_captured\>/ with file names {what_is_captured}_batch{batchBegin}-{batchEnd}.pt in one file each thing for each batch (example: ctx_repr_batch0-15.pt under ./captureRoot/0/ctx_repr/). What to capture is chosen with --captureConvRepr , --captureCtxRepr, --captureSpeakerAlign, --capturePhoneAlign, --capturePred , --captureCPCCTCalign , --captureCPCCTClogScores args (so, those are: representations, LSTM-produced contexts, speaker alignments for the audio, phoneme alignments for the audio, CPC predictions, CPC-CTC alignments). Note that capturing speaker and phoneme alignments is necessary for their visualization, as it is later impossible to tell from what audio file particular batch was taken (audio files are glued together and chunked, and also randomly permuted). There is also --captureEverything added for convenience that captures everything that is valid for given run config, but it’s alway safer to specify exactly what to capture. For capturing phoneme alignments --path_phone_data needs to be specified (this is the path to a .txt file with phoneme alignments in their format, they provide it somewhere in repo’s main readme)
 
 IN CASE YOU RUN DATA CAPTURE FOR AN ALREADY TRAINED MODEL, PASS SAME ARGUMENTS FOR THE MODEL TO LOAD CORRECTLY
 
@@ -77,7 +77,7 @@ python train.py --pathDB /pio/scratch/1/i283340/MGR/zs/ds2
 --captureDStotNr 8 --captureEachEpochs 2
 --pathCaptureSave /pio/scratch/1/i283340/MGR/zs/capture/try1
 --path_phone_data /pio/scratch/1/i283340/MGR/zs/phones/converted_aligned_phones.txt
---captureConvRepr --captureCtxRepr --captureSpeakerAlign --capturePhoneAlign --capturePred --captureCPCCTCalign
+--captureConvRepr --captureCtxRepr --captureSpeakerAlign --capturePhoneAlign --capturePred --captureCPCCTCalign --captureCPCCTClogScores
 --pathCheckpoint /pio/scratch/1/i283340/MGR/zs/checkpoints/cpcctc_tests2
 --file_extension .flac --n_process_loader 2 --max_size_loaded 40000000
 --batchSizeGPU 16 --nPredicts 8 --CPCCTC --CPCCTCNumMatched 12
@@ -90,7 +90,7 @@ python train.py --pathDB /pio/data/zerospeech2021/LibriSpeech/train-clean-100 --
 --pathCaptureDS /pio/scratch/2/jch/wav2vec/LibriSpeech100_labels_split/test_split.txt \
 --captureDStotNr 100 \
 --pathCaptureSave /pio/gluster/i283340/cpccapture/ls100_cpcctc_match12_pred8/ \
---captureConvRepr --captureCtxRepr --captureSpeakerAlign --capturePhoneAlign --capturePred --captureCPCCTCalign \
+--captureConvRepr --captureCtxRepr --captureSpeakerAlign --capturePhoneAlign --capturePred --captureCPCCTCalign --captureCPCCTClogScores \
 --path_phone_data /pio/scratch/1/i283340/MGR/zs/phones/converted_aligned_phones.txt \
 --pathCheckpoint /pio/gluster/i283340/modelcpy/ls100_cpcctc_match12_pred8 \
 --file_extension .flac \

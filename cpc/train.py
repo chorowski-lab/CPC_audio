@@ -207,6 +207,8 @@ def captureStep(
         cpcCaptureOpts.append('pred')
     if 'cpcctc_align' in whatToSave:
         cpcCaptureOpts.append('cpcctc_align')
+    if 'cpcctc_log_scores' in whatToSave:
+        cpcCaptureOpts.append('cpcctc_log_scores')
 
     # they merge (perhaps each speaker's) audio into one long chunk
     # and AFAIU sample can begin in one file and end in other one
@@ -253,14 +255,15 @@ def captureStep(
                 torch.save(labelData['phone'].cpu(), os.path.join(epochDir, 'phone_align', f'phone_align_batch{batchBegin}-{batchEnd}.pt'))
             for cpcCaptureThing in cpcCaptureOpts:
                 # pred shape (CPC-CTC): batch_size x (len - num_matched) x repr_dim x num_predicts (or num_predicts +1 if self loop allowed)
-                # align shape (CPC-CTC): batch_size x (len - num_matched) x num_matched
+                # cpcctc_align shape (CPC-CTC): batch_size x (len - num_matched) x num_matched
+                # cpcctc_log_scores shape (CPC-CTC): batch_size x (len - num_matched) x num_matched x num_predicts (or num_predicts +1 if self loop allowed)
                 torch.save(captured[cpcCaptureThing].cpu(), os.path.join(epochDir, cpcCaptureThing, 
                             f'{cpcCaptureThing}_batch{batchBegin}-{batchEnd}.pt'))
 
             if captureStatsCollector:
                 allBatchData = {}
-                allBatchData['repr'] = encoded_data
-                allBatchData['ctx'] = c_feature
+                allBatchData['conv_repr'] = encoded_data
+                allBatchData['ctx_repr'] = c_feature
                 allBatchData['speaker_align'] = labelSpeaker
                 if 'phone' in labelData:
                     allBatchData['phone_align'] = labelData['phone']
@@ -457,14 +460,16 @@ def main(args):
                 whatToSave.append('phone_align')
             if args.CPCCTC:
                 whatToSave.append('cpcctc_align')
+                whatToSave.append('cpcctc_log_scores')
         else:
             for argVal, name in zip([args.captureConvRepr, 
                                     args.captureCtxRepr, 
                                     args.captureSpeakerAlign, 
                                     args.capturePhoneAlign,
                                     args.capturePred,
-                                    args.captureCPCCTCalign], 
-                                    ['conv_repr', 'ctx_repr', 'speaker_align', 'phone_align', 'pred', 'cpcctc_align']):
+                                    args.captureCPCCTCalign,
+                                    args.captureCPCCTClogScores], 
+                                    ['conv_repr', 'ctx_repr', 'speaker_align', 'phone_align', 'pred', 'cpcctc_align', 'cpcctc_log_scores']):
                 if argVal:
                     whatToSave.append(name)
         ###assert len(whatToSave) > 0
@@ -941,10 +946,11 @@ def parseArgs(argv):
     group_save.add_argument('--captureCtxRepr', action='store_true', help='if to save LSTM-based contexts produced in CPC model')
     group_save.add_argument('--captureSpeakerAlign', action='store_true', help='if to save speaker alignments')
     group_save.add_argument('--capturePhoneAlign', action='store_true', help='if to save phone alignments')
+    group_save.add_argument('--captureEverything', action='store_true', help='save everything valid in this config')
     # below ONLY for CPC-CTC
     group_save.add_argument('--capturePred', action='store_true', help='if to save CPC predictions')
     group_save.add_argument('--captureCPCCTCalign', action='store_true', help='if to save CTC alignments with CPC predictions - only for CPC-CTC variant')
-    group_save.add_argument('--captureEverything', action='store_true', help='save everythong valid in this config')
+    group_save.add_argument('--captureCPCCTClogScores', action='store_true', help='if to save alignment log scores')
     # end of capturing data part here
 
     group_load = parser.add_argument_group('Load')
