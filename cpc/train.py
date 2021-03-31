@@ -405,7 +405,8 @@ def main(args):
     logs = {"epoch": [], "iter": [], "saveStep": args.save_step}
     loadOptimizer = False
     os.makedirs(args.pathCheckpoint, exist_ok=True)
-    json.dump(vars(args), open(os.path.join(args.pathCheckpoint, 'checkpoint_args.json'), 'wt'))
+    if not args.onlyCapture and not args.only_classif_metric:
+        json.dump(vars(args), open(os.path.join(args.pathCheckpoint, 'checkpoint_args.json'), 'wt'))
     if args.pathCheckpoint is not None and not args.restart:
         cdata = fl.getCheckpointData(args.pathCheckpoint)
         if cdata is not None:
@@ -604,7 +605,7 @@ def main(args):
             optimizer.load_state_dict(state_dict["optimizer"])
 
     # Checkpoint
-    if args.pathCheckpoint is not None:
+    if args.pathCheckpoint is not None and not args.onlyCapture and not args.only_classif_metric:
         if not os.path.isdir(args.pathCheckpoint):
             os.mkdir(args.pathCheckpoint)
         args.pathCheckpoint = os.path.join(args.pathCheckpoint, "checkpoint")
