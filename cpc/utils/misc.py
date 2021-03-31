@@ -11,6 +11,49 @@ import psutil
 from copy import deepcopy
 from bisect import bisect_left
 
+def seDistancesToCentroids(vecs, centroids, doNorm=False):
+    
+    if len(vecs.shape) == 2:
+        vecs = vecs.view(1, *(vecs.shape))
+
+    B = vecs.shape[0]
+    N = vecs.shape[1]
+    k = centroids.shape[0]
+
+    # vecs: B x L x Dim
+    # centroids: k x Dim
+
+    if doNorm:
+        vecLengths = torch.sqrt((vecs*vecs).sum(-1))
+        vecs = vecs / vecLengths.view(B, N, 1)
+        centrLengths = torch.sqrt((centroids*centroids).sum(-1))
+        centroids = centroids / centrLengths.view(k, 1)
+        
+    return torch.square(centroids).sum(1).view(1, 1, -1) + torch.square(vecs).sum(-1).view(B, N, 1) \
+        - 2*(vecs.view(B, N, 1, -1) * centroids.view(1, 1, k, -1)).sum(-1)  #torch.matmul(vecs, centroids.T)
+
+
+def pushToClosestForBatch(points, centers, deg=0.5, doNorm=False, doNormForPush=False):
+
+    B = points.shape[0]   
+    N = points.shape[1]
+    k = centers.shape[0]
+
+    if doNormForPush:
+        pointsLengths = torch.sqrt((points*points).sum(-1))
+        points = points / pointsLengths.view(B, N, 1)
+        centrLengths = torch.sqrt((centers*centers).sum(-1))
+        centers = centers / centrLengths.view(k, 1)
+
+    distsSq = seDistancesToCentroids(points, centers, doNorm=doNorm)
+    dists = torch.sqrt(distsSq)
+     
+    closest = dists.argmin(-1)
+    diffs = centers[closest].view(B, N, -1) - points
+    res = deg * diffs + points
+     
+    return res
+
 
 def untensor(d):
     if isinstance(d, list):

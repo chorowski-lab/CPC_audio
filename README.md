@@ -121,6 +121,23 @@ python cpc/eval/linear_separability.py -$PATH_DB $TRAINING_SET $VAL_SET model1.p
 
 Will evaluate the speaker separability of the concatenation of the features from model1 and model2.
 
+`--gru_level` controls from which layer of autoregressive part of CPC to extract the features. By default it's the last one.
+
+Nullspaces:
+
+To conduct the nullspace experiment, first classify speakers using two factorized matrices `A` (`DIM_EMBEDDING` x `DIM_INBETWEEN`) and `B` (`DIM_INBETWEEN` x `SPEAKERS`). You'll want to extract `A'`, the nullspace of matrix `A` (of size `DIM_EMBEDDING` x (`DIM_EMBEDDING` - `DIM_INBETWEEN`)), to make the embeddings less sensitive to speakers. 
+```bash 
+python cpc/eval/linear_separability.py $PATH_DB $TRAINING_SET $VAL_SET $CHECKPOINT_TO_LOAD --pathCheckpoint $PATH_CHECKPOINT --mode speakers_factorized  --model cpc --dim_inter $DIM_INBETWEEN --gru_level 2
+```
+
+Next, you evaluate the phone and speaker separabilities of the embeddings from CPC projected into the nullspace `A'`.
+```bash
+python cpc/eval/linear_separability.py $PATH_DB $TRAINING_SET $VAL_SET $CHECKPOINT_TO_LOAD --pathCheckpoint $PATH_CHECKPOINT --mode phonemes_nullspace --model cpc --pathPhone $PATH_TO_PHONE_LABELS --path_speakers_factorized $PATH_CHECKPOINT_SPEAKERS_FACTORIZED --dim_inter $DIM_INBETWEEN --gru_level 2
+```
+
+```bash
+python cpc/eval/linear_separability.py $PATH_DB $TRAINING_SET $VAL_SET $CHECKPOINT_TO_LOAD --pathCheckpoint $PATH_CHECKPOINT --mode speakers_nullspace --model cpc --path_speakers_factorized $PATH_CHECKPOINT_SPEAKERS_FACTORIZED --dim_inter $DIM_INBETWEEN --gru_level 2
+```
 
 ### ABX score:
 
