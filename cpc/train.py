@@ -12,6 +12,7 @@ from copy import deepcopy
 import random
 import psutil
 import sys
+#import torchaudio
 
 import cpc.criterion as cr
 import cpc.criterion.soft_align as sa
@@ -583,6 +584,8 @@ def main(args):
         if not os.path.isdir(args.pathCheckpoint):
             os.mkdir(args.pathCheckpoint)
         args.pathCheckpoint = os.path.join(args.pathCheckpoint, "checkpoint")
+        with open(args.pathCheckpoint + "_args.json", 'w') as file:
+            json.dump(vars(args), file, indent=2)
 
     scheduler = None
     if args.schedulerStep > 0:
@@ -822,6 +825,7 @@ def parseArgs(argv):
     group_db.add_argument('--gru_level', type=int, default=-1,
                           help='Hidden level of the LSTM autoregressive model to be taken'
                           '(default: -1, last layer).')
+
     group_supervised = parser.add_argument_group(
         'Supervised mode (depreciated)')
     group_supervised.add_argument('--supervised', action='store_true',
@@ -961,6 +965,11 @@ def parseArgs(argv):
 
 
 if __name__ == "__main__":
+    #import ptvsd
+    #ptvsd.enable_attach(('0.0.0.0', 7310))
+    #print("Attach debugger now")
+    #ptvsd.wait_for_attach()
+
     torch.multiprocessing.set_start_method('spawn')
     args = sys.argv[1:]
     main(args)
