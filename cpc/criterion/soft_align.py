@@ -285,7 +285,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
 
         # return outputs, labelLoss
 
-    def forward(self, cFeature, encodedData, label, captureOptions, return_locals=False):
+    def forward(self, cFeature, encodedData, label, captureOptions=None, return_locals=False):
 
         if self.mode == "reverse":
             encodedData = torch.flip(encodedData, [1])
@@ -391,7 +391,6 @@ class CPCUnsupersivedCriterion(BaseCriterion):
                 readableAligns = aligns.view(batchSize, windowSize, self.nMatched)
                 captureRes['cpcctc_align'] = readableAligns
 
-        return losses, outAcc, captureRes
         if return_locals:
             return losses, outAcc, captureRes, locals()
         else:
