@@ -289,7 +289,8 @@ class CPCUnsupersivedCriterion(BaseCriterion):
 
         # return outputs, labelLoss
 
-    def forward(self, cFeature, encodedData, label, captureOptions=None, return_locals=False):
+    def forward(self, cFeature, encodedData, label, captureOptions=None):
+
 
         if self.mode == "reverse":
             encodedData = torch.flip(encodedData, [1])
@@ -389,17 +390,20 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         captureRes = None
         if captureOptions != None:
             for o in captureOptions:
-                assert o in ('pred', 'cpcctc_align')
+                assert o in ('pred', 'cpcctc_align', 'cpcctc_log_scores', 'locals')
             captureRes = {}
             if 'pred' in captureOptions:
                 # 1st sting in last dim can be self loop - need to keep as it's also being aligned
                 captureRes['pred'] = predictions
             if 'cpcctc_align' in captureOptions:
-                readableAligns = aligns.view(batchSize, windowSize, self.nMatched)
+                readableAligns = aligns.detach().view(batchSize, windowSize, self.nMatched)
                 captureRes['cpcctc_align'] = readableAligns
+            if 'cpcctc_log_scores' in captureOptions:
+                captureRes['cpcctc_log_scores'] = log_scores.detach().view(batchSize, windowSize, self.nMatched, -1)
+            if 'locals' in captureOptions:
+                captureRes['locals'] = locals()
 
-        if return_locals:
-            return losses, outAcc, captureRes, locals()
-        else:
-            return losses, outAcc, captureRes
+        return losses, outAcc, captureRes
+
+
 
