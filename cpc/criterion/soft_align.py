@@ -202,10 +202,10 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         self.allowed_skips_beg = allowed_skips_beg
         self.allowed_skips_end = allowed_skips_end
         self.predict_self_loop = predict_self_loop
-        if predict_self_loop:
-            self.self_loop_gain = torch.nn.Parameter(torch.ones(1))
-        else:
-            self.register_parameter('self_loop_gain', None)
+        # if predict_self_loop:
+        #     self.self_loop_gain = torch.nn.Parameter(torch.ones(1))
+        # else:
+        #     self.register_parameter('self_loop_gain', None)
         self.limit_negs_in_batch = limit_negs_in_batch
 
         if masq_rules:
@@ -325,7 +325,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
             # old and buggy
             # extra_preds.append(cFeature.unsqueeze(-1))
             # new and shiny
-            extra_preds.append(encodedData[:, :windowSize, :].unsqueeze(-1) * self.self_loop_gain)
+            extra_preds.append(encodedData[:, :windowSize, :].unsqueeze(-1) )  # * self.self_loop_gain)
 
         if extra_preds:
             nPredicts += len(extra_preds)
