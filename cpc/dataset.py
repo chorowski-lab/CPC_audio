@@ -91,7 +91,11 @@ class AudioBatchData(Dataset):
             del self.seqLabel
 
     def prepare(self):
+        randomstate = random.getstate()
+        random.seed(767543)  # set seed only for batching so that it is random but always same for same dataset
+                             # so that capturing captures data for same audio across runs if same dataset provided
         random.shuffle(self.seqNames)
+        random.setstate(randomstate)  # restore random state so that other stuff changes with seed in args
         start_time = time.time()
 
         print("Checking length...")
