@@ -10,6 +10,7 @@ CHECKPOINT_PATH=false
 OUTPUT_DIR=false
 NULLSPACE=false
 NO_TEST=false
+AUDIO_FORMAT=flac
 
 print_usage() {
   echo -e "Usage: ./eval_abx.sh"
@@ -23,6 +24,7 @@ print_usage() {
   echo -e "\t-e CPC_ENV"
   echo -e "\t-z ZEROSPEECH_EVAL_ENV (The conda environment where the zerospeech2021-evaluate is installed)"
   echo -e "\t-t (Do not compute embeddings for test set)"
+  echo -e "\t-f audio files format in LibriSpeech dataset (without a dot)"
 }
 
 while getopts 'd:r:c:o:na:e:z:t' flag; do
@@ -36,6 +38,7 @@ while getopts 'd:r:c:o:na:e:z:t' flag; do
         e) CPC_ENV="${OPTARG}" ;;
         z) ZEROSPEECH_EVAL_ENV="${OPTARG}" ;;
         t) NO_TEST=true ;;
+        f) AUDIO_FORMAT=${OPTARG} ;;
         *) print_usage
            exit 1 ;;
     esac
@@ -76,7 +79,7 @@ fi
 echo "Params: $params"
 
 echo "$SCRIPT_PATH/embeddings_abx.py"
-python $SCRIPT_PATH/embeddings_abx.py $CHECKPOINT_PATH $DATASET_PATH $embeddings --gru_level 2 $params
+python $SCRIPT_PATH/embeddings_abx.py $CHECKPOINT_PATH $DATASET_PATH $embeddings --gru_level 2 --file_extension $AUDIO_FORMAT $params
 
 directories=("dev-clean" "dev-other")
 if [[ $NO_TEST == false ]]
@@ -92,7 +95,7 @@ do
         for file in `ls $embeddings/$i/phonetic/$directory` 
         do 
             filename_no_ext="${file%.*}" 
-            if [[ ! -f "$ORIGINAL_DATASET_PATH/phonetic/$directory/${filename_no_ext}.wav" ]] 
+            if [[ ! -f "$ORIGINAL_DATASET_PATH/phonetic/$directory/${filename_no_ext}.$AUDIO_FORMAT" ]] 
             then 
                 rm $embeddings/$i/phonetic/$directory/$file 
             fi
