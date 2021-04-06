@@ -132,7 +132,7 @@ EOF
         #zerospeech2021-evaluate -j 12 -o $results/$metric/$i --no-lexical --no-syntactic --no-semantic $DATASET_PATH $embeddings/$i
         #zerospeech2021-evaluate -j 12 -o $results/$metric/$i --force-cpu --no-lexical --no-syntactic --no-semantic $ORIGINAL_DATASET_PATH $embeddings/$i
         #zerospeech2021-evaluate -j 20 -o $results/$metric/$i --force-cpu --no-lexical --no-syntactic --no-semantic $ORIGINAL_DATASET_PATH $embeddings/$i
-        zerospeech2021-evaluate -j 20 -o $results/$metric/$i --no-lexical --no-syntactic --no-semantic $ORIGINAL_DATASET_PATH $embeddings/$i
+        zerospeech2021-evaluate --force-cpu -j 20 -o $results/$metric/$i --no-lexical --no-syntactic --no-semantic $ORIGINAL_DATASET_PATH $embeddings/$i
     done
 done
 

@@ -37,7 +37,7 @@ def main():
         for i, (filename, dirname) in enumerate(files):
             print("Progress {:2.1%}".format(i / len(files)), end="\r")
             input_path = os.path.join(dirname, filename)
-            output_path = os.path.join(target_dirname, os.path.splitext(filename)[0] + ".wav")
+            output_path = os.path.join(target_dirname, os.path.splitext(filename)[0] + "." + args.file_extension)
             data, sample_rate = sf.read(input_path)
             sf.write(output_path, data, sample_rate)
 
