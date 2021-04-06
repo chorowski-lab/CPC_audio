@@ -14,12 +14,12 @@ AUDIO_FORMAT=flac
 
 print_usage() {
   echo -e "Usage: ./eval_abx.sh"
-  echo -e "\t-d DATASET_PATH"
+  echo -e "\t-d DATASET_PATH (Either ZEROSPEECH_DATASET_PATH or LIBRISPEECH_FLATTENED_DATASET_PATH [Or anything that has directory structure of these two with dev-*.item files from ZEROSPEECH_DATASET_PATH])"
   echo -e "\t-r ORIGINAL_DATASET_PATH"
   echo -e "\t-c CHECKPOINT_PATH"
   echo -e "\t-o OUTPUT_DIR"
   echo -e "OPTIONAL FLAGS:"
-  echo -e "\t-n (Load a model with nullspace)"
+  echo -e "\t-n (Provide this flag if you want to load a model with nullspace)"
   echo -e "\t-a CONDA_PATH"
   echo -e "\t-e CPC_ENV"
   echo -e "\t-z ZEROSPEECH_EVAL_ENV (The conda environment where the zerospeech2021-evaluate is installed)"
@@ -27,7 +27,7 @@ print_usage() {
   echo -e "\t-f audio files format in LibriSpeech dataset (without a dot)"
 }
 
-while getopts 'd:r:c:o:na:e:z:t' flag; do
+while getopts 'd:r:c:o:n:a:e:z:t:f' flag; do
     case "${flag}" in
         d) DATASET_PATH="${OPTARG}" ;;
         r) ORIGINAL_DATASET_PATH="${OPTARG}" ;;

@@ -14,19 +14,19 @@ AUDIO_FORMAT=flac
 
 print_usage() {
   echo -e "Usage: ./finetune_nullspace.sh"
-  echo -e "\t-d DATASET_PATH"
-  echo -e "\t-t TRAIN_SET"
-  echo -e "\t-v VALIDATION_SET"
+  echo -e "\t-d DATASET_PATH (E.g. LIBRISPEECH_DATASET_PATH/train-clean-100)"
+  echo -e "\t-t TRAIN_SET (E.g. LIBRISPEECH_TRAIN_CLEAN_100_TRAIN_SPLIT_FILE_PATH)"
+  echo -e "\t-v VALIDATION_SET (E.g. LIBRISPEECH_TRAIN_CLEAN_100_TEST_SPLIT_FILE_PATH)"
   echo -e "\t-c CHECKPOINT_PATH"
   echo -e "\t-o OUTPUT_DIR"
   echo -e "\t-n DIM_INBETWEEN (Dimension of nullspace will be DIM_EMBEDDING - DIM_INBETWEEN)"
+  echo -e "\t-p PHONES_PATH (Path to the file containing phonemes for the entire dataset)"
   echo -e "OPTIONAL FLAGS:"
-  echo -e "\t-s FROM_STEP (From which step do you want to start. Order: $SPEAKERS -> $PHONEMES -> $SPEAKERS_NULLSPACE)"
-  echo -e "\t-p PHONES_PATH (Path to the file containing phonemes for the entire dataset. You don't need it if you start from $SPEAKERS_NULLSPACE)"
+  echo -e "\t-s FROM_STEP (From which step do you want to start. Order: $SPEAKERS [default] -> $PHONEMES -> $SPEAKERS_NULLSPACE)"
   echo -e "\t-f audio files format in LibriSpeech dataset (without a dot)"
 }
 
-while getopts 'd:t:v:c:o:n:f:p:' flag; do
+while getopts 'd:t:v:c:o:n:s:p:f' flag; do
     case "${flag}" in
         d) DATASET_PATH="${OPTARG}" ;;
         t) TRAIN_SET="${OPTARG}" ;;
