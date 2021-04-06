@@ -27,7 +27,7 @@ print_usage() {
   echo -e "\t-f audio files format in LibriSpeech dataset (without a dot)"
 }
 
-while getopts 'd:r:c:o:n:a:e:z:t:f:' flag; do
+while getopts 'd:r:c:o:na:e:z:tf:' flag; do
     case "${flag}" in
         d) DATASET_PATH="${OPTARG}" ;;
         r) ORIGINAL_DATASET_PATH="${OPTARG}" ;;
