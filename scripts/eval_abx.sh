@@ -24,7 +24,7 @@ print_usage() {
   echo -e "\t-e CPC_ENV"
   echo -e "\t-z ZEROSPEECH_EVAL_ENV (The conda environment where the zerospeech2021-evaluate is installed)"
   echo -e "\t-t (Do not compute embeddings for test set)"
-  echo -e "\t-f audio files format in LibriSpeech dataset (without a dot)"
+  echo -e "\t-f audio files format in -d dataset (without a dot)"
 }
 
 while getopts 'd:r:c:o:na:e:z:tf:' flag; do
@@ -95,7 +95,7 @@ do
         for file in `ls $embeddings/$i/phonetic/$directory` 
         do 
             filename_no_ext="${file%.*}" 
-            if [[ ! -f "$ORIGINAL_DATASET_PATH/phonetic/$directory/${filename_no_ext}.$AUDIO_FORMAT" ]] 
+            if [[ ! -f "$ORIGINAL_DATASET_PATH/phonetic/$directory/${filename_no_ext}.wav" ]] # here ALWAYS wav as it is for ZS dataset 
             then 
                 rm $embeddings/$i/phonetic/$directory/$file 
             fi
@@ -146,4 +146,6 @@ do
     done
 done > $OUTPUT_DIR/combined_results.txt
 
-conda activate $SAVED_ENV
+if [ $SAVED_ENV != None ]; then
+    conda activate $SAVED_ENV
+fi

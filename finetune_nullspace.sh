@@ -23,7 +23,7 @@ print_usage() {
   echo -e "\t-p PHONES_PATH (Path to the file containing phonemes for the entire dataset)"
   echo -e "OPTIONAL FLAGS:"
   echo -e "\t-s FROM_STEP (From which step do you want to start. Order: $SPEAKERS [default] -> $PHONEMES -> $SPEAKERS_NULLSPACE)"
-  echo -e "\t-f audio files format in LibriSpeech dataset (without a dot)"
+  echo -e "\t-f audio files format in -d dataset (without a dot)"
 }
 
 while getopts 'd:t:v:c:o:n:s:p:f:' flag; do
