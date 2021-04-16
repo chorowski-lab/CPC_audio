@@ -32,17 +32,28 @@ def getCriterion(args, downsampling, nSpeakers, nPhones):
         else:
             sizeInputSeq = (args.sizeWindow // downsampling)
 
+            # TODO this part can be simplified with m's and reprsConcat
             if args.FCMproject and args.FCMmBeforeAR:
-                # this could be replaced with encoder.getOutDim, but didn't want to change signature
-                encoderOutDimForCriterion = args.FCMprotos
-                # [!] args.hiddenGar already updated with possible FCM dim stuff in main train script
-                #     it is the actual AR dimension - so only needs to be changed here in case of FCMmAfterAR
-                #     changes the dimension after AR
-                ARoutDimForCriterion = args.hiddenGar  # but actually should also be == args.FCMprotos
+
+                if not args.FCMreprsConcat:
+                    # this could be replaced with encoder.getOutDim, but didn't want to change signature
+                    encoderOutDimForCriterion = args.FCMprotosForCriterion  # .FCMprotos
+                    # [!] args.hiddenGar already updated with possible FCM dim stuff in main train script
+                    #     it is the actual AR dimension - so only needs to be changed here in case of FCMmAfterAR
+                    #     changes the dimension after AR
+                    ARoutDimForCriterion = args.FCMprotosForCriterion  #args.hiddenGar  # but actually should also be == args.FCMprotos
+                else:
+                    encoderOutDimForCriterion = args.hiddenEncoder + args.FCMprotosForCriterion
+                    ARoutDimForCriterion = args.hiddenEncoder + args.FCMprotosForCriterion
 
             elif args.FCMproject and args.FCMmAfterAR:
-                encoderOutDimForCriterion = args.FCMprotos
-                ARoutDimForCriterion = args.FCMprotos
+
+                if not args.FCMreprsConcat:
+                    encoderOutDimForCriterion = args.FCMprotosForCriterion
+                    ARoutDimForCriterion = args.FCMprotosForCriterion
+                else:
+                    encoderOutDimForCriterion = args.hiddenEncoder + args.FCMprotosForCriterion
+                    ARoutDimForCriterion = args.hiddenEncoder + args.FCMprotosForCriterion
 
             else:
                 encoderOutDimForCriterion = args.hiddenEncoder
@@ -104,7 +115,8 @@ def trainStep(dataLoader,
               cpcCriterion,
               optimizer,
               scheduler,
-              loggingStep):
+              loggingStep,
+              epochNrs):
 
     cpcModel.train()
     cpcCriterion.train()
@@ -119,7 +131,7 @@ def trainStep(dataLoader,
         n_examples += batchData.size(0)
         batchData = batchData.cuda(non_blocking=True)
         label = label.cuda(non_blocking=True)
-        c_feature, encoded_data, label = cpcModel(batchData, label)
+        c_feature, encoded_data, label = cpcModel(batchData, label, epochNrs)
         allLosses, allAcc, _ = cpcCriterion(c_feature, encoded_data, label, None)
         totLoss = allLosses.sum()
 
@@ -160,7 +172,8 @@ def trainStep(dataLoader,
 
 def valStep(dataLoader,
             cpcModel,
-            cpcCriterion):
+            cpcCriterion,
+            epochNrs):
 
     cpcCriterion.eval()
     cpcModel.eval()
@@ -178,7 +191,7 @@ def valStep(dataLoader,
         label = label.cuda(non_blocking=True)
 
         with torch.no_grad():
-            c_feature, encoded_data, label = cpcModel(batchData, label)
+            c_feature, encoded_data, label = cpcModel(batchData, label, epochNrs)
             allLosses, allAcc, _ = cpcCriterion(c_feature, encoded_data, label, None)
 
         if "locLoss_val" not in logs:
@@ -201,7 +214,7 @@ def captureStep(
             cpcCriterion,
             captureOptions,
             captureStatsCollector,
-            epochNr):
+            epochNrs):
 
     cpcCriterion.eval()
     cpcModel.eval()
@@ -209,6 +222,8 @@ def captureStep(
     cpcCriterion.eval()
     cpcModel.eval()
     iter = 0
+
+    epochNr, totalEpochs = epochNrs
 
     capturePath = captureOptions['path']
     whatToSave = captureOptions['what']
@@ -244,7 +259,7 @@ def captureStep(
 
         with torch.no_grad():
 
-            c_feature, encoded_data, labelSpeaker = cpcModel(batchData, labelSpeaker)
+            c_feature, encoded_data, labelSpeaker = cpcModel(batchData, labelSpeaker, epochNrs)
             allLosses, allAcc, captured = cpcCriterion(c_feature, encoded_data, labelSpeaker, cpcCaptureOpts)
         
             # saving it with IDs like that assumes deterministic order of elements
@@ -340,13 +355,13 @@ def run(trainDataset,
             (len(trainLoader), len(valLoader), batchSize))
 
         locLogsTrain = trainStep(trainLoader, cpcModel, cpcCriterion,
-                                optimizer, scheduler, logs["logging_step"])
+                                optimizer, scheduler, logs["logging_step"], (epoch, nEpoch-1))
 
-        locLogsVal = valStep(valLoader, cpcModel, cpcCriterion)
+        locLogsVal = valStep(valLoader, cpcModel, cpcCriterion, (epoch, nEpoch-1))
 
         if captureDataset is not None and epoch % captureEachEpochs == 0:
             print(f"Capturing data for epoch {epoch}")
-            captureStep(captureLoader, cpcModel, cpcCriterion, captureOptions, captureStatsCollector, epoch)
+            captureStep(captureLoader, cpcModel, cpcCriterion, captureOptions, captureStatsCollector, (epoch, nEpoch-1))
 
         currentAccuracy = float(locLogsVal["locAcc_val"].mean())
         if currentAccuracy > bestAcc:
@@ -403,7 +418,7 @@ def onlyCapture(
     captureLoader = captureDataset.getDataLoader(batchSize, 'sequential', False,
                                                 numWorkers=0)
     print(f"Capturing data for model checkpoint after epoch: {startEpoch-1}")
-    captureStep(captureLoader, cpcModel, cpcCriterion, captureOptions, captureStatsCollector, startEpoch-1)
+    captureStep(captureLoader, cpcModel, cpcCriterion, captureOptions, captureStatsCollector, (startEpoch-1, startEpoch-1))
 
 
 def main(args):
@@ -569,14 +584,39 @@ def main(args):
             "pushDegFeatureBeforeAR": args.FCMpushDegFeatureBeforeAR, 
             "mAfterAR": args.FCMmAfterAR,
             "pushDegCtxAfterAR": args.FCMpushDegCtxAfterAR,
-            "pushDegAllAfterAR": args.FCMpushDegAllAfterAR
+            "pushDegAllAfterAR": args.FCMpushDegAllAfterAR,
+            "reprsConcat": args.FCMreprsConcat, #,
+            "reprsConcatNormSumsNotLengths": args.FCMreprsConcatNormSumsNotLengths
+            #"reprsConcatDontIncreaseARdim": args.FCMreprsConcatIncreaseARdim
         }
+        if args.FCMleaveProtos is not None and args.FCMleaveProtos > 0:
+            assert args.FCMleaveProtos <= args.FCMprotos
+            args.FCMprotosForCriterion = args.FCMleaveProtos
+        else:
+            args.FCMprotosForCriterion = args.FCMprotos
     else:
         fcmSettings = None
 
+    print(f'REPRCONCAT {fcmSettings["reprsConcat"]}')
     if fcmSettings is not None:  
         #locArgsCpy = deepcopy(locArgs)
-        if fcmSettings["mBeforeAR"] is not None:
+        if fcmSettings["reprsConcat"]:
+            assert fcmSettings["mBeforeAR"] is not None \
+                or fcmSettings["mAfterAR"] is not None
+            assert fcmSettings["pushDegFeatureBeforeAR"] is not None \
+                or fcmSettings["pushDegCtxAfterAR"] is not None \
+                or fcmSettings["pushDegAllAfterAR"] is not None
+            # if fcmSettings["reprsConcatDontIncreaseARdim"] is not None:
+            #     args.ARinputDim = args.hiddenEncoder + fcmSettings["numProtos"]
+            #     args.hiddenGar = args.hiddenEncoder
+            # else:
+            if fcmSettings["mBeforeAR"] is not None:
+                args.ARinputDim = args.hiddenEncoder + fcmSettings["numProtos"]
+                args.hiddenGar = args.hiddenEncoder + fcmSettings["numProtos"]
+            elif fcmSettings["mAfterAR"] is not None:
+                args.ARinputDim = args.hiddenEncoder
+                args.hiddenGar = args.hiddenEncoder
+        elif fcmSettings["mBeforeAR"] is not None:
             args.ARinputDim = fcmSettings["numProtos"]
             args.hiddenGar = fcmSettings["numProtos"]
         elif fcmSettings["mAfterAR"] is not None:
@@ -585,6 +625,7 @@ def main(args):
                   # as there is no dim change inside encoder nor AR nets
         else:  # otherwise just pushing to closest proto, without dim change
             args.ARinputDim = args.hiddenEncoder
+        print("FCM settings:", fcmSettings)
     else:
         #locArgsCpy = deepcopy(locArgs)
         args.ARinputDim = args.hiddenEncoder
@@ -1034,6 +1075,13 @@ def parseArgs(argv):
     group_fcm.add_argument('--FCMmAfterAR', type=float, default=None)
     group_fcm.add_argument('--FCMpushDegCtxAfterAR', type=float, default=None)
     group_fcm.add_argument('--FCMpushDegAllAfterAR', type=float, default=None)
+    group_fcm.add_argument('--FCMreprsConcat', action='store_true')
+    group_fcm.add_argument('--FCMreprsConcatNormSumsNotLengths', action='store_true')
+    # TODO? one below for now is not properly done when AR=transformer
+    #      WHEN AR=TRANSFORMER IT'S LIKE IT'S ALWAYS FALSE
+    # TODO? this is also not properly dealt with for criterion's prediction network
+    # [!!] --> actually, rather just keep it like that, and make smaller enc if needed
+    #group_fcm.add_argument('--FCMreprsConcatDontIncreaseARdim', action='store_true')
     
 
     group_gpu = parser.add_argument_group('GPUs')

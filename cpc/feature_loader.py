@@ -148,6 +148,8 @@ def getAR(args):
         from .transformers import buildTransformerAR
         #print(f'=====args.ARinputDim: {args.ARinputDim}')
         #raise Exception()
+        # TODO? change this so that it doesn't increase hidden dim etc when 
+        #      --FCMreprsConcat and --FCMreprsConcatDontIncreaseARdim
         arNet = buildTransformerAR(args.ARinputDim, 1, #args.hiddenEncoder, 1,
                                    args.sizeWindow // 160, args.abspos)
         args.hiddenGar = args.ARinputDim  #args.hiddenEncoder
