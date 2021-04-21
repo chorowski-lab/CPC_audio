@@ -18,6 +18,7 @@ def set_default_cpc_config(parser):
                                       "model's architecture.")
     group.add_argument('--hiddenEncoder', type=int, default=256,
                        help='Hidden dimension of the encoder network.')
+    group.add_argument('--cpc_pooled_encoder', action='store_true')
     group.add_argument('--hiddenGar', type=int, default=256,
                        help='Hidden dimension of the auto-regressive network')
     group.add_argument('--nPredicts', type=int, default=12,

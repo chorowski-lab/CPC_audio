@@ -146,8 +146,12 @@ def getEncoder(args):
         from .model import LFBEnconder
         return LFBEnconder(args.hiddenEncoder)
     else:
-        from .model import CPCEncoder
-        return CPCEncoder(args.hiddenEncoder, args.normMode)
+        from .model import CPCEncoder, CPCEncoderPooled
+        if args.cpc_pooled_encoder:
+            print('!!!Using pooled encoder!!!')
+            return CPCEncoderPooled(args.hiddenEncoder, args.normMode)
+        else:
+            return CPCEncoder(args.hiddenEncoder, args.normMode)
 
 
 def getAR(args):

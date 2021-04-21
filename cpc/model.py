@@ -105,6 +105,58 @@ class CPCEncoder(nn.Module):
         return x
 
 
+class CPCEncoderPooled(nn.Module):
+
+    def __init__(self,
+                 sizeHidden=512,
+                 normMode="layerNorm"):
+
+        super(CPCEncoderPooled, self).__init__()
+
+        validModes = ["batchNorm", "instanceNorm", "ID", "layerNorm"]
+        if normMode not in validModes:
+            raise ValueError(f"Norm mode must be in {validModes}")
+
+        if normMode == "instanceNorm":
+            def normLayer(x): return nn.InstanceNorm1d(x, affine=True)
+        elif normMode == "ID":
+            normLayer = IDModule
+        elif normMode == "layerNorm":
+            normLayer = ChannelNorm
+        else:
+            normLayer = nn.BatchNorm1d
+
+        self.dimEncoded = sizeHidden
+        self.conv0 = nn.Conv1d(1, sizeHidden, 10, padding=3)
+        self.pool0 = nn.AvgPool1d(kernel_size=5, stride=5, padding=2)
+        self.batchNorm0 = normLayer(sizeHidden)
+        self.conv1 = nn.Conv1d(sizeHidden, sizeHidden, 8, padding=2)
+        self.pool1 = nn.AvgPool1d(kernel_size=4, stride=4, padding=2)
+        self.batchNorm1 = normLayer(sizeHidden)
+        self.conv2 = nn.Conv1d(sizeHidden, sizeHidden, 4, padding=1)
+        self.pool2 = nn.AvgPool1d(kernel_size=2, stride=2, padding=1)
+        self.batchNorm2 = normLayer(sizeHidden)
+        self.conv3 = nn.Conv1d(sizeHidden, sizeHidden, 4, padding=1)
+        self.pool3 = nn.AvgPool1d(kernel_size=2, stride=2, padding=1)
+        self.batchNorm3 = normLayer(sizeHidden)
+        self.conv4 = nn.Conv1d(sizeHidden, sizeHidden, 4, padding=1)
+        self.pool4 = nn.AvgPool1d(kernel_size=2, stride=2, padding=1)
+        self.batchNorm4 = normLayer(sizeHidden)
+        self.DOWNSAMPLING = 160
+
+    def getDimOutput(self):
+        return self.conv4.out_channels
+
+    def forward(self, x):
+        x = F.relu(self.batchNorm0(self.pool0(self.conv0(x))))
+        x = F.relu(self.batchNorm1(self.pool1(self.conv1(x))))
+        x = F.relu(self.batchNorm2(self.pool2(self.conv2(x))))
+        x = F.relu(self.batchNorm3(self.pool3(self.conv3(x))))
+        x = F.relu(self.batchNorm4(self.pool4(self.conv4(x))))
+        return x
+
+
+
 class MFCCEncoder(nn.Module):
 
     def __init__(self,
