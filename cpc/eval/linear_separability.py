@@ -18,7 +18,7 @@ import cpc.utils.misc as utils
 from cpc.dataset import AudioBatchData, findAllSeqs, filterSeqs, parseSeqLabels
 
 
-def train_step(feature_maker, criterion, data_loader, optimizer, label_key):
+def train_step(feature_maker, criterion, data_loader, optimizer, label_key, cpc_epochs):
 
     if feature_maker.optimize:
         feature_maker.train()
@@ -31,7 +31,7 @@ def train_step(feature_maker, criterion, data_loader, optimizer, label_key):
         optimizer.zero_grad()
         batch_data, label_data = fulldata
         label = label_data[label_key]
-        c_feature, encoded_data, _ = feature_maker(batch_data, None)
+        c_feature, encoded_data, _, __ = feature_maker(batch_data, None, cpc_epochs)
         if not feature_maker.optimize:
             c_feature, encoded_data = c_feature.detach(), encoded_data.detach()
         all_losses, all_acc  = criterion(c_feature, encoded_data, label)
@@ -48,7 +48,7 @@ def train_step(feature_maker, criterion, data_loader, optimizer, label_key):
     return logs
 
 
-def val_step(feature_maker, criterion, data_loader, label_key):
+def val_step(feature_maker, criterion, data_loader, label_key, cpc_epochs):
 
     feature_maker.eval()
     criterion.eval()
@@ -59,7 +59,7 @@ def val_step(feature_maker, criterion, data_loader, label_key):
         with torch.no_grad():
             batch_data, label_data = fulldata
             label = label_data[label_key]
-            c_feature, encoded_data, _ = feature_maker(batch_data, None)
+            c_feature, encoded_data, _, __ = feature_maker(batch_data, None, cpc_epochs)
             all_losses, all_acc = criterion(c_feature, encoded_data, label)
 
             logs["locLoss_val"] += np.asarray([all_losses.mean().item()])
@@ -78,7 +78,8 @@ def run(feature_maker,
         logs,
         n_epochs,
         path_checkpoint,
-        label_key):
+        label_key,
+        cpc_epochs=(100,100)):
 
     start_epoch = len(logs["epoch"])
     best_acc = -1
@@ -90,8 +91,8 @@ def run(feature_maker,
         sys.stdout.flush()
 
         logs_train = train_step(feature_maker, criterion, train_loader,
-                                optimizer, label_key)
-        logs_val = val_step(feature_maker, criterion, val_loader, label_key)
+                                optimizer, label_key, cpc_epochs)
+        logs_val = val_step(feature_maker, criterion, val_loader, label_key, cpc_epochs)
         print('')
         print('_'*50)
         print(f'Ran {epoch + 1} epochs '
@@ -142,12 +143,14 @@ def trainLinsepClassification(
         logs_save_step,
         path_best_checkpoint,
         n_epochs,
-        cpc_epoch,
+        cpc_epochs,
         label_key):
 
     wasOptimizeCPC = feature_maker.optimize if hasattr(feature_maker, 'optimize') else None
     feature_maker.eval()
     feature_maker.optimize = False
+
+    current_cpc_epoch, all_cpc_epochs = cpc_epochs
 
     start_epoch = 0
     best_train_acc = -1
@@ -162,8 +165,8 @@ def trainLinsepClassification(
         sys.stdout.flush()
 
         logs_train = train_step(feature_maker, criterion, train_loader,
-                                optimizer, label_key)
-        logs_val = val_step(feature_maker, criterion, val_loader, label_key)
+                                optimizer, label_key, cpc_epochs)
+        logs_val = val_step(feature_maker, criterion, val_loader, label_key, cpc_epochs)
         print('')
         print('_'*50)
         print(f'Ran {epoch + 1} {label_key} classification epochs '
@@ -203,7 +206,7 @@ def trainLinsepClassification(
     if path_best_checkpoint:
         save_linsep_best_checkpoint(best_state_cpc, best_state_classif_crit,
                         optimizer_state_best_ep,  # TODO check if should save that epoch or last in optimizer
-                        os.path.join(path_best_checkpoint, f"{label_key}_classif_best-epoch{best_epoch}-cpc_epoch{cpc_epoch}.pt"))
+                        os.path.join(path_best_checkpoint, f"{label_key}_classif_best-epoch{best_epoch}-cpc_epoch{current_cpc_epoch}.pt"))
     feature_maker.optimize = wasOptimizeCPC
     return {'num_epoch_trained': n_epochs,
             'best_val_acc': best_acc,

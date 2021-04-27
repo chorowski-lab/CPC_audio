@@ -131,9 +131,14 @@ def trainStep(dataLoader,
         n_examples += batchData.size(0)
         batchData = batchData.cuda(non_blocking=True)
         label = label.cuda(non_blocking=True)
-        c_feature, encoded_data, label = cpcModel(batchData, label, epochNrs)
-        allLosses, allAcc, _ = cpcCriterion(c_feature, encoded_data, label, None)
-        totLoss = allLosses.sum()
+        c_feature, encoded_data, label, pushLoss = cpcModel(batchData, label, epochNrs)
+        allCriterionLosses, allAcc, _ = cpcCriterion(c_feature, encoded_data, label, None)
+
+        totLoss = allCriterionLosses.sum()
+        if pushLoss is not None:
+            #print("**", totLoss.shape, pushLoss.shape)
+            # pushLoss will have shape depeding on dataParallel
+            totLoss += pushLoss.sum()  # pushLoss is an average per-vector
 
         totLoss.backward()
 
@@ -142,11 +147,11 @@ def trainStep(dataLoader,
         optimizer.zero_grad()
 
         if "locLoss_train" not in logs:
-            logs["locLoss_train"] = np.zeros(allLosses.size(1))
-            logs["locAcc_train"] = np.zeros(allLosses.size(1))
+            logs["locLoss_train"] = np.zeros(allCriterionLosses.size(1))
+            logs["locAcc_train"] = np.zeros(allCriterionLosses.size(1))
 
         iter += 1
-        logs["locLoss_train"] += (allLosses.mean(dim=0)).detach().cpu().numpy()
+        logs["locLoss_train"] += (allCriterionLosses.mean(dim=0)).detach().cpu().numpy()
         logs["locAcc_train"] += (allAcc.mean(dim=0)).cpu().numpy()
 
         if (step + 1) % loggingStep == 0:
@@ -191,7 +196,7 @@ def valStep(dataLoader,
         label = label.cuda(non_blocking=True)
 
         with torch.no_grad():
-            c_feature, encoded_data, label = cpcModel(batchData, label, epochNrs)
+            c_feature, encoded_data, label, pushLoss = cpcModel(batchData, label, epochNrs)
             allLosses, allAcc, _ = cpcCriterion(c_feature, encoded_data, label, None)
 
         if "locLoss_val" not in logs:
@@ -371,7 +376,7 @@ def run(trainDataset,
         # this performs linsep task for the best CPC model up to date
         if linsepEachEpochs is not None and epoch !=0 and epoch % linsepEachEpochs == 0:
             # capturing for current CPC state after this epoch, relying on CPC internal accuracy is vague
-            locLogsLinsep = linsepFun(epoch, cpcModel, epoch)
+            locLogsLinsep = linsepFun(epoch, cpcModel, (epoch, nEpoch-1))
 
         print(f'Ran {epoch + 1} epochs '
             f'in {time.time() - start_time:.2f} seconds')
@@ -586,7 +591,10 @@ def main(args):
             "pushDegCtxAfterAR": args.FCMpushDegCtxAfterAR,
             "pushDegAllAfterAR": args.FCMpushDegAllAfterAR,
             "reprsConcat": args.FCMreprsConcat, #,
-            "reprsConcatNormSumsNotLengths": args.FCMreprsConcatNormSumsNotLengths
+            "reprsConcatNormSumsNotLengths": args.FCMreprsConcatNormSumsNotLengths,
+            "pushLossWeightEnc": args.FCMpushLossWeightEnc,
+            "pushLossWeightCtx": args.FCMpushLossWeightCtx,
+            "pushLossLinear": args.FCMpushLossLinear
             #"reprsConcatDontIncreaseARdim": args.FCMreprsConcatIncreaseARdim
         }
         if args.FCMleaveProtos is not None and args.FCMleaveProtos > 0:
@@ -820,7 +828,7 @@ def main(args):
 
         print("linsep_val_loader ready")
 
-        def runLinsepClassificationTraining(numOfEpoch, cpcMdl, cpcStateEpoch):
+        def runLinsepClassificationTraining(numOfEpoch, cpcMdl, cpcStateEpochs):
             log_path_for_epoch = os.path.join(args.linsep_logs_dir, str(numOfEpoch))
             if not os.path.exists(log_path_for_epoch):
                 os.makedirs(log_path_for_epoch)
@@ -852,7 +860,7 @@ def main(args):
                     args.linsep_task_logging_step,
                     checkpoint_path_phoneme,
                     args.linsep_n_epoch,
-                    cpcStateEpoch,
+                    cpcStateEpochs,
                     'phone')
                 del phone_criterion
                 del phone_optimizer
@@ -868,7 +876,7 @@ def main(args):
                     args.linsep_task_logging_step,
                     checkpoint_path_speaker,
                     args.linsep_n_epoch,
-                    cpcStateEpoch,
+                    cpcStateEpochs,
                     'speaker')
                 del speaker_criterion
                 del speaker_optimizer
@@ -1082,6 +1090,10 @@ def parseArgs(argv):
     # TODO? this is also not properly dealt with for criterion's prediction network
     # [!!] --> actually, rather just keep it like that, and make smaller enc if needed
     #group_fcm.add_argument('--FCMreprsConcatDontIncreaseARdim', action='store_true')
+    group_fcm.add_argument('--FCMpushLossWeightEnc', type=float, default=None)  # not really FCM part but well
+    group_fcm.add_argument('--FCMpushLossWeightCtx', type=float, default=None)  # not really FCM part but well
+    # TODO think about adding linear loss option, but don't think makes too much sense?
+    group_fcm.add_argument('--FCMpushLossLinear', action='store_true')
     
 
     group_gpu = parser.add_argument_group('GPUs')

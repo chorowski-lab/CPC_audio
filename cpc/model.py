@@ -318,6 +318,9 @@ class CPCModel(nn.Module):
         if self.fcm:
             self.fcmDebug = False   #True
             # caution - need to set args.hiddenGar to same as args.FCMprotos
+            self.pushLossWeightEnc = fcmSettings["pushLossWeightEnc"]
+            self.pushLossWeightCtx = fcmSettings["pushLossWeightCtx"]
+            self.pushLossLinear = fcmSettings["pushLossLinear"]
             self.reprsConcat = fcmSettings["reprsConcat"]
             self.reprsConcatNormSumsNotLengths = fcmSettings["reprsConcatNormSumsNotLengths"]
             self.numProtos = fcmSettings["numProtos"]
@@ -402,11 +405,11 @@ class CPCModel(nn.Module):
         if self.fcm:
             # could just invoke with some of those as None but this way it's more readable I guess
             if self.reprsConcat and self.mBeforeAR is not None:
-                encodedDataM = CPCModel._FCMlikeBelong(encodedData, self.protos, self.mBeforeAR, None)
+                encodedDataM = self._FCMlikeBelong(encodedData, self.protos, self.mBeforeAR, None)
                 if self.fcmDebug:
                     print(f'enc data m before construction')
                 if self.pushDegFeatureBeforeAR is not None:
-                    encodedDataPush = CPCModel._FCMlikeBelong(encodedData, self.protos, None, self.pushDegFeatureBeforeAR)
+                    encodedDataPush = self._FCMlikeBelong(encodedData, self.protos, None, self.pushDegFeatureBeforeAR)
                     if self.fcmDebug:
                         print(f'enc data pushing before')
                 else:
@@ -430,14 +433,14 @@ class CPCModel(nn.Module):
                 encodedData = torch.cat([encodedDataPush, encodedDataM], dim=-1)
             elif self.mBeforeAR is not None:
                 if self.pushDegFeatureBeforeAR is not None:  # can push before m, but not sure if makes sense
-                    encodedData = CPCModel._FCMlikeBelong(encodedData, self.protos, None, self.pushDegFeatureBeforeAR)
+                    encodedData = self._FCMlikeBelong(encodedData, self.protos, None, self.pushDegFeatureBeforeAR)
                     if self.fcmDebug:
                         print(f'enc data pushing before')
-                encodedData = CPCModel._FCMlikeBelong(encodedData, self.protos, self.mBeforeAR, None)
+                encodedData = self._FCMlikeBelong(encodedData, self.protos, self.mBeforeAR, None)
                 if self.fcmDebug:
                     print(f'enc data m before construction')
             elif self.pushDegFeatureBeforeAR is not None:
-                encodedData = CPCModel._FCMlikeBelong(encodedData, self.protos, None, self.pushDegFeatureBeforeAR)
+                encodedData = self._FCMlikeBelong(encodedData, self.protos, None, self.pushDegFeatureBeforeAR)
                 if self.fcmDebug:
                     print(f'enc data pushing before')
         #print("!!", encodedData.shape)
@@ -473,17 +476,17 @@ class CPCModel(nn.Module):
                 
                 elif self.mAfterAR is not None:
                     if self.pushDegCtxAfterAR is not None:
-                        cFeature = CPCModel._FCMlikeBelong(cFeature, self.protos, None, self.pushDegCtxAfterAR)
+                        cFeature = self._FCMlikeBelong(cFeature, self.protos, None, self.pushDegCtxAfterAR)
                         if self.fcmDebug:
                             print(f'ctx pushing after, before m after')
 
                     if self.pushDegAllAfterAR is not None:
-                        encodedData = CPCModel._FCMlikeBelong(encodedData, self.protos, None, self.pushDegAllAfterAR)
-                        cFeature = CPCModel._FCMlikeBelong(cFeature, self.protos, None, self.pushDegAllAfterAR)
+                        encodedData = self._FCMlikeBelong(encodedData, self.protos, None, self.pushDegAllAfterAR)
+                        cFeature = self._FCMlikeBelong(cFeature, self.protos, None, self.pushDegAllAfterAR)
                         if self.fcmDebug:
                             print(f'enc and ctx pushing after, before m after')
-                    encodedData = CPCModel._FCMlikeBelong(encodedData, self.protos, self.mAfterAR, None)
-                    cFeature = CPCModel._FCMlikeBelong(cFeature, self.protos, self.mAfterAR, None)
+                    encodedData = self._FCMlikeBelong(encodedData, self.protos, self.mAfterAR, None)
+                    cFeature = self._FCMlikeBelong(cFeature, self.protos, self.mAfterAR, None)
                     if self.fcmDebug:
                         print(f'enc and ctx m after')
 
@@ -492,13 +495,13 @@ class CPCModel(nn.Module):
                 else:
 
                     if self.pushDegCtxAfterAR is not None:
-                        cFeature = CPCModel._FCMlikeBelong(cFeature, self.protos, None, self.pushDegCtxAfterAR)
+                        cFeature = self._FCMlikeBelong(cFeature, self.protos, None, self.pushDegCtxAfterAR)
                         if self.fcmDebug:
                             print(f'ctx pushing after')
 
                     if self.pushDegAllAfterAR is not None:
-                        encodedData = CPCModel._FCMlikeBelong(encodedData, self.protos, None, self.pushDegAllAfterAR)
-                        cFeature = CPCModel._FCMlikeBelong(cFeature, self.protos, None, self.pushDegAllAfterAR)
+                        encodedData = self._FCMlikeBelong(encodedData, self.protos, None, self.pushDegAllAfterAR)
+                        cFeature = self._FCMlikeBelong(cFeature, self.protos, None, self.pushDegAllAfterAR)
                         if self.fcmDebug:
                             print(f'enc and ctx pushing after')
 
@@ -509,14 +512,14 @@ class CPCModel(nn.Module):
                     cFeatureMpart = cFeature[:, :, baseEncDim:]
                     # need to do pushing before norm
                     if self.pushDegCtxAfterAR is not None:
-                        cFeaturePushPart = CPCModel._FCMlikeBelong(cFeaturePushPart, self.protos, None, self.pushDegCtxAfterAR)
+                        cFeaturePushPart = self._FCMlikeBelong(cFeaturePushPart, self.protos, None, self.pushDegCtxAfterAR)
                         if self.fcmDebug:
                             print(f"m before's ctx push after with concat")
                     if self.pushDegAllAfterAR is not None:
-                        cFeaturePushPart = CPCModel._FCMlikeBelong(cFeaturePushPart, self.protos, None, self.pushDegAllAfterAR)
+                        cFeaturePushPart = self._FCMlikeBelong(cFeaturePushPart, self.protos, None, self.pushDegAllAfterAR)
                         encodedDataPushPart = encodedData[:, :, :baseEncDim]
                         encodedDataMpart = encodedData[:, :, baseEncDim:]
-                        encodedDataPushPart = CPCModel._FCMlikeBelong(encodedDataPushPart, self.protos, None, self.pushDegAllAfterAR)
+                        encodedDataPushPart = self._FCMlikeBelong(encodedDataPushPart, self.protos, None, self.pushDegAllAfterAR)
                         if self.fcmDebug:
                             print(f"m before's all push after with concat")
                         encodedData = torch.cat([encodedDataPushPart, encodedDataMpart], dim=-1)
@@ -546,14 +549,14 @@ class CPCModel(nn.Module):
                 
                 elif self.mAfterAR is not None:  # here encodedData and cFeature are regular-dim at the beginning
                     cFeaturePushPart = cFeature
-                    cFeatureMpart = CPCModel._FCMlikeBelong(cFeature, self.protos, self.mAfterAR, None)
+                    cFeatureMpart = self._FCMlikeBelong(cFeature, self.protos, self.mAfterAR, None)
                     # need to do pushing before norm
                     if self.pushDegCtxAfterAR is not None:
-                        cFeaturePushPart = CPCModel._FCMlikeBelong(cFeaturePushPart, self.protos, None, self.pushDegCtxAfterAR)
+                        cFeaturePushPart = self._FCMlikeBelong(cFeaturePushPart, self.protos, None, self.pushDegCtxAfterAR)
                         if self.fcmDebug:
                             print(f"m after's ctx push after with concat")
                     if self.pushDegAllAfterAR is not None:
-                        cFeaturePushPart = CPCModel._FCMlikeBelong(cFeaturePushPart, self.protos, None, self.pushDegAllAfterAR)
+                        cFeaturePushPart = self._FCMlikeBelong(cFeaturePushPart, self.protos, None, self.pushDegAllAfterAR)
                         if self.fcmDebug:
                             print(f"m after's all (ctx now) push after with concat")
                     cFeaturePushPart, cFeatureMpart = self.gradualTrainingNormalize(cFeaturePushPart, cFeatureMpart, epochNrs)
@@ -569,10 +572,10 @@ class CPCModel(nn.Module):
                             f'm sums min, avg, max: {(sums2.min().item(), sums2.mean().item(), sums2.max().item())}')
                     cFeature = torch.cat([cFeaturePushPart, cFeatureMpart], dim=-1)
                     encodedDataPushPart = encodedData
-                    encodedDataMpart = CPCModel._FCMlikeBelong(encodedData, self.protos, self.mAfterAR, None)
+                    encodedDataMpart = self._FCMlikeBelong(encodedData, self.protos, self.mAfterAR, None)
                     # need to do pushing before norm
                     if self.pushDegAllAfterAR is not None:
-                        encodedDataPushPart = CPCModel._FCMlikeBelong(encodedDataPushPart, self.protos, None, self.pushDegAllAfterAR)
+                        encodedDataPushPart = self._FCMlikeBelong(encodedDataPushPart, self.protos, None, self.pushDegAllAfterAR)
                         if self.fcmDebug:
                             print(f"m after's all (enc now) push after with concat")
                     encodedDataPushPart, encodedDataMpart = self.gradualTrainingNormalize(encodedDataPushPart, encodedDataMpart, epochNrs)
@@ -593,7 +596,7 @@ class CPCModel(nn.Module):
                     if self.pushDegCtxAfterAR is not None:
                         cFeaturePushPart = cFeature[:, :, :baseEncDim]
                         cFeatureMpart = cFeature[:, :, baseEncDim:]
-                        cFeaturePushPart = CPCModel._FCMlikeBelong(cFeaturePushPart, self.protos, None, self.pushDegCtxAfterAR)
+                        cFeaturePushPart = self._FCMlikeBelong(cFeaturePushPart, self.protos, None, self.pushDegCtxAfterAR)
                         if self.fcmDebug:
                             print(f"regular ctx push after")
                         cFeature = torch.cat([cFeaturePushPart, cFeatureMpart], dim=-1)
@@ -601,27 +604,40 @@ class CPCModel(nn.Module):
                     if self.pushDegAllAfterAR is not None:
                         cFeaturePushPart = cFeature[:, :, :baseEncDim]
                         cFeatureMpart = cFeature[:, :, baseEncDim:]
-                        cFeaturePushPart = CPCModel._FCMlikeBelong(cFeaturePushPart, self.protos, None, self.pushDegAllAfterAR)
+                        cFeaturePushPart = self._FCMlikeBelong(cFeaturePushPart, self.protos, None, self.pushDegAllAfterAR)
                         cFeature = torch.cat([cFeaturePushPart, cFeatureMpart], dim=-1)
                         encodedDataPushPart = encodedData[:, :, :baseEncDim]
                         encodedDataMpart = encodedData[:, :, baseEncDim:]
-                        encodedDataPushPart = CPCModel._FCMlikeBelong(encodedDataPushPart, self.protos, None, self.pushDegAllAfterAR)
+                        encodedDataPushPart = self._FCMlikeBelong(encodedDataPushPart, self.protos, None, self.pushDegAllAfterAR)
                         if self.fcmDebug:
                             print(f"regular all push after")
                         encodedData = torch.cat([encodedDataPushPart, encodedDataMpart], dim=-1)
+
+        if self.pushLossWeightEnc is not None or self.pushLossWeightCtx is not None:
+            # needs enc to go through LSTM; shouldn't have non-loss pushing set
+            pushLoss = torch.zeros(1).cuda()
+            encodedDataPushPart = encodedData[:baseEncDim]
+            ctxDataPushPart = cFeature[:baseEncDim]
+            if self.pushLossWeightEnc is not None:
+                pushLoss += self._FCMlikeBelong(encodedDataPushPart, self.protos, None, None, self.pushLossWeightEnc)
+            if self.pushLossWeightCtx is not None:
+                pushLoss += self._FCMlikeBelong(ctxDataPushPart, self.protos, None, None, self.pushLossWeightCtx)
+        else:
+            pushLoss = None
 
         if self.fcmDebug:
             print(f'ctx shape returned {cFeature.shape}')
             print(f'enc shape returned {encodedData.shape}')
 
-        return cFeature, encodedData, label
+        return cFeature, encodedData, label, pushLoss
 
-    @staticmethod
-    def _FCMlikeBelong(points, centers, m=None, pushDeg=None):  # for pushDeg no FCM; pushDeg OR m? TODO BUT COULD ALSO TRY THAT WEIGHTED PUSH
+    #@staticmethod
+    def _FCMlikeBelong(self, points, centers, m=None, pushDeg=None, pushLossWeight=None):  # for pushDeg no FCM; pushDeg OR m? TODO BUT COULD ALSO TRY THAT WEIGHTED PUSH
 
         distsSq = seDistancesToCentroidsCpy(points, centers)
+        distsSq = torch.clamp(distsSq, min=0)
         #print(distsSq.dtype)
-        dists = distsSq  #torch.sqrt(distsSq)  TODO avoiding nans
+        dists = torch.sqrt(distsSq)  #distsSq  #torch.sqrt(distsSq)  TODO avoiding nans
         # dists: B x N x k
 
         k = dists.shape[2]
@@ -639,7 +655,7 @@ class CPCModel(nn.Module):
             distsRev3dim = distsRev.view(*(distsRev.shape[:2]), 1, k)
             dists3dim = dists.view(*dists.shape, 1)
             distsDiv = dists3dim * distsRev3dim
-            powed = torch.pow(distsDiv, 1./(m-1.))  #2./(m-1.))  TODO avoiding nans
+            powed = torch.pow(distsDiv, 2./(m-1.))  #1./(m-1.))  #2./(m-1.))  TODO avoiding nans
             # print(distsDiv)
             # print(powed)
             denomin = torch.sum(powed, (-1))
@@ -667,6 +683,18 @@ class CPCModel(nn.Module):
             diffs = centers[closest].view(B, N, -1) - points
             res = pushDeg * diffs + points
             # print(diffs.shape)
+
+        elif pushLossWeight is not None:
+
+            if self.pushLossLinear:
+                dst = dists
+            else:
+                dst = distsSq
+            
+            minDists = dst.min(dim=2).values
+            pushLoss = minDists.mean() * pushLossWeight
+            res = pushLoss
+
         else:
             assert False
 
