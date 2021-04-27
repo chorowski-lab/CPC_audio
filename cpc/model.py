@@ -321,6 +321,7 @@ class CPCModel(nn.Module):
             self.pushLossWeightEnc = fcmSettings["pushLossWeightEnc"]
             self.pushLossWeightCtx = fcmSettings["pushLossWeightCtx"]
             self.pushLossLinear = fcmSettings["pushLossLinear"]
+            self.pushLossGradual = fcmSettings["pushLossGradual"]
             self.reprsConcat = fcmSettings["reprsConcat"]
             self.reprsConcatNormSumsNotLengths = fcmSettings["reprsConcatNormSumsNotLengths"]
             self.numProtos = fcmSettings["numProtos"]
@@ -618,10 +619,15 @@ class CPCModel(nn.Module):
             pushLoss = torch.zeros(1).cuda()
             encodedDataPushPart = encodedData[:baseEncDim]
             ctxDataPushPart = cFeature[:baseEncDim]
+            if self.pushLossGradual:
+                currentEpoch, allEpochs = epochNrs
+                weightMult = currentEpoch / max(allEpochs, 1.)
+            else:
+                weightMult = 1.
             if self.pushLossWeightEnc is not None:
-                pushLoss += self._FCMlikeBelong(encodedDataPushPart, self.protos, None, None, self.pushLossWeightEnc)
+                pushLoss += self._FCMlikeBelong(encodedDataPushPart, self.protos, None, None, weightMult * self.pushLossWeightEnc)
             if self.pushLossWeightCtx is not None:
-                pushLoss += self._FCMlikeBelong(ctxDataPushPart, self.protos, None, None, self.pushLossWeightCtx)
+                pushLoss += self._FCMlikeBelong(ctxDataPushPart, self.protos, None, None, weightMult * self.pushLossWeightCtx)
         else:
             pushLoss = None
 

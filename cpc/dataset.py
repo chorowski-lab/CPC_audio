@@ -425,7 +425,7 @@ def extractLength(couple):
     # what was returned with previous API described here: https://pytorch.org/audio/stable/backend.html#torchaudio.backend.sox_backend.info
     # [0] seems to be si --> SignalInfo, so for "sox" should take (num_frames*num_channels) instead of length
     # as it's written there; for "soundfile", would be just num_frames
-    # TODO bad thing is it doesn't crash either when * info.num_channels or without; with seems safer, sox seems default, and even if not should be 1 (?)
+    # TODO bad thing is it doesn't crash either when * info.num_channels or without; with seems safer, sox seems default, and even if not channels should be 1 (?)
     info = torchaudio.info(str(locPath))  #[0]
     #print("--->", info.num_channels)
     return info.num_frames * info.num_channels  #info.length

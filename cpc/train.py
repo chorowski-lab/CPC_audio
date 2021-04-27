@@ -594,7 +594,8 @@ def main(args):
             "reprsConcatNormSumsNotLengths": args.FCMreprsConcatNormSumsNotLengths,
             "pushLossWeightEnc": args.FCMpushLossWeightEnc,
             "pushLossWeightCtx": args.FCMpushLossWeightCtx,
-            "pushLossLinear": args.FCMpushLossLinear
+            "pushLossLinear": args.FCMpushLossLinear,
+            "pushLossGradual": args.FCMpushLossGradual
             #"reprsConcatDontIncreaseARdim": args.FCMreprsConcatIncreaseARdim
         }
         if args.FCMleaveProtos is not None and args.FCMleaveProtos > 0:
@@ -1094,6 +1095,7 @@ def parseArgs(argv):
     group_fcm.add_argument('--FCMpushLossWeightCtx', type=float, default=None)  # not really FCM part but well
     # TODO think about adding linear loss option, but don't think makes too much sense?
     group_fcm.add_argument('--FCMpushLossLinear', action='store_true')
+    group_fcm.add_argument('--FCMpushLossGradual', action='store_true')  # increase loss weight from 0 * x to 1 * x through the training
     
 
     group_gpu = parser.add_argument_group('GPUs')
