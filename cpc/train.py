@@ -131,16 +131,47 @@ def trainStep(dataLoader,
         n_examples += batchData.size(0)
         batchData = batchData.cuda(non_blocking=True)
         label = label.cuda(non_blocking=True)
-        c_feature, encoded_data, label, pushLoss = cpcModel(batchData, label, epochNrs)
+        # https://discuss.pytorch.org/t/dataparallel-only-supports-tensor-output/34519
+        # did it like that so that code in other places doesn;t need to be changed
+        # also, can't just check cpcModel.hasPushLoss as dataParallel makes it harder to access
+        c_feature, encoded_data, label, pushLoss = cpcModel(batchData, label, epochNrs, calcPushLoss=False)
+        # [!] baseEncDim returned (in tensor) if push loss
+
+        if pushLoss is not None:  # else
+            baseEncDim = pushLoss[0].item()
+            c_feature1 = c_feature.clone()
+            encoded_data1 = encoded_data.clone()
+            c_feature2 = c_feature.clone()
+            encoded_data2 = encoded_data.clone()
+            c_feature = c_feature1
+            encoded_data = encoded_data1
+            pushLoss = \
+                cpcModel(c_feature2, encoded_data2, epochNrs, calcPushLoss=True)
+            c_feature.retain_grad()
+            c_feature2.retain_grad()
+            encoded_data.retain_grad()
+            encoded_data2.retain_grad()
+            
         allCriterionLosses, allAcc, _ = cpcCriterion(c_feature, encoded_data, label, None)
 
-        totLoss = allCriterionLosses.sum()
+        #totLoss = allCriterionLosses.sum()   # a bit below in if-else now
+        #allCriterionLosses.retain_grad()
         if pushLoss is not None:
-            #print("**", totLoss.shape, pushLoss.shape)
             # pushLoss will have shape depeding on dataParallel
-            totLoss += pushLoss.sum()  # pushLoss is an average per-vector
+            #print(allCriterionLosses.shape, pushLoss.shape)
+            totLoss = allCriterionLosses.sum() + pushLoss.sum()  # pushLoss is an average per-vector
+            
+        else:
+            totLoss = allCriterionLosses.sum()
+
 
         totLoss.backward()
+
+        if pushLoss is not None:
+            nonpushgradenc = encoded_data.grad[:, :, :baseEncDim].abs().mean().detach()
+            pushgradenc = encoded_data2.grad.abs().mean().detach()
+            nonpushgradctx = c_feature.grad[:, :, :baseEncDim].abs().mean().detach()
+            pushgradctx = c_feature2.grad.abs().mean().detach()
 
         # Show grads ?
         optimizer.step()
@@ -149,10 +180,21 @@ def trainStep(dataLoader,
         if "locLoss_train" not in logs:
             logs["locLoss_train"] = np.zeros(allCriterionLosses.size(1))
             logs["locAcc_train"] = np.zeros(allCriterionLosses.size(1))
+            if pushLoss is not None:
+                logs["grad_enc_cpc_train"] = np.zeros(1)
+                logs["grad_enc_push_train"] = np.zeros(1)
+                logs["grad_ctx_cpc_train"] = np.zeros(1)
+                logs["grad_ctx_push_train"] = np.zeros(1)
 
         iter += 1
         logs["locLoss_train"] += (allCriterionLosses.mean(dim=0)).detach().cpu().numpy()
         logs["locAcc_train"] += (allAcc.mean(dim=0)).cpu().numpy()
+        if pushLoss is not None:
+                # already detached previously
+                logs["grad_enc_cpc_train"] += nonpushgradenc.cpu().numpy()
+                logs["grad_enc_push_train"] += pushgradenc.cpu().numpy()
+                logs["grad_ctx_cpc_train"] += nonpushgradctx.cpu().numpy()
+                logs["grad_ctx_push_train"] += pushgradctx.cpu().numpy()
 
         if (step + 1) % loggingStep == 0:
             new_time = time.perf_counter()
@@ -264,7 +306,7 @@ def captureStep(
 
         with torch.no_grad():
 
-            c_feature, encoded_data, labelSpeaker = cpcModel(batchData, labelSpeaker, epochNrs)
+            c_feature, encoded_data, labelSpeaker, _ = cpcModel(batchData, labelSpeaker, epochNrs)
             allLosses, allAcc, captured = cpcCriterion(c_feature, encoded_data, labelSpeaker, cpcCaptureOpts)
         
             # saving it with IDs like that assumes deterministic order of elements

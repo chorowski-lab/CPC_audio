@@ -48,6 +48,10 @@ def show_logs(text, logs):
         if key == "iter":
             continue
 
+        if key.startswith("grad"):
+            print(f"{key}: {logs[key]}")
+            continue
+
         nPredicts = logs[key].shape[0]
 
         strSteps = ['Step'] + [str(s) for s in range(1, nPredicts + 1)]
