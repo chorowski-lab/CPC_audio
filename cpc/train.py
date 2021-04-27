@@ -595,7 +595,8 @@ def main(args):
             "pushLossWeightEnc": args.FCMpushLossWeightEnc,
             "pushLossWeightCtx": args.FCMpushLossWeightCtx,
             "pushLossLinear": args.FCMpushLossLinear,
-            "pushLossGradual": args.FCMpushLossGradual
+            "pushLossGradual": args.FCMpushLossGradual,
+            "pushLossProtosLess": args.FCMpushLossProtosLess
             #"reprsConcatDontIncreaseARdim": args.FCMreprsConcatIncreaseARdim
         }
         if args.FCMleaveProtos is not None and args.FCMleaveProtos > 0:
@@ -1096,6 +1097,7 @@ def parseArgs(argv):
     # TODO think about adding linear loss option, but don't think makes too much sense?
     group_fcm.add_argument('--FCMpushLossLinear', action='store_true')
     group_fcm.add_argument('--FCMpushLossGradual', action='store_true')  # increase loss weight from 0 * x to 1 * x through the training
+    group_fcm.add_argument('--FCMpushLossProtosLess', type=float, default=None)  # like VQ-VAE commitment loss
     
 
     group_gpu = parser.add_argument_group('GPUs')

@@ -322,6 +322,7 @@ class CPCModel(nn.Module):
             self.pushLossWeightCtx = fcmSettings["pushLossWeightCtx"]
             self.pushLossLinear = fcmSettings["pushLossLinear"]
             self.pushLossGradual = fcmSettings["pushLossGradual"]
+            self.pushLossProtosLess = fcmSettings["pushLossProtosLess"]
             self.reprsConcat = fcmSettings["reprsConcat"]
             self.reprsConcatNormSumsNotLengths = fcmSettings["reprsConcatNormSumsNotLengths"]
             self.numProtos = fcmSettings["numProtos"]
@@ -640,10 +641,25 @@ class CPCModel(nn.Module):
     #@staticmethod
     def _FCMlikeBelong(self, points, centers, m=None, pushDeg=None, pushLossWeight=None):  # for pushDeg no FCM; pushDeg OR m? TODO BUT COULD ALSO TRY THAT WEIGHTED PUSH
 
-        distsSq = seDistancesToCentroidsCpy(points, centers)
-        distsSq = torch.clamp(distsSq, min=0)
-        #print(distsSq.dtype)
-        dists = torch.sqrt(distsSq)  #distsSq  #torch.sqrt(distsSq)  TODO avoiding nans
+        if self.pushLossProtosLess is None:  
+            distsSq = seDistancesToCentroidsCpy(points, centers)
+            distsSq = torch.clamp(distsSq, min=0)
+            #print(distsSq.dtype)
+            dists = torch.sqrt(distsSq)  #distsSq  #torch.sqrt(distsSq)  TODO avoiding nans
+        else:  # only to be used with protos, not when possible future k-means
+            # VQ-VAE-commitment-loss-weight - like
+            assert pushLossWeight is not None
+            distsSq1 = seDistancesToCentroidsCpy(points, centers.clone().detach())
+            distsSq1 = torch.clamp(distsSq1, min=0)
+            dists1 = torch.sqrt(distsSq1)  
+            distsSq2 = seDistancesToCentroidsCpy(points.clone().detach(), centers)
+            distsSq2 = torch.clamp(distsSq2, min=0)
+            dists2 = torch.sqrt(distsSq2)
+            # just sum distances, as later only linear stuff on this is made to obtain loss
+            # and this sum preserves order ((1+self.pushLossProtosLess) * distances)
+            # actual values are not important, only gradients which will be correct
+            distsSq = distsSq1 + self.pushLossProtosLess * distsSq2
+            dists = dists1 + self.pushLossProtosLess * dists2
         # dists: B x N x k
 
         k = dists.shape[2]
