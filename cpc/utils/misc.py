@@ -52,6 +52,9 @@ def show_logs(text, logs):
             print(f"{key}: {logs[key]}")
             continue
 
+        if key == "pushloss_closest":
+            print("closest to protos:", ", ".join([str(x) for x in logs[key]]))
+
         nPredicts = logs[key].shape[0]
 
         strSteps = ['Step'] + [str(s) for s in range(1, nPredicts + 1)]

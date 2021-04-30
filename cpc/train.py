@@ -131,10 +131,15 @@ def trainStep(dataLoader,
         n_examples += batchData.size(0)
         batchData = batchData.cuda(non_blocking=True)
         label = label.cuda(non_blocking=True)
+
+        #print("!!!", batchData.shape)
+        # [!] ok, this has concatenated shape and later DataParallel splits it by 2
+        #     so can do this 2-stage forward as I did
+
         # https://discuss.pytorch.org/t/dataparallel-only-supports-tensor-output/34519
         # did it like that so that code in other places doesn;t need to be changed
         # also, can't just check cpcModel.hasPushLoss as dataParallel makes it harder to access
-        c_feature, encoded_data, label, pushLoss = cpcModel(batchData, label, epochNrs, calcPushLoss=False)
+        c_feature, encoded_data, label, pushLoss = cpcModel(batchData, label, epochNrs, False)
         # [!] baseEncDim returned (in tensor) if push loss
 
         if pushLoss is not None:  # else
@@ -145,8 +150,9 @@ def trainStep(dataLoader,
             encoded_data2 = encoded_data.clone()
             c_feature = c_feature1
             encoded_data = encoded_data1
-            pushLoss = \
-                cpcModel(c_feature2, encoded_data2, epochNrs, calcPushLoss=True)
+            pushLoss, closestCountsDataPar = \
+                cpcModel(c_feature2, encoded_data2, epochNrs, True)
+            closestCounts = closestCountsDataPar.sum(dim=0).view(-1)
             c_feature.retain_grad()
             c_feature2.retain_grad()
             encoded_data.retain_grad()
@@ -185,6 +191,8 @@ def trainStep(dataLoader,
                 logs["grad_enc_push_train"] = np.zeros(1)
                 logs["grad_ctx_cpc_train"] = np.zeros(1)
                 logs["grad_ctx_push_train"] = np.zeros(1)
+        if "pushloss_closest" not in logs and pushLoss is not None:
+            logs["pushloss_closest"] = np.zeros(closestCounts.shape[0])
 
         iter += 1
         logs["locLoss_train"] += (allCriterionLosses.mean(dim=0)).detach().cpu().numpy()
@@ -195,6 +203,7 @@ def trainStep(dataLoader,
                 logs["grad_enc_push_train"] += pushgradenc.cpu().numpy()
                 logs["grad_ctx_cpc_train"] += nonpushgradctx.cpu().numpy()
                 logs["grad_ctx_push_train"] += pushgradctx.cpu().numpy()
+                logs["pushloss_closest"] += closestCounts.detach().cpu().numpy()
 
         if (step + 1) % loggingStep == 0:
             new_time = time.perf_counter()
@@ -238,7 +247,7 @@ def valStep(dataLoader,
         label = label.cuda(non_blocking=True)
 
         with torch.no_grad():
-            c_feature, encoded_data, label, pushLoss = cpcModel(batchData, label, epochNrs)
+            c_feature, encoded_data, label, pushLoss = cpcModel(batchData, label, epochNrs, False)
             allLosses, allAcc, _ = cpcCriterion(c_feature, encoded_data, label, None)
 
         if "locLoss_val" not in logs:
@@ -306,7 +315,7 @@ def captureStep(
 
         with torch.no_grad():
 
-            c_feature, encoded_data, labelSpeaker, _ = cpcModel(batchData, labelSpeaker, epochNrs)
+            c_feature, encoded_data, labelSpeaker, _ = cpcModel(batchData, labelSpeaker, epochNrs, False)
             allLosses, allAcc, captured = cpcCriterion(c_feature, encoded_data, labelSpeaker, cpcCaptureOpts)
         
             # saving it with IDs like that assumes deterministic order of elements

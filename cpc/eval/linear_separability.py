@@ -31,7 +31,7 @@ def train_step(feature_maker, criterion, data_loader, optimizer, label_key, cpc_
         optimizer.zero_grad()
         batch_data, label_data = fulldata
         label = label_data[label_key]
-        c_feature, encoded_data, _, __ = feature_maker(batch_data, None, cpc_epochs)
+        c_feature, encoded_data, _, __ = feature_maker(batch_data, None, cpc_epochs, False)
         if not feature_maker.optimize:
             c_feature, encoded_data = c_feature.detach(), encoded_data.detach()
         all_losses, all_acc  = criterion(c_feature, encoded_data, label)
@@ -59,7 +59,7 @@ def val_step(feature_maker, criterion, data_loader, label_key, cpc_epochs):
         with torch.no_grad():
             batch_data, label_data = fulldata
             label = label_data[label_key]
-            c_feature, encoded_data, _, __ = feature_maker(batch_data, None, cpc_epochs)
+            c_feature, encoded_data, _, __ = feature_maker(batch_data, None, cpc_epochs, False)
             all_losses, all_acc = criterion(c_feature, encoded_data, label)
 
             logs["locLoss_val"] += np.asarray([all_losses.mean().item()])

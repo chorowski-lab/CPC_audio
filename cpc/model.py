@@ -399,7 +399,9 @@ class CPCModel(nn.Module):
         return part1, part2
 
     # epochNrs: (current, total)
-    def forward(self, arg1, arg2, epochNrs, calcPushLoss=False):
+    def forward(self, arg1, arg2, epochNrs, calcPushLoss):
+        # [!] OK, DataParallel splits in same way at both forward stages when push
+        #print("::", arg1.shape, arg2.shape, calcPushLoss)
         if not calcPushLoss:
             batchData, label = arg1, arg2
 
@@ -722,7 +724,7 @@ class CPCModel(nn.Module):
             # print(powed)
             denomin = torch.sum(powed, (-1))
             # print(denomin)
-            res = 1. / torch.clamp(denomin, min=0.00000001)  #torch.maximum(denomin, torch.tensor(0.00000001).cuda())
+            return 1. / torch.clamp(denomin, min=0.00000001)  #torch.maximum(denomin, torch.tensor(0.00000001).cuda())
 
         elif pushDeg is not None:  # centerpush
             #print(res.shape, centers.shape)
@@ -743,7 +745,7 @@ class CPCModel(nn.Module):
             closest = dists.argmin(-1)
             # print(points.shape, closest.shape, centers[closest].view(N, -1).shape)
             diffs = centers[closest].view(B, N, -1) - points
-            res = pushDeg * diffs + points
+            return pushDeg * diffs + points
             # print(diffs.shape)
 
         elif pushLossWeight is not None:
@@ -753,11 +755,18 @@ class CPCModel(nn.Module):
             else:
                 dst = distsSq
             
-            minDists = dst.min(dim=2).values
-            mean = minDists.mean()
+            minDistsData = dst.min(dim=2)
+            minDistsValues = minDistsData.values
+            minDistsIndices = minDistsData.indices
+            indices, indicesCounts = torch.unique(minDistsIndices, return_counts=True)
+            closestCounts = torch.zeros(self.numProtos, dtype=int).cuda()
+            closestCounts[indices] += indicesCounts
+            #print(indicesCounts)
+            mean = minDistsValues.mean()
             pushLoss = mean * pushLossWeight
             #print("--->!", pushLoss, pushLoss.shape, mean.shape)
-            res = pushLoss
+            #res = pushLoss
+            return pushLoss, closestCounts.view(1,-1)  # view because of dataparallel
 
         else:
             assert False
@@ -767,7 +776,7 @@ class CPCModel(nn.Module):
         # print(dists.shape, fcmNoPower.shape, k, distsBy1.sum(1).view(-1,1).shape)
         # #fcm = torch.square(fcmNoPower)
         # print(dists, distsBy1, distsBy1.sum(1), fcmNoPower)
-        return res
+        #return res
 
 
 class ConcatenatedModel(nn.Module):
