@@ -355,7 +355,7 @@ class CPCModel(nn.Module):
             self.reprDim = encoder.getDimOutput()
             print("----------------------Adding protos as parameter---------------------")
             # seems it's needed to also add requires_grad on the tensor step
-            self.protos = nn.Parameter(torch.randn((self.numProtos, self.reprDim), requires_grad=True) / math.sqrt(self.reprDim), requires_grad=True)  # TODO check
+            self.protos = nn.Parameter(torch.randn((self.numProtos, self.reprDim), requires_grad=True) / (5. * math.sqrt(self.reprDim)), requires_grad=True)  # TODO check
 
     #@staticmethod
     # TODO option to normalize sums and not lengths
