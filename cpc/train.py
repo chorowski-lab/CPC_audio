@@ -175,9 +175,15 @@ def trainStep(dataLoader,
 
         if pushLoss is not None:
             nonpushgradenc = encoded_data.grad[:, :, :baseEncDim].abs().mean().detach()
-            pushgradenc = encoded_data2.grad.abs().mean().detach()
+            if encoded_data2.grad is not None:
+                pushgradenc = encoded_data2.grad.abs().mean().detach()
+            else:
+                pushgradenc = torch.zeros(1)
             nonpushgradctx = c_feature.grad[:, :, :baseEncDim].abs().mean().detach()
-            pushgradctx = c_feature2.grad.abs().mean().detach()
+            if c_feature2.grad is not None:
+                pushgradctx = c_feature2.grad.abs().mean().detach()
+            else:
+                pushgradctx = torch.zeros(1)
 
         # Show grads ?
         optimizer.step()
@@ -381,11 +387,20 @@ def run(trainDataset,
     start_time = time.time()
     
     captureDataset, captureOptions, captureStatsCollector = captureDatasetWithOptions
-    linsepEachEpochs, linsepFun = linsepClassificationTaskConfig
+    linsepEpochsConfig, linsepFun = linsepClassificationTaskConfig
     assert (captureDataset is None and captureOptions is None) \
         or (captureDataset is not None and captureOptions is not None)
     if captureOptions is not None:
         captureEachEpochs = captureOptions['eachEpochs']
+    linsepEpochsConfig = linsepEpochsConfig.strip()
+    if linsepEpochsConfig.startswith('('):
+        linsepEpochs = list(map(int, (linsepEpochsConfig[1:-1]).split(',')))
+    else:
+        eachn = int(linsepEpochsConfig)
+        nextok = startEpoch - (startEpoch % eachn)
+        if nextok < startEpoch:
+            nextok += eachn
+        linsepEpochs = list(range(nextok, nEpoch, eachn))
 
     print(f'DS sizes: train {str(len(trainDataset)) if trainDataset is not None else "-"}, '
         f'val {str(len(valDataset)) if valDataset is not None else "-"}, capture '
@@ -425,7 +440,7 @@ def run(trainDataset,
 
         locLogsLinsep = {}
         # this performs linsep task for the best CPC model up to date
-        if linsepEachEpochs is not None and epoch !=0 and epoch % linsepEachEpochs == 0:
+        if linsepEpochs is not None and epoch != 0 and epoch in linsepEpochs:
             # capturing for current CPC state after this epoch, relying on CPC internal accuracy is vague
             locLogsLinsep = linsepFun(epoch, cpcModel, (epoch, nEpoch-1))
 
@@ -658,7 +673,7 @@ def main(args):
     else:
         fcmSettings = None
 
-    print(f'REPRCONCAT {fcmSettings["reprsConcat"]}')
+    #print(f'REPRCONCAT {fcmSettings["reprsConcat"]}')
     if fcmSettings is not None:  
         #locArgsCpy = deepcopy(locArgs)
         if fcmSettings["reprsConcat"]:
@@ -1077,7 +1092,7 @@ def parseArgs(argv):
                         help='Path (root) where to save best checkpoint for each classification training performed.')
     group_supervised_metric.add_argument('--linsep_task_logging_step', type=int, default=1,
                         help='how often to save detailed phoneme classification training data')
-    group_supervised_metric.add_argument('--linsep_classif_each_epochs', type=int, default=20,
+    group_supervised_metric.add_argument('--linsep_classif_each_epochs', type=str, default="20",
                         help='How often to perform classification task - classification net is then '
                         'trained on train DS representations and assesed on val DS representations '
                         'that are produced after that epoch in eval mode')

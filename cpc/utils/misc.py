@@ -54,6 +54,7 @@ def show_logs(text, logs):
 
         if key == "pushloss_closest":
             print("closest to protos:", ", ".join([str(x) for x in logs[key]]))
+            continue
 
         nPredicts = logs[key].shape[0]
 

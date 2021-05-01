@@ -140,7 +140,7 @@ def getEncoder(args):
         return LFBEnconder(args.hiddenEncoder)
     else:
         from .model import CPCEncoder
-        return CPCEncoder(args.hiddenEncoder, args.normMode)
+        return CPCEncoder(args.hiddenEncoder, args.normMode, args.encoderNoLastRelu)
 
 
 def getAR(args):

@@ -64,7 +64,8 @@ class CPCEncoder(nn.Module):
 
     def __init__(self,
                  sizeHidden=512,
-                 normMode="layerNorm"):
+                 normMode="layerNorm",
+                 noLastRelu=False):  # in original there was Relu there - same
 
         super(CPCEncoder, self).__init__()
 
@@ -95,6 +96,8 @@ class CPCEncoder(nn.Module):
         self.batchNorm4 = normLayer(sizeHidden)
         self.DOWNSAMPLING = 160
 
+        self.noLastRelu = noLastRelu
+
     def getDimOutput(self):
         return self.conv4.out_channels
 
@@ -103,7 +106,12 @@ class CPCEncoder(nn.Module):
         x = F.relu(self.batchNorm1(self.conv1(x)))
         x = F.relu(self.batchNorm2(self.conv2(x)))
         x = F.relu(self.batchNorm3(self.conv3(x)))
-        x = F.relu(self.batchNorm4(self.conv4(x)))
+        x = self.batchNorm4(self.conv4(x))
+        #print("lastRelu:", self.lastRelu)
+        #xlen = torch.sqrt(torch.clamp((x*x).sum(dim=-1), min=0))
+        #print(f"x len: {(xlen.min(), xlen.mean(), xlen.max())}")
+        if not self.noLastRelu:
+            x = F.relu(x)
         return x
 
 
@@ -315,6 +323,7 @@ class CPCModel(nn.Module):
         self.fcm = fcmSettings is not None
         print(f'--------- FCM: {self.fcm} ----------')
         self.fcmDebug = False
+        self.doing_push_loss = False
         if self.fcm:
             self.fcmDebug = False   #True
             # caution - need to set args.hiddenGar to same as args.FCMprotos
@@ -653,11 +662,13 @@ class CPCModel(nn.Module):
                     weightMult = currentEpoch / max(allEpochs, 1.)
                 else:
                     weightMult = 1.
+                protoUsedCounts1 = 0
+                protoUsedCounts2 = 0
                 if self.pushLossWeightEnc is not None:
-                    lossPart1 = self._FCMlikeBelong(encodedDataPushPart, self.protos, None, None, weightMult * self.pushLossWeightEnc)
+                    lossPart1, protoUsedCounts1 = self._FCMlikeBelong(encodedDataPushPart, self.protos, None, None, weightMult * self.pushLossWeightEnc)
                     pushLoss = pushLoss + lossPart1
                 if self.pushLossWeightCtx is not None:
-                    lossPart2 = self._FCMlikeBelong(ctxDataPushPart, self.protos, None, None, weightMult * self.pushLossWeightCtx)
+                    lossPart2, protoUsedCounts2 = self._FCMlikeBelong(ctxDataPushPart, self.protos, None, None, weightMult * self.pushLossWeightCtx)
                     pushLoss = pushLoss + lossPart2
                 #encodedData = (baseEncDim, encodedData, encodedDataPushPart)
                 #cFeature = (baseEncDim, cFeature, ctxDataPushPart)
@@ -674,7 +685,7 @@ class CPCModel(nn.Module):
                 x = torch.zeros(1).cuda()
                 x += pushLoss
                 #print(x.shape)
-                return x  #pushLoss  #torch.full((1,), baseEncDim, dtype=int).cuda(), pushLoss
+                return x, protoUsedCounts1 + protoUsedCounts2  #pushLoss  #torch.full((1,), baseEncDim, dtype=int).cuda(), pushLoss
         # else:
         #     pushLoss = None
 
@@ -682,6 +693,23 @@ class CPCModel(nn.Module):
 
     #@staticmethod
     def _FCMlikeBelong(self, points, centers, m=None, pushDeg=None, pushLossWeight=None):  # for pushDeg no FCM; pushDeg OR m? TODO BUT COULD ALSO TRY THAT WEIGHTED PUSH
+
+        # didn't help at all
+        # if pushLossWeight is not None:
+        #     pointLens = torch.sqrt(torch.clamp((points*points).sum(dim=-1), min=0)).mean()
+        #     centersLens = torch.sqrt(torch.clamp((centers*centers).sum(dim=-1), min=0))  #.mean()
+
+        #     #print(points.shape, centers.shape, pointLens.shape, centersLens.shape, pointLens.view(*(pointLens.shape), 1).shape)
+        #     #centers = (centers / (centersLens.view(-1,1))) #* pointLens  # avg 5 times shorter
+        #     #pointLens = (points / pointLens.view(*(pointLens.shape), 1))
+        #     centers = (centers / (centersLens.view(-1,1))) * pointLens
+            # TODO if we make centers much shorter, encodings will just be pushed to 0, each similarly
+
+            #pointLens2 = torch.sqrt(torch.clamp((points*points).sum(dim=-1), min=0)).mean()
+            #centersLens2 = torch.sqrt(torch.clamp((centers*centers).sum(dim=-1), min=0))  #.mean()
+            #print(f"centers min, max len: {(centersLens2.min(), centersLens2.max())}")
+            #print(f"pts: {pointLens2.item()}, centers: {centersLens2.item()}")
+            # TODO there may be some batch norm, but only on enc and not on LSTM perhaps - maybe try it?
 
         if self.pushLossProtosLess is None:  
             distsSq = seDistancesToCentroidsCpy(points, centers)
@@ -691,6 +719,7 @@ class CPCModel(nn.Module):
         else:  # only to be used with protos, not when possible future k-means
             # VQ-VAE-commitment-loss-weight - like
             assert pushLossWeight is not None
+
             distsSq1 = seDistancesToCentroidsCpy(points, centers.clone().detach())
             distsSq1 = torch.clamp(distsSq1, min=0)
             dists1 = torch.sqrt(distsSq1)  

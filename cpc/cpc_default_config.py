@@ -98,4 +98,7 @@ def set_default_cpc_config(parser):
                        help='If the prediction network is a transformer, '
                        'active to use absolute coordinates.')
 
+    group.add_argument('--encoderNoLastRelu', action='store_true',
+                       help="Don't do Relu after last layer of the encoder")
+                       
     return parser
