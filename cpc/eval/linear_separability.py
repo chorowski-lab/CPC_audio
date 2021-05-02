@@ -18,7 +18,7 @@ import cpc.utils.misc as utils
 from cpc.dataset import AudioBatchData, findAllSeqs, filterSeqs, parseSeqLabels
 
 
-def train_step(feature_maker, criterion, data_loader, optimizer, label_key, cpc_epochs):
+def train_step(feature_maker, centerModel, criterion, data_loader, optimizer, label_key, cpc_epochs):
 
     if feature_maker.optimize:
         feature_maker.train()
@@ -26,12 +26,18 @@ def train_step(feature_maker, criterion, data_loader, optimizer, label_key, cpc_
 
     logs = {"locLoss_train": 0,  "locAcc_train": 0}
 
+    cpcEpochNr, cpcAllEpochs = cpc_epochs
+    
     for step, fulldata in enumerate(data_loader):
 
         optimizer.zero_grad()
         batch_data, label_data = fulldata
         label = label_data[label_key]
-        c_feature, encoded_data, _, __ = feature_maker(batch_data, None, cpc_epochs, False)
+        givenCenters = centerModel.centersForStuff(cpcEpochNr) if centerModel is not None else None
+        numGPUs = len(feature_maker.device_ids)
+        if givenCenters is not None:
+            givenCenters = givenCenters.repeat(numGPUs,1)
+        c_feature, encoded_data, _, __ = feature_maker(batch_data, None, givenCenters, cpc_epochs, False)
         if not feature_maker.optimize:
             c_feature, encoded_data = c_feature.detach(), encoded_data.detach()
         all_losses, all_acc  = criterion(c_feature, encoded_data, label)
@@ -48,18 +54,24 @@ def train_step(feature_maker, criterion, data_loader, optimizer, label_key, cpc_
     return logs
 
 
-def val_step(feature_maker, criterion, data_loader, label_key, cpc_epochs):
+def val_step(feature_maker, centerModel, criterion, data_loader, label_key, cpc_epochs):
 
     feature_maker.eval()
     criterion.eval()
     logs = {"locLoss_val": 0,  "locAcc_val": 0}
+
+    cpcEpochNr, cpcAllEpochs = cpc_epochs
 
     for step, fulldata in enumerate(data_loader):
 
         with torch.no_grad():
             batch_data, label_data = fulldata
             label = label_data[label_key]
-            c_feature, encoded_data, _, __ = feature_maker(batch_data, None, cpc_epochs, False)
+            givenCenters = centerModel.centersForStuff(cpcEpochNr) if centerModel is not None else None
+            numGPUs = len(feature_maker.device_ids)
+            if givenCenters is not None:
+                givenCenters = givenCenters.repeat(numGPUs,1)
+            c_feature, encoded_data, _, __ = feature_maker(batch_data, None, givenCenters, cpc_epochs, False)
             all_losses, all_acc = criterion(c_feature, encoded_data, label)
 
             logs["locLoss_val"] += np.asarray([all_losses.mean().item()])
@@ -69,7 +81,7 @@ def val_step(feature_maker, criterion, data_loader, label_key, cpc_epochs):
 
     return logs
 
-
+# TODO centerModel update
 def run(feature_maker,
         criterion,
         train_loader,
@@ -135,6 +147,7 @@ def save_linsep_best_checkpoint(cpc_model_state, classif_net_criterion_state, op
 
 def trainLinsepClassification(
         feature_maker,
+        centerModel,
         criterion,  # combined with classification model before
         train_loader,
         val_loader,
@@ -164,9 +177,9 @@ def trainLinsepClassification(
 
         sys.stdout.flush()
 
-        logs_train = train_step(feature_maker, criterion, train_loader,
+        logs_train = train_step(feature_maker, centerModel, criterion, train_loader,
                                 optimizer, label_key, cpc_epochs)
-        logs_val = val_step(feature_maker, criterion, val_loader, label_key, cpc_epochs)
+        logs_val = val_step(feature_maker, centerModel, criterion, val_loader, label_key, cpc_epochs)
         print('')
         print('_'*50)
         print(f'Ran {epoch + 1} {label_key} classification epochs '

@@ -102,3 +102,6 @@ def set_default_cpc_config(parser):
                        help="Don't do Relu after last layer of the encoder")
                        
     return parser
+
+
+# https://www.programmersought.com/article/27754146000/

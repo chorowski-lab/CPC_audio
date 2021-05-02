@@ -16,6 +16,7 @@ import sys
 import cpc.criterion as cr
 import cpc.criterion.soft_align as sa
 import cpc.model as model
+import cpc.center_model as center_model
 import cpc.utils.misc as utils
 import cpc.feature_loader as fl
 import cpc.eval.linear_separability as linsep
@@ -112,6 +113,7 @@ def loadCriterion(pathCheckpoint, downsampling, nSpeakers, nPhones):
 
 def trainStep(dataLoader,
               cpcModel,
+              centerModel,
               cpcCriterion,
               optimizer,
               scheduler,
@@ -125,6 +127,9 @@ def trainStep(dataLoader,
     n_examples = 0
     logs, lastlogs = {}, None
     iter = 0
+
+    epochNr, totalEpochs = epochNrs
+
     for step, fulldata in enumerate(dataLoader):
         batchData, labelData = fulldata
         label = labelData['speaker']
@@ -136,10 +141,20 @@ def trainStep(dataLoader,
         # [!] ok, this has concatenated shape and later DataParallel splits it by 2
         #     so can do this 2-stage forward as I did
 
+        
+        givenCenters = centerModel.centersForStuff(epochNr) if centerModel is not None else None
+        numGPUs = len(cpcModel.device_ids)
+        if givenCenters is not None:
+            givenCenters = givenCenters.repeat(numGPUs,1)
+        #print(dir(cpcModel))
+        #print(1/0)
+
         # https://discuss.pytorch.org/t/dataparallel-only-supports-tensor-output/34519
         # did it like that so that code in other places doesn;t need to be changed
         # also, can't just check cpcModel.hasPushLoss as dataParallel makes it harder to access
-        c_feature, encoded_data, label, pushLoss = cpcModel(batchData, label, epochNrs, False)
+        c_feature, encoded_data, label, pushLoss = cpcModel(batchData, label, givenCenters, epochNrs, False)
+        if centerModel is not None:
+            centerModel.batchUpdate(encoded_data, epochNr)
         # [!] baseEncDim returned (in tensor) if push loss
 
         if pushLoss is not None:  # else
@@ -151,7 +166,7 @@ def trainStep(dataLoader,
             c_feature = c_feature1
             encoded_data = encoded_data1
             pushLoss, closestCountsDataPar = \
-                cpcModel(c_feature2, encoded_data2, epochNrs, True)
+                cpcModel(c_feature2, encoded_data2, givenCenters, epochNrs, True)
             closestCounts = closestCountsDataPar.sum(dim=0).view(-1)
             c_feature.retain_grad()
             c_feature2.retain_grad()
@@ -223,6 +238,8 @@ def trainStep(dataLoader,
             utils.show_logs("Training loss", locLogs)
             start_time, n_examples = new_time, 0
 
+    centerModel.printLens()
+
     if scheduler is not None:
         scheduler.step()
 
@@ -234,6 +251,7 @@ def trainStep(dataLoader,
 
 def valStep(dataLoader,
             cpcModel,
+            centerModel,
             cpcCriterion,
             epochNrs):
 
@@ -244,6 +262,8 @@ def valStep(dataLoader,
     cpcModel.eval()
     iter = 0
 
+    epochNr, totalEpochs = epochNrs
+
     for step, fulldata in enumerate(dataLoader):
 
         batchData, labelData = fulldata
@@ -253,7 +273,11 @@ def valStep(dataLoader,
         label = label.cuda(non_blocking=True)
 
         with torch.no_grad():
-            c_feature, encoded_data, label, pushLoss = cpcModel(batchData, label, epochNrs, False)
+            givenCenters = centerModel.centersForStuff(epochNr) if centerModel is not None else None
+            numGPUs = len(cpcModel.device_ids)
+            if givenCenters is not None:
+                givenCenters = givenCenters.repeat(numGPUs,1)
+            c_feature, encoded_data, label, pushLoss = cpcModel(batchData, label, givenCenters, epochNrs, False)
             allLosses, allAcc, _ = cpcCriterion(c_feature, encoded_data, label, None)
 
         if "locLoss_val" not in logs:
@@ -273,6 +297,7 @@ def valStep(dataLoader,
 def captureStep(
             dataLoader,
             cpcModel,
+            centerModel,
             cpcCriterion,
             captureOptions,
             captureStatsCollector,
@@ -321,7 +346,11 @@ def captureStep(
 
         with torch.no_grad():
 
-            c_feature, encoded_data, labelSpeaker, _ = cpcModel(batchData, labelSpeaker, epochNrs, False)
+            givenCenters = centerModel.centersForStuff(epochNr) if centerModel is not None else None
+            numGPUs = len(cpcModel.device_ids)
+            if givenCenters is not None:
+                givenCenters = givenCenters.repeat(numGPUs,1)
+            c_feature, encoded_data, labelSpeaker, _ = cpcModel(batchData, labelSpeaker, givenCenters, epochNrs, False)
             allLosses, allAcc, captured = cpcCriterion(c_feature, encoded_data, labelSpeaker, cpcCaptureOpts)
         
             # saving it with IDs like that assumes deterministic order of elements
@@ -373,6 +402,7 @@ def run(trainDataset,
         batchSize,
         samplingMode,
         cpcModel,
+        centerModel,
         cpcCriterion,
         nEpoch,
         pathCheckpoint,
@@ -425,10 +455,10 @@ def run(trainDataset,
         print("Training dataset %d batches, Validation dataset %d batches, batch size %d" %
             (len(trainLoader), len(valLoader), batchSize))
 
-        locLogsTrain = trainStep(trainLoader, cpcModel, cpcCriterion,
+        locLogsTrain = trainStep(trainLoader, cpcModel, centerModel, cpcCriterion,
                                 optimizer, scheduler, logs["logging_step"], (epoch, nEpoch-1))
 
-        locLogsVal = valStep(valLoader, cpcModel, cpcCriterion, (epoch, nEpoch-1))
+        locLogsVal = valStep(valLoader, cpcModel, centerModel, cpcCriterion, (epoch, nEpoch-1))
 
         if captureDataset is not None and epoch % captureEachEpochs == 0:
             print(f"Capturing data for epoch {epoch}")
@@ -476,6 +506,7 @@ def onlyCapture(
         captureDatasetWithOptions,
         batchSize,
         cpcModel,
+        centerModel,
         cpcCriterion,
         logs
 ):
@@ -489,7 +520,7 @@ def onlyCapture(
     captureLoader = captureDataset.getDataLoader(batchSize, 'sequential', False,
                                                 numWorkers=0)
     print(f"Capturing data for model checkpoint after epoch: {startEpoch-1}")
-    captureStep(captureLoader, cpcModel, cpcCriterion, captureOptions, captureStatsCollector, (startEpoch-1, startEpoch-1))
+    captureStep(captureLoader, cpcModel, centerModel, cpcCriterion, captureOptions, captureStatsCollector, (startEpoch-1, startEpoch-1))
 
 
 def main(args):
@@ -665,6 +696,12 @@ def main(args):
             "pushLossProtosLess": args.FCMpushLossProtosLess
             #"reprsConcatDontIncreaseARdim": args.FCMreprsConcatIncreaseARdim
         }
+        # TODO: actual settings
+        centerInitSettings = {
+            "numCentroids": args.FCMprotos,
+            "reprDim": args.hiddenEncoder,
+            "initAfterEpoch": 37
+        }
         if args.FCMleaveProtos is not None and args.FCMleaveProtos > 0:
             assert args.FCMleaveProtos <= args.FCMprotos
             args.FCMprotosForCriterion = args.FCMleaveProtos
@@ -672,6 +709,7 @@ def main(args):
             args.FCMprotosForCriterion = args.FCMprotos
     else:
         fcmSettings = None
+        centerInitSettings = None
 
     #print(f'REPRCONCAT {fcmSettings["reprsConcat"]}')
     if fcmSettings is not None:  
@@ -732,6 +770,11 @@ def main(args):
         cpcModel = model.CPCModel(encoderNet, arNet, fcmSettings=fcmSettings)
 
         CPChiddenGar, CPChiddenEncoder = cpcModel.gAR.getDimOutput(), cpcModel.gEncoder.getDimOutput()
+    # TODO saving, loading, stuff
+    if centerInitSettings is not None:
+        centerModel = center_model.CentroidModule(centerInitSettings)
+    else:
+        centerModel = None
 
     batchSize = args.nGPU * args.batchSizeGPU
     cpcModel.supervised = args.supervised
@@ -753,17 +796,26 @@ def main(args):
     
     # Optimizer
     g_params = list(cpcCriterion.parameters()) + list(cpcModel.parameters())
+    if centerModel is not None:
+        g_params += list(centerModel.parameters())
 
     lr = args.learningRate
     optimizer = torch.optim.Adam(g_params, lr=lr,
                                  betas=(args.beta1, args.beta2),
                                  eps=args.epsilon)
 
-    if loadOptimizer and not args.onlyCapture and not args.only_classif_metric:
-        print("Loading optimizer " + args.load[0])
-        state_dict = torch.load(args.load[0], 'cpu')
-        if "optimizer" in state_dict:
-            optimizer.load_state_dict(state_dict["optimizer"])
+    try:
+        if loadOptimizer and not args.onlyCapture and not args.only_classif_metric:
+            print("Loading optimizer " + args.load[0])
+            state_dict = torch.load(args.load[0], 'cpu')
+            #print("!!!", state_dict["optimizer"].keys(), state_dict["optimizer"]['state'].keys(), state_dict["optimizer"]['state'][183].keys(), len(state_dict["optimizer"]['state'].keys()), state_dict["optimizer"]['param_groups'])
+            if "optimizer" in state_dict:
+                optimizer.load_state_dict(state_dict["optimizer"])
+    except:
+        print("--> WARNING: couldn't load optimizer state")  # can happen if adding / removing centerModel
+        optimizer = torch.optim.Adam(g_params, lr=lr,
+                                 betas=(args.beta1, args.beta2),
+                                 eps=args.epsilon)
 
     # Checkpoint
     if args.pathCheckpoint is not None:
@@ -920,6 +972,7 @@ def main(args):
                 phone_criterion, phone_optimizer = constructPhoneCriterionAndOptimizer()
                 locLogsPhone = linsep.trainLinsepClassification(
                     cpcMdl,
+                    centerModel,
                     phone_criterion,  # combined with classification model before
                     linsep_train_loader,
                     linsep_val_loader,
@@ -936,6 +989,7 @@ def main(args):
                 speaker_criterion, speaker_optimizer = constructSpeakerCriterionAndOptimizer()
                 locLogsSpeaker = linsep.trainLinsepClassification(
                     cpcMdl,
+                    centerModel,
                     speaker_criterion,  # combined with classification model before
                     linsep_train_loader,
                     linsep_val_loader,
@@ -969,6 +1023,7 @@ def main(args):
             batchSize,
             args.samplingType,
             cpcModel,
+            centerModel,
             cpcCriterion,
             args.nEpoch,
             args.pathCheckpoint,
@@ -983,6 +1038,7 @@ def main(args):
             (captureDataset, captureOptions, captureSetStatsCollector),
             batchSize,
             cpcModel,
+            centerModel,
             cpcCriterion,
             logs)
     if args.only_classif_metric:
@@ -991,7 +1047,7 @@ def main(args):
     #               will use "last state" and not "best in internal CPC accuracy" anyway
         trainedEpoch = len(logs["epoch"]) - 1
         # runPhonemeClassificationTraining created above if args.supervised_classif_metric
-        runLinsepClassificationTraining(trainedEpoch, cpcModel, trainedEpoch)
+        runLinsepClassificationTraining(trainedEpoch, cpcModel, centerModel, trainedEpoch)
 
 
 def parseArgs(argv):

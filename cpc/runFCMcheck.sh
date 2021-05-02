@@ -16,9 +16,9 @@ python train.py --pathDB /pio/scratch/1/i283340/MGR/zs/ds2 \
 --linsep_checkpoint_dir /pio/gluster/i283340/cpcfcmtries/spam002/linsep/checkp2-001 \
 --linsep_classif_each_epochs 2 \
 --pathCheckpoint /pio/gluster/i283340/cpcfcmtries/spam002/ \
---nEpoch 3 \
+--nEpoch 4 \
 --FCMproject \
---FCMprotos 50 --FCMpushLossWeightEnc 0.0001 --FCMpushLossProtosLess 0.1  # --FCMpushLossWeightCtx 0.0001 
+--FCMprotos 50 --FCMpushLossWeightEnc 0.0001 --FCMpushLossProtosLess 10  # --FCMpushLossWeightCtx 0.0001 
 # --FCMprotos 50 --FCMpushLossLinear --FCMpushLossWeightEnc 0.0001 --FCMpushLossWeightCtx 0.0001
 #--FCMmAfterAR 2. --FCMpushDegAllAfterAR 0.3 --FCMprotos 48 --FCMreprsConcat --FCMreprsConcatNormSumsNotLengths
 
