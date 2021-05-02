@@ -18,7 +18,7 @@ python train.py --pathDB /pio/scratch/1/i283340/MGR/zs/ds2 \
 --pathCheckpoint /pio/gluster/i283340/cpcfcmtries/spam002/ \
 --nEpoch 4 \
 --FCMproject \
---FCMprotos 50 --FCMpushLossWeightEnc 0.01 --FCMcenterInitAfterEpoch 1 --FCMpushLossProtosMult 0.001  --FCMpushLossCenterNorm # --FCMpushLossWeightCtx 0.0001 
+--FCMprotos 50 --FCMpushLossWeightEnc 0.01 --FCMcenterInitAfterEpoch 1 --FCMpushLossProtosMult 0.1 --FCMpushLossCenterNorm # --FCMpushLossWeightCtx 0.0001 
 # --FCMprotos 50 --FCMpushLossLinear --FCMpushLossWeightEnc 0.0001 --FCMpushLossWeightCtx 0.0001
 #--FCMmAfterAR 2. --FCMpushDegAllAfterAR 0.3 --FCMprotos 48 --FCMreprsConcat --FCMreprsConcatNormSumsNotLengths
 

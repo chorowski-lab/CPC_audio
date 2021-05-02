@@ -83,7 +83,7 @@ def loadArgs(args, locArgs, forbiddenAttr=None):
 def loadSupervisedCriterion(pathCheckpoint):
     from .criterion import CTCPhoneCriterion, PhoneCriterion
 
-    *_, args = getCheckpointData(os.path.dirname(pathCheckpoint))
+    *_, args, _ = getCheckpointData(os.path.dirname(pathCheckpoint))
     _, nPhones = parseSeqLabels(args.pathPhone)
     if args.CTC:
         criterion = CTCPhoneCriterion(args.hiddenGar if not args.onEncoder
@@ -107,6 +107,7 @@ def getCheckpointData(pathDir):
         print("No checkpoints found at " + pathDir)
         return None
     checkpoints.sort(key=lambda x: int(os.path.splitext(x[11:])[0]))
+    epochCompleted = int(os.path.splitext(checkpoints[-1][11:])[0])
     data = os.path.join(pathDir, checkpoints[-1])
     with open(os.path.join(pathDir, 'checkpoint_logs.json'), 'rb') as file:
         logs = json.load(file)
@@ -127,7 +128,7 @@ def getCheckpointData(pathDir):
     defaultArgs = get_default_cpc_config()
     loadArgs(defaultArgs, args)
 
-    return os.path.abspath(data), logs, defaultArgs
+    return os.path.abspath(data), logs, defaultArgs, epochCompleted
 
 
 def getEncoder(args):
@@ -173,7 +174,7 @@ def loadModel(pathCheckpoints, loadStateDict=True, loadBestNotLast=False, fcmSet
     hiddenGar, hiddenEncoder = 0, 0
     for path in pathCheckpoints:
         print(f"Loading checkpoint {path}")
-        _, _, locArgs = getCheckpointData(os.path.dirname(path))
+        _, _, locArgs, _ = getCheckpointData(os.path.dirname(path))
 
         doLoad = locArgs.load is not None and \
             (len(locArgs.load) > 1 or

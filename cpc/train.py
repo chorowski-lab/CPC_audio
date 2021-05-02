@@ -102,7 +102,7 @@ def getCriterion(args, downsampling, nSpeakers, nPhones):
 
 
 def loadCriterion(pathCheckpoint, downsampling, nSpeakers, nPhones):
-    _, _, locArgs = fl.getCheckpointData(os.path.dirname(pathCheckpoint))
+    _, _, locArgs, _ = fl.getCheckpointData(os.path.dirname(pathCheckpoint))
     criterion = getCriterion(locArgs, downsampling, nSpeakers, nPhones)
 
     state_dict = torch.load(pathCheckpoint, 'cpu')
@@ -412,9 +412,10 @@ def run(trainDataset,
         pathCheckpoint,
         optimizer,
         scheduler,
-        logs):
+        logs,
+        cpcEpochCompleted):
 
-    startEpoch = len(logs["epoch"])
+    startEpoch = cpcEpochCompleted + 1  #len(logs["epoch"])
     print(f"Running {nEpoch} epochs, now at {startEpoch}")
     bestAcc = 0
     bestStateDict = None
@@ -435,6 +436,7 @@ def run(trainDataset,
         if nextok < startEpoch:
             nextok += eachn
         linsepEpochs = list(range(nextok, nEpoch, eachn))
+        #print("@@@@@@", eachn, linsepEpochs)
 
     print(f'DS sizes: train {str(len(trainDataset)) if trainDataset is not None else "-"}, '
         f'val {str(len(valDataset)) if valDataset is not None else "-"}, capture '
@@ -512,9 +514,10 @@ def onlyCapture(
         cpcModel,
         centerModel,
         cpcCriterion,
-        logs
+        logs,
+        cpcEpochCompleted
 ):
-    startEpoch = len(logs["epoch"])
+    startEpoch = cpcEpochCompleted + 1 #len(logs["epoch"])
     captureDataset, captureOptions, captureStatsCollector = captureDatasetWithOptions
     assert (captureDataset is not None and captureOptions is not None)
     if captureOptions is not None:
@@ -540,12 +543,13 @@ def main(args):
     logs = {"epoch": [], "iter": [], "saveStep": args.save_step}
     loadOptimizer = False
     os.makedirs(args.pathCheckpoint, exist_ok=True)
+    cpcEpochCompleted = 0  # enabling to train form checkpoint epoch and not logs epoch, possibly messing up logs but not model
     # needed to move thing below later, as adding some args later
     #json.dump(vars(args), open(os.path.join(args.pathCheckpoint, 'checkpoint_args.json'), 'wt'))
     if args.pathCheckpoint is not None and not args.restart:
         cdata = fl.getCheckpointData(args.pathCheckpoint)
         if cdata is not None:
-            data, logs, locArgs = cdata
+            data, logs, locArgs, cpcEpochCompleted = cdata
             print(f"Checkpoint detected at {data}")
             fl.loadArgs(args, locArgs,
                         forbiddenAttr={"nGPU", "pathCheckpoint",
@@ -846,7 +850,7 @@ def main(args):
             scheduler = utils.SchedulerCombiner([scheduler_ramp, scheduler],
                                                 [0, args.schedulerRamp])
     if scheduler is not None:
-        for i in range(len(logs["epoch"])):
+        for i in range(cpcEpochCompleted + 1):  #len(logs["epoch"])):
             scheduler.step()
 
     print("cpcModel", cpcModel)
@@ -1034,7 +1038,8 @@ def main(args):
             args.pathCheckpoint,
             optimizer,
             scheduler,
-            logs)
+            logs,
+            cpcEpochCompleted)
     if args.onlyCapture:  
     # caution [!] - will capture for last checkpoint (last saved state) if checkpoint directory given
     #               to use specific checkpoint provide full checkpoint file path
@@ -1045,12 +1050,13 @@ def main(args):
             cpcModel,
             centerModel,
             cpcCriterion,
-            logs)
+            logs,
+            cpcEpochCompleted)
     if args.only_classif_metric:
     # caution [!] - will use last checkpoint (last saved state) if checkpoint directory given
     #               to use specific checkpoint provide full checkpoint file path
     #               will use "last state" and not "best in internal CPC accuracy" anyway
-        trainedEpoch = len(logs["epoch"]) - 1
+        trainedEpoch = cpcEpochCompleted  #len(logs["epoch"]) - 1
         # runPhonemeClassificationTraining created above if args.supervised_classif_metric
         runLinsepClassificationTraining(trainedEpoch, cpcModel, centerModel, trainedEpoch)
 
