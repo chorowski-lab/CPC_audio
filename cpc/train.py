@@ -152,9 +152,11 @@ def trainStep(dataLoader,
         # https://discuss.pytorch.org/t/dataparallel-only-supports-tensor-output/34519
         # did it like that so that code in other places doesn;t need to be changed
         # also, can't just check cpcModel.hasPushLoss as dataParallel makes it harder to access
+        if centerModel is not None:
+            centerModel.inputsBatchUpdate(batchData, epochNr)
         c_feature, encoded_data, label, pushLoss = cpcModel(batchData, label, givenCenters, epochNrs, False)
         if centerModel is not None:
-            centerModel.batchUpdate(encoded_data, epochNr)
+            centerModel.encodingsBatchUpdate(encoded_data, epochNr)
         # [!] baseEncDim returned (in tensor) if push loss
 
         if pushLoss is not None:  # else
@@ -238,7 +240,9 @@ def trainStep(dataLoader,
             utils.show_logs("Training loss", locLogs)
             start_time, n_examples = new_time, 0
 
-    centerModel.printLens()
+    if centerModel is not None:
+        centerModel.epochUpdate(epochNrs, cpcModel)
+        centerModel.printLens()
 
     if scheduler is not None:
         scheduler.step()
@@ -693,14 +697,15 @@ def main(args):
             "pushLossWeightCtx": args.FCMpushLossWeightCtx,
             "pushLossLinear": args.FCMpushLossLinear,
             "pushLossGradual": args.FCMpushLossGradual,
-            "pushLossProtosLess": args.FCMpushLossProtosLess
+            "pushLossProtosMult": args.FCMpushLossProtosMult,
+            "pushLossCenterNorm": args.FCMpushLossCenterNorm
             #"reprsConcatDontIncreaseARdim": args.FCMreprsConcatIncreaseARdim
         }
         # TODO: actual settings
         centerInitSettings = {
             "numCentroids": args.FCMprotos,
             "reprDim": args.hiddenEncoder,
-            "initAfterEpoch": 37
+            "initAfterEpoch": args.FCMcenterInitAfterEpoch
         }
         if args.FCMleaveProtos is not None and args.FCMleaveProtos > 0:
             assert args.FCMleaveProtos <= args.FCMprotos
@@ -1219,7 +1224,10 @@ def parseArgs(argv):
     # TODO think about adding linear loss option, but don't think makes too much sense?
     group_fcm.add_argument('--FCMpushLossLinear', action='store_true')
     group_fcm.add_argument('--FCMpushLossGradual', action='store_true')  # increase loss weight from 0 * x to 1 * x through the training
-    group_fcm.add_argument('--FCMpushLossProtosLess', type=float, default=None)  # like VQ-VAE commitment loss
+    group_fcm.add_argument('--FCMpushLossProtosMult', type=float, default=None)  # like VQ-VAE commitment loss
+    group_fcm.add_argument('--FCMpushLossCenterNorm', action='store_true')
+    group_fcm.add_argument('--FCMcenterInitAfterEpoch', type=int, default=None)
+    #FCMcenterInitAfterEpoch
     
 
     group_gpu = parser.add_argument_group('GPUs')

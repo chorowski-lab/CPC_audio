@@ -331,7 +331,8 @@ class CPCModel(nn.Module):
             self.pushLossWeightCtx = fcmSettings["pushLossWeightCtx"]
             self.pushLossLinear = fcmSettings["pushLossLinear"]
             self.pushLossGradual = fcmSettings["pushLossGradual"]
-            self.pushLossProtosLess = fcmSettings["pushLossProtosLess"]
+            self.pushLossProtosMult = fcmSettings["pushLossProtosMult"]
+            self.pushLossCenterNorm = fcmSettings["pushLossCenterNorm"]
             self.reprsConcat = fcmSettings["reprsConcat"]
             self.reprsConcatNormSumsNotLengths = fcmSettings["reprsConcatNormSumsNotLengths"]
             self.numProtos = fcmSettings["numProtos"]
@@ -644,6 +645,7 @@ class CPCModel(nn.Module):
         else:
 
             if givenCenters is None:
+                #print(f"***NONE CENTERS, ep. {epochNrs[0]}")
                 return torch.zeros(1).cuda(), torch.zeros(self.numProtos).cuda()
 
             # had to do it like that, as couldn't return tensors and later check grad as 
@@ -689,7 +691,7 @@ class CPCModel(nn.Module):
                 x = torch.zeros(1).cuda()
                 x += pushLoss
                 #print(x.shape)
-                #print(":::::", givenCenters.shape, protoUsedCounts1.shape, protoUsedCounts1)
+                ###print(":::::", givenCenters.shape, protoUsedCounts1.shape, protoUsedCounts1)
                 return x, protoUsedCounts1 + protoUsedCounts2  #pushLoss  #torch.full((1,), baseEncDim, dtype=int).cuda(), pushLoss
         # else:
         #     pushLoss = None
@@ -699,15 +701,16 @@ class CPCModel(nn.Module):
     #@staticmethod
     def _FCMlikeBelong(self, points, centers, m=None, pushDeg=None, pushLossWeight=None):  # for pushDeg no FCM; pushDeg OR m? TODO BUT COULD ALSO TRY THAT WEIGHTED PUSH
 
-        # didn't help at all
-        # if pushLossWeight is not None:
-        #     pointLens = torch.sqrt(torch.clamp((points*points).sum(dim=-1), min=0)).mean()
-        #     centersLens = torch.sqrt(torch.clamp((centers*centers).sum(dim=-1), min=0))  #.mean()
+        # probably didn't help too much, but maybe a bit
+        if pushLossWeight is not None and self.pushLossCenterNorm:
+            pointLens = torch.sqrt(torch.clamp((points*points).sum(dim=-1), min=0)).mean()
+            centersLens = torch.sqrt(torch.clamp((centers*centers).sum(dim=-1), min=0))  #.mean()
 
-        #     #print(points.shape, centers.shape, pointLens.shape, centersLens.shape, pointLens.view(*(pointLens.shape), 1).shape)
-        #     #centers = (centers / (centersLens.view(-1,1))) #* pointLens  # avg 5 times shorter
-        #     #pointLens = (points / pointLens.view(*(pointLens.shape), 1))
-        #     centers = (centers / (centersLens.view(-1,1))) * pointLens
+            #print(points.shape, centers.shape, pointLens.shape, centersLens.shape, pointLens.view(*(pointLens.shape), 1).shape)
+            #centers = (centers / (centersLens.view(-1,1))) #* pointLens  # avg 5 times shorter
+            #pointLens = (points / pointLens.view(*(pointLens.shape), 1))
+            #print("@@@@@@@@@@@@@", pointLens, centersLens)
+            centers = (centers / (centersLens.view(-1,1))) * pointLens
             # TODO if we make centers much shorter, encodings will just be pushed to 0, each similarly
 
             #pointLens2 = torch.sqrt(torch.clamp((points*points).sum(dim=-1), min=0)).mean()
@@ -716,7 +719,7 @@ class CPCModel(nn.Module):
             #print(f"pts: {pointLens2.item()}, centers: {centersLens2.item()}")
             # TODO there may be some batch norm, but only on enc and not on LSTM perhaps - maybe try it?
 
-        if self.pushLossProtosLess is None:  
+        if self.pushLossProtosMult is None:  
             distsSq = seDistancesToCentroidsCpy(points, centers)
             distsSq = torch.clamp(distsSq, min=0)
             #print(distsSq.dtype)
@@ -732,10 +735,10 @@ class CPCModel(nn.Module):
             distsSq2 = torch.clamp(distsSq2, min=0)
             dists2 = torch.sqrt(distsSq2)
             # just sum distances, as later only linear stuff on this is made to obtain loss
-            # and this sum preserves order ((1+self.pushLossProtosLess) * distances)
+            # and this sum preserves order ((1+self.pushLossProtosMult) * distances)
             # actual values are not important, only gradients which will be correct
-            distsSq = distsSq1 + self.pushLossProtosLess * distsSq2
-            dists = dists1 + self.pushLossProtosLess * dists2
+            distsSq = distsSq1 + self.pushLossProtosMult * distsSq2
+            dists = dists1 + self.pushLossProtosMult * dists2
         # dists: B x N x k
 
         k = dists.shape[2]
