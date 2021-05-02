@@ -39,7 +39,8 @@ def train_step(feature_maker, criterion, data_loader, optimizer, label_key="spea
         if centerpushSettings:
             centers, pushDeg = centerpushSettings
             c_feature = utils.pushToClosestForBatch(c_feature, centers, deg=pushDeg)
-            encoded_data = utils.pushToClosestForBatch(encoded_data, centers, deg=pushDeg)
+            # [!] ONLY c_features are projected into nullspace, so encoded_data is of no use with nullspace currently
+            #encoded_data = utils.pushToClosestForBatch(encoded_data, centers, deg=pushDeg)
         all_losses, all_acc = criterion(c_feature, encoded_data, label)
 
         totLoss = all_losses.sum()
@@ -70,7 +71,8 @@ def val_step(feature_maker, criterion, data_loader, label_key="speaker", centerp
             if centerpushSettings:
                 centers, pushDeg = centerpushSettings
                 c_feature = utils.pushToClosestForBatch(c_feature, centers, deg=pushDeg)
-                encoded_data = utils.pushToClosestForBatch(encoded_data, centers, deg=pushDeg)
+                # [!] ONLY c_features are projected into nullspace, so encoded_data is of no use with nullspace currently
+                #encoded_data = utils.pushToClosestForBatch(encoded_data, centers, deg=pushDeg)
             all_losses, all_acc = criterion(c_feature, encoded_data, label)
 
             logs["locLoss_val"] += np.asarray([all_losses.mean().item()])
