@@ -226,6 +226,7 @@ def trainStep(dataLoader,
                 logs["grad_enc_push_train"] += pushgradenc.cpu().numpy()
                 logs["grad_ctx_cpc_train"] += nonpushgradctx.cpu().numpy()
                 logs["grad_ctx_push_train"] += pushgradctx.cpu().numpy()
+                #print("!", logs["pushloss_closest"].shape, closestCounts.shape)
                 logs["pushloss_closest"] += closestCounts.detach().cpu().numpy()
 
         if (step + 1) % loggingStep == 0:
@@ -705,11 +706,13 @@ def main(args):
             "pushLossCenterNorm": args.FCMpushLossCenterNorm
             #"reprsConcatDontIncreaseARdim": args.FCMreprsConcatIncreaseARdim
         }
-        # TODO: actual settings
+        # TODO: maybe better settings? or maybe ok
         centerInitSettings = {
+            "mode": args.FCMcenter_mode,
             "numCentroids": args.FCMprotos,
             "reprDim": args.hiddenEncoder,
-            "initAfterEpoch": args.FCMcenterInitAfterEpoch
+            "initAfterEpoch": args.FCMcenter_initAfterEpoch,
+            "onlineKmeansBatches": args.FCMcenter_onlineKmeansBatches
         }
         if args.FCMleaveProtos is not None and args.FCMleaveProtos > 0:
             assert args.FCMleaveProtos <= args.FCMprotos
@@ -1232,7 +1235,10 @@ def parseArgs(argv):
     group_fcm.add_argument('--FCMpushLossGradual', action='store_true')  # increase loss weight from 0 * x to 1 * x through the training
     group_fcm.add_argument('--FCMpushLossProtosMult', type=float, default=None)  # like VQ-VAE commitment loss
     group_fcm.add_argument('--FCMpushLossCenterNorm', action='store_true')
-    group_fcm.add_argument('--FCMcenterInitAfterEpoch', type=int, default=None)
+
+    group_fcm.add_argument('--FCMcenter_mode', type=str, default=None)
+    group_fcm.add_argument('--FCMcenter_initAfterEpoch', type=int, default=None)
+    group_fcm.add_argument('--FCMcenter_onlineKmeansBatches', type=int, default=None)
     #FCMcenterInitAfterEpoch
     
 

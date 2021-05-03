@@ -646,7 +646,7 @@ class CPCModel(nn.Module):
 
             if givenCenters is None:
                 #print(f"***NONE CENTERS, ep. {epochNrs[0]}")
-                return torch.zeros(1).cuda(), torch.zeros(self.numProtos).cuda()
+                return torch.zeros(1).cuda(), torch.zeros(1,self.numProtos).cuda()
 
             # had to do it like that, as couldn't return tensors and later check grad as 
             # DataParallel spoiled everything making a new concatenated tensor
@@ -691,7 +691,7 @@ class CPCModel(nn.Module):
                 x = torch.zeros(1).cuda()
                 x += pushLoss
                 #print(x.shape)
-                ###print(":::::", givenCenters.shape, protoUsedCounts1.shape, protoUsedCounts1)
+                print(":::::", givenCenters.shape, protoUsedCounts1.shape, protoUsedCounts1)
                 return x, protoUsedCounts1 + protoUsedCounts2  #pushLoss  #torch.full((1,), baseEncDim, dtype=int).cuda(), pushLoss
         # else:
         #     pushLoss = None
@@ -710,7 +710,7 @@ class CPCModel(nn.Module):
             #centers = (centers / (centersLens.view(-1,1))) #* pointLens  # avg 5 times shorter
             #pointLens = (points / pointLens.view(*(pointLens.shape), 1))
             #print("@@@@@@@@@@@@@", pointLens, centersLens)
-            centers = (centers / (centersLens.view(-1,1))) * pointLens
+            centers = (centers / torch.clamp(centersLens.view(-1,1), min=0.000001)) * pointLens
             # TODO if we make centers much shorter, encodings will just be pushed to 0, each similarly
 
             #pointLens2 = torch.sqrt(torch.clamp((points*points).sum(dim=-1), min=0)).mean()
