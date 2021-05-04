@@ -691,7 +691,7 @@ class CPCModel(nn.Module):
                 x = torch.zeros(1).cuda()
                 x += pushLoss
                 #print(x.shape)
-                print(":::::", givenCenters.shape, protoUsedCounts1.shape, protoUsedCounts1)
+                #print(":::::", givenCenters.shape, protoUsedCounts1.shape, protoUsedCounts1)
                 return x, protoUsedCounts1 + protoUsedCounts2  #pushLoss  #torch.full((1,), baseEncDim, dtype=int).cuda(), pushLoss
         # else:
         #     pushLoss = None
