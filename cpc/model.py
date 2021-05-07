@@ -409,13 +409,15 @@ class CPCModel(nn.Module):
         return part1, part2
 
     # epochNrs: (current, total)
-    def forward(self, arg1, arg2, givenCenters, epochNrs, calcPushLoss):
+    def forward(self, arg1, arg2, givenCenters, epochNrs, calcPushLoss, onlyConv):
         # [!] OK, DataParallel splits in same way at both forward stages when push
         #print("::", arg1.shape, arg2.shape, calcPushLoss)
         if not calcPushLoss:
             batchData, label = arg1, arg2
 
             encodedData = self.gEncoder(batchData).permute(0, 2, 1)
+            if onlyConv:
+                return encodedData
             #print("!", encodedData.shape)
             # TODO check if shape is like I think it is
             baseEncDim = encodedData.shape[-1]

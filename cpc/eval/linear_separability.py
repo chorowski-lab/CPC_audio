@@ -37,7 +37,7 @@ def train_step(feature_maker, centerModel, criterion, data_loader, optimizer, la
         numGPUs = len(feature_maker.device_ids)
         if givenCenters is not None:
             givenCenters = givenCenters.repeat(numGPUs,1)
-        c_feature, encoded_data, _, __ = feature_maker(batch_data, None, givenCenters, cpc_epochs, False)
+        c_feature, encoded_data, _, __ = feature_maker(batch_data, None, givenCenters, cpc_epochs, False, False)
         if not feature_maker.optimize:
             c_feature, encoded_data = c_feature.detach(), encoded_data.detach()
         all_losses, all_acc  = criterion(c_feature, encoded_data, label)
@@ -71,7 +71,7 @@ def val_step(feature_maker, centerModel, criterion, data_loader, label_key, cpc_
             numGPUs = len(feature_maker.device_ids)
             if givenCenters is not None:
                 givenCenters = givenCenters.repeat(numGPUs,1)
-            c_feature, encoded_data, _, __ = feature_maker(batch_data, None, givenCenters, cpc_epochs, False)
+            c_feature, encoded_data, _, __ = feature_maker(batch_data, None, givenCenters, cpc_epochs, False, False)
             all_losses, all_acc = criterion(c_feature, encoded_data, label)
 
             logs["locLoss_val"] += np.asarray([all_losses.mean().item()])

@@ -153,10 +153,10 @@ def trainStep(dataLoader,
         # did it like that so that code in other places doesn;t need to be changed
         # also, can't just check cpcModel.hasPushLoss as dataParallel makes it harder to access
         if centerModel is not None:
-            centerModel.inputsBatchUpdate(batchData, epochNr)
-        c_feature, encoded_data, label, pushLoss = cpcModel(batchData, label, givenCenters, epochNrs, False)
+            centerModel.inputsBatchUpdate(batchData, epochNrs, cpcModel)
+        c_feature, encoded_data, label, pushLoss = cpcModel(batchData, label, givenCenters, epochNrs, False, False)
         if centerModel is not None:
-            centerModel.encodingsBatchUpdate(encoded_data, epochNr)
+            centerModel.encodingsBatchUpdate(encoded_data, epochNrs, cpcModel)
         # [!] baseEncDim returned (in tensor) if push loss
 
         if pushLoss is not None:  # else
@@ -168,7 +168,7 @@ def trainStep(dataLoader,
             c_feature = c_feature1
             encoded_data = encoded_data1
             pushLoss, closestCountsDataPar = \
-                cpcModel(c_feature2, encoded_data2, givenCenters, epochNrs, True)
+                cpcModel(c_feature2, encoded_data2, givenCenters, epochNrs, True, False)
             closestCounts = closestCountsDataPar.sum(dim=0).view(-1)
             c_feature.retain_grad()
             c_feature2.retain_grad()
@@ -282,7 +282,7 @@ def valStep(dataLoader,
             numGPUs = len(cpcModel.device_ids)
             if givenCenters is not None:
                 givenCenters = givenCenters.repeat(numGPUs,1)
-            c_feature, encoded_data, label, pushLoss = cpcModel(batchData, label, givenCenters, epochNrs, False)
+            c_feature, encoded_data, label, pushLoss = cpcModel(batchData, label, givenCenters, epochNrs, False, False)
             allLosses, allAcc, _ = cpcCriterion(c_feature, encoded_data, label, None)
 
         if "locLoss_val" not in logs:
@@ -355,7 +355,7 @@ def captureStep(
             numGPUs = len(cpcModel.device_ids)
             if givenCenters is not None:
                 givenCenters = givenCenters.repeat(numGPUs,1)
-            c_feature, encoded_data, labelSpeaker, _ = cpcModel(batchData, labelSpeaker, givenCenters, epochNrs, False)
+            c_feature, encoded_data, labelSpeaker, _ = cpcModel(batchData, labelSpeaker, givenCenters, epochNrs, False, False)
             allLosses, allAcc, captured = cpcCriterion(c_feature, encoded_data, labelSpeaker, cpcCaptureOpts)
         
             # saving it with IDs like that assumes deterministic order of elements
@@ -712,7 +712,11 @@ def main(args):
             "numCentroids": args.FCMprotos,
             "reprDim": args.hiddenEncoder,
             "initAfterEpoch": args.FCMcenter_initAfterEpoch,
-            "onlineKmeansBatches": args.FCMcenter_onlineKmeansBatches
+            "onlineKmeansBatches": args.FCMcenter_onlineKmeansBatches,
+            "onlineKmeansBatchesLongTerm": args.FCMcenter_onlineKmeansBatchesLongTerm,
+            "onlineKmeansBatchesLongTermWeight": args.FCMcenter_onlineKmeansBatchesLongTermWeight,
+            "centerNorm": args.FCMcenter_norm,
+            "batchRecompute": args.FCMcenter_batchRecompute
         }
         if args.FCMleaveProtos is not None and args.FCMleaveProtos > 0:
             assert args.FCMleaveProtos <= args.FCMprotos
@@ -1239,6 +1243,10 @@ def parseArgs(argv):
     group_fcm.add_argument('--FCMcenter_mode', type=str, default=None)
     group_fcm.add_argument('--FCMcenter_initAfterEpoch', type=int, default=None)
     group_fcm.add_argument('--FCMcenter_onlineKmeansBatches', type=int, default=None)
+    group_fcm.add_argument('--FCMcenter_onlineKmeansBatchesLongTerm', type=int, default=None)
+    group_fcm.add_argument('--FCMcenter_onlineKmeansBatchesLongTermWeight', type=float, default=None)
+    group_fcm.add_argument('--FCMcenter_norm', action='store_true')
+    group_fcm.add_argument('--FCMcenter_batchRecompute', type=int, default=None)
     #FCMcenterInitAfterEpoch
     
 

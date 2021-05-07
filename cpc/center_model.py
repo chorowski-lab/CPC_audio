@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch
 import numpy as np
 import math
+from collections import deque
 
 from cpc.model import seDistancesToCentroidsCpy
 
@@ -33,16 +34,23 @@ class CentroidModule(nn.Module):
             self.initAfterEpoch = settings["initAfterEpoch"]
             print(f"INIT AFTER EPOCH: {self.initAfterEpoch}")
             self.keepBatches = settings["onlineKmeansBatches"]
+            self.keepBatchesLongTerm = settings["onlineKmeansBatchesLongTerm"]
+            self.keepBatchesLongTermWeight = settings["onlineKmeansBatchesLongTermWeight"]
+            self.centerNorm = settings["centerNorm"]
+            self.batchRecompute = settings["batchRecompute"]
+            if self.batchRecompute:
+                self.batchUpdateQ = deque()
             self.protos = torch.zeros((self.numCentroids, self.reprDim), dtype=torch.float32).cuda()
             # TODO to resume, last batches would need to be saved in state - will they be automatically?
             self.currentGlobalBatch = 0
             self.protoCounts = torch.zeros(self.protos.shape[0], dtype=torch.float32).cuda()
             self.protoSums = torch.zeros((self.numCentroids, self.reprDim), dtype=torch.float32).cuda()
             self.lastKmBatches = {}  # format:     batch_num: (sums_of_points_assigned_to_each_center, num_points_assigned_to_each_center)
+            self.longTermKmBatches = {}
             # TODO think about adding re-initialization (done periodically on last N-batch data with regular k-means or so)
 
     # before encodings
-    def inputsBatchUpdate(self, batch, epoch):
+    def inputsBatchUpdate(self, batch, epochNrs, cpcModel):
         #print(f"--> INPUT BATCH UPDATE ep. {epoch}, {batch.shape}")
         
         with torch.no_grad():
@@ -51,7 +59,8 @@ class CentroidModule(nn.Module):
             # inputsBatchUpdate, encodingsBatchUpdate are in turns, always
         
 
-    def encodingsBatchUpdate(self, batch, epoch):
+    def encodingsBatchUpdate(self, batch, epochNrs, cpcModel):
+        epoch, totalEpochs = epochNrs
         batch = batch.clone().detach()
         if self.dsCountEpoch is None or self.dsCountEpoch == epoch:
             #if self.inBatch == 0:
@@ -90,6 +99,15 @@ class CentroidModule(nn.Module):
 
         if self.mode == "onlineKmeans" and epoch > self.initAfterEpoch:
 
+            #print(f"BATCH UPDATE, {self.lastKmBatches.keys()}, {self.longTermKmBatches.keys()}")
+
+            if self.centerNorm:
+                batchLens = torch.clamp((batch*batch).sum(-1), min=0.00000001)
+                batch = batch / batchLens.view(*(batchLens.shape), 1)
+                with torch.no_grad():
+                    protoLens = torch.clamp((self.protos*self.protos).sum(-1), min=0.00000001)
+                    self.protos = self.protos / protoLens.view(*(protoLens.shape), 1)
+
             distsSq = seDistancesToCentroidsCpy(batch, self.protos)
             distsSq = torch.clamp(distsSq, min=0)
             #dists = torch.sqrt(distsSq)
@@ -99,21 +117,66 @@ class CentroidModule(nn.Module):
             batchSums, closestCounts = self.getBatchSums(batch, closest)
             self.protoSums += batchSums
             self.protoCounts += closestCounts
-            self.lastKmBatches[self.currentGlobalBatch] = (batchSums, closestCounts)
+            self.lastKmBatches[self.currentGlobalBatch] = (batchSums, closestCounts, self.last_input_batch.clone())
+            if self.batchRecompute:
+                self.batchUpdateQ.append(self.currentGlobalBatch)
+            if self.keepBatchesLongTerm:
+                weightedSums = self.keepBatchesLongTermWeight*batchSums
+                weightedCounts = self.keepBatchesLongTermWeight*closestCounts
+                self.protoSums += weightedSums
+                self.protoCounts += weightedCounts
+                self.longTermKmBatches[self.currentGlobalBatch] = (weightedSums, weightedCounts)
 
             # subtract old out-of-the-window batch data
             oldBatch = self.currentGlobalBatch - self.keepBatches
             if oldBatch in self.lastKmBatches:
-                oldBatchSums, oldBatchCounts = self.lastKmBatches[oldBatch]
+                oldBatchSums, oldBatchCounts, _ = self.lastKmBatches[oldBatch]
                 self.protoSums -= oldBatchSums
                 self.protoCounts -= oldBatchCounts
                 del self.lastKmBatches[oldBatch]
+            if self.keepBatchesLongTerm:
+                oldBatch = self.currentGlobalBatch - self.keepBatchesLongTerm
+                if oldBatch in self.longTermKmBatches:
+                    oldBatchSums, oldBatchCounts = self.longTermKmBatches[oldBatch]
+                    self.protoSums -= oldBatchSums
+                    self.protoCounts -= oldBatchCounts
+                    del self.longTermKmBatches[oldBatch]
+
+            if self.batchRecompute:
+                self.updateBatches(epochNrs, cpcModel)
 
             # re-average centroids
             with torch.no_grad():  # just in case it tries to compute grad
                 self.protos = self.protoSums / torch.clamp(self.protoCounts.view(-1,1), min=1)
+                if self.centerNorm:
+                    protoLens = torch.clamp((self.protos*self.protos).sum(-1), min=0.00000001)
+                    self.protos = self.protos / protoLens.view(*(protoLens.shape), 1)
 
             self.currentGlobalBatch += 1
+
+    def updateBatches(self, epochNrs, cpcModel):
+        updated = 0
+        while len(self.batchUpdateQ) > 0 and updated < self.batchRecompute:
+            batchNr = self.batchUpdateQ.popleft()
+            if batchNr not in self.lastKmBatches:
+                continue  # old batch out of window, no update
+            oldBatchSums, oldBatchCounts, batch = self.lastKmBatches[batchNr]
+            with torch.no_grad():
+                encoded_data = cpcModel(batch, None, None, epochNrs, False, True)
+            distsSq = seDistancesToCentroidsCpy(encoded_data, self.protos)
+            distsSq = torch.clamp(distsSq, min=0)
+            #dists = torch.sqrt(distsSq)
+            closest = distsSq.argmin(-1)
+            batchSums, closestCounts = self.getBatchSums(encoded_data, closest)
+            self.protoSums -= oldBatchSums
+            self.protoCounts -= oldBatchCounts
+            self.protoSums += batchSums
+            self.protoCounts += closestCounts
+            self.lastKmBatches[batchNr] = (batchSums, closestCounts, batch)
+            self.batchUpdateQ.append(batchNr)
+            #print("UPDATED:", batchNr)
+            updated += 1
+
             
             
     def getBatchSums(self, batch, closest):
@@ -142,7 +205,7 @@ class CentroidModule(nn.Module):
             if epoch == self.initAfterEpoch:
                 for i, (batchData, lineNr, lineOffset) in enumerate(self.chosenBatchInputs):
                     with torch.no_grad():
-                        c_feature, encoded_data, label, pushLoss = cpcModel(batchData, None, None, epochNrs, False)
+                        encoded_data = cpcModel(batchData, None, None, epochNrs, False, True)  # c_feature, encoded_data, label, pushLoss
                         self.protos[i] = encoded_data[lineNr,lineOffset]
                         print(f"--> EXAMPLE #{i}: sqlen {(self.protos[i]*self.protos[i]).sum(-1)}")  #"; {self.protos[i]}")
 
