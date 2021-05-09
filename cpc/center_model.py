@@ -18,8 +18,11 @@ class CentroidModule(nn.Module):
         self.nextExampleNum = 0
         self.seenNr = 0
         self.chosenExamples = None
+        self.kmeansInitBatches = None  # will be set below if value given
+        self.kmeansReinitEachN = None  # same as above
         #self.inBatch = 0
         self.chosenBatchInputs = []
+        self.chosenKMeansBatches = []
         self.numCentroids = settings["numCentroids"]
         self.reprDim = settings["reprDim"]
         self.mode = settings["mode"]
@@ -28,10 +31,18 @@ class CentroidModule(nn.Module):
             print(f"INIT AFTER EPOCH: {self.initAfterEpoch}")
         if self.mode in ("reprInit", "beginInit"):
             # needed also in reprInit case so that params can be added to optimizer
+            # [!!] this is computed here, but only learnt in cpcModel forward!
             self.protos = nn.Parameter(torch.randn((self.numCentroids, self.reprDim), requires_grad=True).cuda() / (5. * math.sqrt(self.reprDim)), requires_grad=True)
         if self.mode == "onlineKmeans":  # someone figured that out and called "sequential k-means" for some reason
                                          # so that's how it's called in literature
             self.initAfterEpoch = settings["initAfterEpoch"]
+            self.firstInitNoIters = settings["firstInitNoIters"]
+            self.kmeansInitIters = settings["kmeansInitIters"]
+            self.kmeansInitBatches = settings["kmeansInitBatches"]
+            if self.kmeansInitIters or self.kmeansInitBatches:
+                assert self.kmeansInitIters and self.kmeansInitBatches
+            self.kmeansReinitEachN = settings["kmeansReinitEachN"]
+            self.kmeansReinitUpTo = settings["kmeansReinitUpTo"]
             print(f"INIT AFTER EPOCH: {self.initAfterEpoch}")
             self.keepBatches = settings["onlineKmeansBatches"]
             self.keepBatchesLongTerm = settings["onlineKmeansBatchesLongTerm"]
@@ -66,7 +77,7 @@ class CentroidModule(nn.Module):
             #if self.inBatch == 0:
             #    self.inBatch = (batch.shape[0], batch.shape[1], batch.shape[0] * batch.shape[1])  
                 # can be several smaller batches each epoch, one per speaker
-            #print(batch.shape)
+            #print(":::::", batch.shape, epochNrs)
             self.dsCountEpoch = epoch
             if self.dsLen == 0:
                 print("--> COUNTING DS LEN")
@@ -74,12 +85,24 @@ class CentroidModule(nn.Module):
 
         if self.mode in ("reprInit", "onlineKmeans") and epoch == self.initAfterEpoch:  # this epoch has to be > 0
             if self.chosenExamples is None:
-                self.chosenExamples = np.random.choice(self.dsLen, self.numCentroids)
+                if self.kmeansInitBatches:
+                    randNr = max(self.kmeansInitBatches, self.numCentroids)
+                else:
+                    randNr = self.numCentroids
+                self.chosenExamples = np.random.choice(self.dsLen, randNr)
+                if self.kmeansInitBatches:
+                    self.chosenKMeansCandidateNrs = set(self.chosenExamples[:self.kmeansInitBatches])
+                    print(f"--> CHOOSING {self.kmeansInitBatches} BATCHES FOR K-MEANS INIT POINTS;"
+                           " will make k-means init with EXAMPLES as starting centers")
+                else:
+                    self.chosenKMeansCandidateNrs = None
+                self.chosenCentroidsCandidateNrs = set(self.chosenExamples[:self.numCentroids])    
                 self.chosenExamples = sorted(list(self.chosenExamples))
                 self.chosenExamples.append(1000000000000000000000000)  # for convenience and less cases below
-                print(f"--> CHOOSING {self.numCentroids} EXAMPLES FOR INIT, DSLEN {self.dsLen}: {self.chosenExamples}")
+                print(f"--> CHOOSING {self.numCentroids} EXAMPLES FOR CENTROID INIT, DSLEN {self.dsLen}: {self.chosenExamples}")
             numHere = batch.shape[0] * batch.shape[1]  #self.inBatch  # hm, several batches can be smaller  #batch.shape[0] * batch.shape[1]
             candidateNr = self.chosenExamples[self.nextExampleNum]
+            addedThisBatch = False
             while candidateNr < self.seenNr + numHere:
                 offset = candidateNr - self.seenNr
                 lineNr = offset // batch.shape[1]
@@ -87,8 +110,12 @@ class CentroidModule(nn.Module):
                 #print("!!!", self.protos[self.nextExampleNum].shape, batch[lineNr,lineOffset].detach().shape)
                 with torch.no_grad():
                     #self.protos[self.nextExampleNum] = batch[lineNr,lineOffset].detach()
-                    self.chosenBatchInputs.append((self.last_input_batch.clone(), lineNr, lineOffset))
-                    print(f"--> ADDED BATCH EXAMPLE #{self.nextExampleNum}")
+                    if candidateNr in self.chosenCentroidsCandidateNrs:
+                        self.chosenBatchInputs.append((self.last_input_batch.clone(), lineNr, lineOffset))
+                        print(f"--> ADDED BATCH EXAMPLE #{self.nextExampleNum}")
+                    if self.chosenKMeansCandidateNrs and candidateNr in self.chosenKMeansCandidateNrs and not addedThisBatch:  # both this and above can happen
+                        self.chosenKMeansBatches.append(self.last_input_batch.clone())
+                        addedThisBatch = True
                     # TODO ? change this so that batch[...].detach is stored and protos are recomputed after the epoch updates (?)
                     #   ^ could at least check it works
                     # TODO ? or, tbh, maybe should only choose near the end? but actually, earlier protos are also chosen many times sometimes
@@ -102,11 +129,9 @@ class CentroidModule(nn.Module):
             #print(f"BATCH UPDATE, {self.lastKmBatches.keys()}, {self.longTermKmBatches.keys()}")
 
             if self.centerNorm:
-                batchLens = torch.clamp((batch*batch).sum(-1), min=0.00000001)
-                batch = batch / batchLens.view(*(batchLens.shape), 1)
+                batch = self.normLen(batch) 
                 with torch.no_grad():
-                    protoLens = torch.clamp((self.protos*self.protos).sum(-1), min=0.00000001)
-                    self.protos = self.protos / protoLens.view(*(protoLens.shape), 1)
+                    self.protos = self.normLen(self.protos)
 
             distsSq = seDistancesToCentroidsCpy(batch, self.protos)
             distsSq = torch.clamp(distsSq, min=0)
@@ -117,7 +142,8 @@ class CentroidModule(nn.Module):
             batchSums, closestCounts = self.getBatchSums(batch, closest)
             self.protoSums += batchSums
             self.protoCounts += closestCounts
-            self.lastKmBatches[self.currentGlobalBatch] = (batchSums, closestCounts, self.last_input_batch.clone())
+            batchToRemember = self.last_input_batch.clone() if self.batchRecompute else None
+            self.lastKmBatches[self.currentGlobalBatch] = (batchSums, closestCounts, batchToRemember)
             if self.batchRecompute:
                 self.batchUpdateQ.append(self.currentGlobalBatch)
             if self.keepBatchesLongTerm:
@@ -149,10 +175,15 @@ class CentroidModule(nn.Module):
             with torch.no_grad():  # just in case it tries to compute grad
                 self.protos = self.protoSums / torch.clamp(self.protoCounts.view(-1,1), min=1)
                 if self.centerNorm:
-                    protoLens = torch.clamp((self.protos*self.protos).sum(-1), min=0.00000001)
-                    self.protos = self.protos / protoLens.view(*(protoLens.shape), 1)
+                    with torch.no_grad():
+                        self.protos = self.normLen(self.protos)
 
             self.currentGlobalBatch += 1
+
+    def normLen(self, tens):
+        # normalization, but not if very very short - to prevent problems during training
+        tensLens = torch.sqrt(torch.clamp((tens*tens).sum(-1), min=0))
+        return tens / torch.clamp(tensLens.view(*(tensLens.shape), 1), min=1)
 
     def updateBatches(self, epochNrs, cpcModel):
         updated = 0
@@ -163,6 +194,10 @@ class CentroidModule(nn.Module):
             oldBatchSums, oldBatchCounts, batch = self.lastKmBatches[batchNr]
             with torch.no_grad():
                 encoded_data = cpcModel(batch, None, None, epochNrs, False, True)
+            if self.centerNorm:
+                encoded_data = self.normLen(encoded_data) 
+                with torch.no_grad():
+                    self.protos = self.normLen(self.protos)
             distsSq = seDistancesToCentroidsCpy(encoded_data, self.protos)
             distsSq = torch.clamp(distsSq, min=0)
             #dists = torch.sqrt(distsSq)
@@ -174,6 +209,9 @@ class CentroidModule(nn.Module):
             self.protoCounts += closestCounts
             self.lastKmBatches[batchNr] = (batchSums, closestCounts, batch)
             self.batchUpdateQ.append(batchNr)
+            if self.centerNorm:
+                with torch.no_grad():
+                    self.protos = self.normLen(self.protos)
             #print("UPDATED:", batchNr)
             updated += 1
 
@@ -194,6 +232,7 @@ class CentroidModule(nn.Module):
         closestCounts[indices] += indicesCounts
         return batchSums, closestCounts
 
+
     def printLens(self):
         with torch.no_grad():
             print((self.protos*self.protos).sum(dim=-1))
@@ -202,17 +241,63 @@ class CentroidModule(nn.Module):
     def epochUpdate(self, epochNrs, cpcModel):  # after that epoch
         epoch, allEpochs = epochNrs
         if self.mode in ("reprInit", "onlineKmeans"):
-            if epoch == self.initAfterEpoch:
-                for i, (batchData, lineNr, lineOffset) in enumerate(self.chosenBatchInputs):
-                    with torch.no_grad():
-                        encoded_data = cpcModel(batchData, None, None, epochNrs, False, True)  # c_feature, encoded_data, label, pushLoss
-                        self.protos[i] = encoded_data[lineNr,lineOffset]
-                        print(f"--> EXAMPLE #{i}: sqlen {(self.protos[i]*self.protos[i]).sum(-1)}")  #"; {self.protos[i]}")
+            if epoch == self.initAfterEpoch or \
+                (self.kmeansReinitEachN and (epoch - self.initAfterEpoch) % self.kmeansReinitEachN == 0 and \
+                (not self.kmeansReinitUpTo or epoch < self.kmeansReinitUpTo)):   
 
-        
+                with torch.no_grad():
+                    print("K-MEANS CENTERS REINIT FROM REPRESENTATIONS")
+                    self.initKmeansCenters(epochNrs, cpcModel)  # initialize centroids
+                    if self.kmeansInitBatches and (not self.firstInitNoIters or epoch != self.initAfterEpoch):
+                        print("K-MEANS CENTERS REINIT K-MEANS IMPROVE")
+                        for i in range(self.kmeansInitIters):  # perform k-means with initizalized centroids
+                            print("new kmeans epoch")
+                            self.kmeansEpoch(epochNrs, cpcModel)  # performs one epoch, moving the centroids
+
+                # for i, (batchData, lineNr, lineOffset) in enumerate(self.chosenBatchInputs):
+                #     with torch.no_grad():
+                #         encoded_data = cpcModel(batchData, None, None, epochNrs, False, True)  # c_feature, encoded_data, label, pushLoss
+                #         self.protos[i] = encoded_data[lineNr,lineOffset]
+                #         print(f"--> EXAMPLE #{i}: sqlen {(self.protos[i]*self.protos[i]).sum(-1)}")  #"; {self.protos[i]}")
+
+
+    def initKmeansCenters(self, epochNrs, cpcModel):
+        for i, (batchData, lineNr, lineOffset) in enumerate(self.chosenBatchInputs):
+            with torch.no_grad():
+                encoded_data = cpcModel(batchData, None, None, epochNrs, False, True)  # c_feature, encoded_data, label, pushLoss
+                self.protos[i] = encoded_data[lineNr,lineOffset]
+                # [!!!] here it's not normed, it's normed before any distance operation or before giving it outside
+                print(f"--> EXAMPLE #{i}: sqlen {(self.protos[i]*self.protos[i]).sum(-1)}")  #"; {self.protos[i]}")
+
+
+    def kmeansEpoch(self, epochNrs, cpcModel):
+        # this assumes centroids are already initialized
+        newCentersSums = torch.zeros((self.numCentroids, self.reprDim), dtype=torch.float32).cuda()
+        newCentersCounts = torch.zeros(self.protos.shape[0], dtype=torch.float32).cuda()
+        print(f"ACTUAL BATCHES for k-means init epoch: {len(self.chosenKMeansBatches)}")
+        for i, batch in enumerate(self.chosenKMeansBatches):
+            encoded_data = cpcModel(batch, None, None, epochNrs, False, True)
+            if self.centerNorm:
+                encoded_data = self.normLen(encoded_data) 
+                with torch.no_grad():
+                    self.protos = self.normLen(self.protos)
+            distsSq = seDistancesToCentroidsCpy(encoded_data, self.protos)
+            distsSq = torch.clamp(distsSq, min=0)
+            #dists = torch.sqrt(distsSq)
+            closest = distsSq.argmin(-1)
+            # add new batch data
+            batchSums, closestCounts = self.getBatchSums(encoded_data, closest)
+            newCentersSums += batchSums
+            newCentersCounts += closestCounts
+        with torch.no_grad():  # just in case it tries to compute grad
+            self.protos = newCentersSums / torch.clamp(newCentersCounts.view(-1,1), min=1)
+
 
     def centersForStuff(self, epoch):
         # TODO can add option to always return, for some FCM cases etc
+        if self.centerNorm:
+            with torch.no_grad():
+                self.protos = self.normLen(self.protos)
         if self.mode == "reprInit":
             if epoch <= self.initAfterEpoch:
                 return None

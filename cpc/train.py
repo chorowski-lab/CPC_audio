@@ -544,7 +544,7 @@ def main(args):
     logs = {"epoch": [], "iter": [], "saveStep": args.save_step}
     loadOptimizer = False
     os.makedirs(args.pathCheckpoint, exist_ok=True)
-    cpcEpochCompleted = 0  # enabling to train form checkpoint epoch and not logs epoch, possibly messing up logs but not model
+    cpcEpochCompleted = -1  # enabling to train form checkpoint epoch and not logs epoch, possibly messing up logs but not model
     # needed to move thing below later, as adding some args later
     #json.dump(vars(args), open(os.path.join(args.pathCheckpoint, 'checkpoint_args.json'), 'wt'))
     if args.pathCheckpoint is not None and not args.restart:
@@ -703,7 +703,8 @@ def main(args):
             "pushLossLinear": args.FCMpushLossLinear,
             "pushLossGradual": args.FCMpushLossGradual,
             "pushLossProtosMult": args.FCMpushLossProtosMult,
-            "pushLossCenterNorm": args.FCMpushLossCenterNorm
+            "pushLossCenterNorm": args.FCMpushLossCenterNorm,
+            "pushLossPointNorm": args.FCMpushLossPointNorm
             #"reprsConcatDontIncreaseARdim": args.FCMreprsConcatIncreaseARdim
         }
         # TODO: maybe better settings? or maybe ok
@@ -712,6 +713,11 @@ def main(args):
             "numCentroids": args.FCMprotos,
             "reprDim": args.hiddenEncoder,
             "initAfterEpoch": args.FCMcenter_initAfterEpoch,
+            "firstInitNoIters": args.FCMcenter_firstInitNoIters,
+            "kmeansInitIters": args.FCMcenter_kmeansInitIters,
+            "kmeansInitBatches": args.FCMcenter_kmeansInitBatches,
+            "kmeansReinitEachN": args.FCMcenter_kmeansReinitEachN,
+            "kmeansReinitUpTo": args.FCMcenter_kmeansReinitUpTo,
             "onlineKmeansBatches": args.FCMcenter_onlineKmeansBatches,
             "onlineKmeansBatchesLongTerm": args.FCMcenter_onlineKmeansBatchesLongTerm,
             "onlineKmeansBatchesLongTermWeight": args.FCMcenter_onlineKmeansBatchesLongTermWeight,
@@ -1239,9 +1245,15 @@ def parseArgs(argv):
     group_fcm.add_argument('--FCMpushLossGradual', action='store_true')  # increase loss weight from 0 * x to 1 * x through the training
     group_fcm.add_argument('--FCMpushLossProtosMult', type=float, default=None)  # like VQ-VAE commitment loss
     group_fcm.add_argument('--FCMpushLossCenterNorm', action='store_true')
+    group_fcm.add_argument('--FCMpushLossPointNorm', action='store_true')
 
     group_fcm.add_argument('--FCMcenter_mode', type=str, default=None)
     group_fcm.add_argument('--FCMcenter_initAfterEpoch', type=int, default=None)
+    group_fcm.add_argument('--FCMcenter_firstInitNoIters', action='store_true')
+    group_fcm.add_argument('--FCMcenter_kmeansInitIters', type=int, default=None)
+    group_fcm.add_argument('--FCMcenter_kmeansInitBatches', type=int, default=None)
+    group_fcm.add_argument('--FCMcenter_kmeansReinitEachN', type=int, default=None)
+    group_fcm.add_argument('--FCMcenter_kmeansReinitUpTo', type=int, default=None)
     group_fcm.add_argument('--FCMcenter_onlineKmeansBatches', type=int, default=None)
     group_fcm.add_argument('--FCMcenter_onlineKmeansBatchesLongTerm', type=int, default=None)
     group_fcm.add_argument('--FCMcenter_onlineKmeansBatchesLongTermWeight', type=float, default=None)
