@@ -11,7 +11,7 @@ python train.py --pathDB /pio/scratch/1/i283340/MGR/zs/ds2 \
 --schedulerRamp 10 --nPredicts 12 --CPCCTC --CPCCTCNumMatched 12 \
 --supervised_classif_metric \
 --speaker_sep --path_phone_data /pio/scratch/1/i283340/MGR/zs/phones/converted_aligned_phones.txt \
---linsepBatchSizeGPU 32 --linsep_n_epoch 1 \
+--linsepBatchSizeGPU 32 --linsep_n_epoch 1 --linsep_times 2 \
 --linsep_logs_dir /pio/gluster/i283340/cpcfcmtries/spam002/linsep/logs2-001 \
 --linsep_checkpoint_dir /pio/gluster/i283340/cpcfcmtries/spam002/linsep/checkp2-001 \
 --linsep_classif_each_epochs 2 \
@@ -20,7 +20,8 @@ python train.py --pathDB /pio/scratch/1/i283340/MGR/zs/ds2 \
 --FCMproject \
 --FCMprotos 50 --FCMpushLossWeightEnc 0.01 --FCMcenter_mode onlineKmeans --FCMcenter_onlineKmeansBatches 10 \
 --FCMcenter_initAfterEpoch 1 --FCMcenter_batchRecompute 6 --FCMpushLossCenterNorm --FCMpushLossPointNorm --FCMcenter_norm \
---FCMcenter_kmeansInitIters 10 --FCMcenter_kmeansInitBatches 50 --FCMcenter_kmeansReinitEachN 2 --FCMcenter_firstInitNoIters #\
+--FCMcenter_kmeansInitIters 10 --FCMcenter_kmeansInitBatches 50 --FCMcenter_kmeansReinitEachN 2 --FCMcenter_firstInitNoIters \
+--FCMpushLossNormReweight
 #--FCMcenter_onlineKmeansBatchesLongTerm 10 --FCMcenter_onlineKmeansBatchesLongTermWeight 0.001
 #  --FCMpushLossLinear #--FCMpushLossProtosMult 0.1 #--FCMpushLossCenterNorm # --FCMpushLossWeightCtx 0.0001 
 # --FCMprotos 50 --FCMpushLossLinear --FCMpushLossWeightEnc 0.0001 --FCMpushLossWeightCtx 0.0001

@@ -704,7 +704,8 @@ def main(args):
             "pushLossGradual": args.FCMpushLossGradual,
             "pushLossProtosMult": args.FCMpushLossProtosMult,
             "pushLossCenterNorm": args.FCMpushLossCenterNorm,
-            "pushLossPointNorm": args.FCMpushLossPointNorm
+            "pushLossPointNorm": args.FCMpushLossPointNorm,
+            "pushLossNormReweight": args.FCMpushLossNormReweight
             #"reprsConcatDontIncreaseARdim": args.FCMreprsConcatIncreaseARdim
         }
         # TODO: maybe better settings? or maybe ok
@@ -971,62 +972,65 @@ def main(args):
         print("linsep_val_loader ready")
 
         def runLinsepClassificationTraining(numOfEpoch, cpcMdl, cpcStateEpochs):
-            log_path_for_epoch = os.path.join(args.linsep_logs_dir, str(numOfEpoch))
-            if not os.path.exists(log_path_for_epoch):
-                os.makedirs(log_path_for_epoch)
-            log_path_phoneme = os.path.join(log_path_for_epoch, "phoneme/")
-            log_path_speaker = os.path.join(log_path_for_epoch, "speaker/")
-            if not os.path.exists(log_path_phoneme):
-                os.makedirs(log_path_phoneme)
-            if not os.path.exists(log_path_speaker):
-                os.makedirs(log_path_speaker)
-            if args.linsep_checkpoint_dir:
-                checpoint_path_for_epoch = os.path.join(args.linsep_checkpoint_dir, str(numOfEpoch))
-                checkpoint_path_phoneme = os.path.join(checpoint_path_for_epoch, "phoneme/")
-                checkpoint_path_speaker = os.path.join(checpoint_path_for_epoch, "speaker/")
-                if not os.path.exists(checkpoint_path_phoneme):
-                    os.makedirs(checkpoint_path_phoneme)
-                if not os.path.exists(checkpoint_path_speaker):
-                    os.makedirs(checkpoint_path_speaker)
             locLogsPhone = {}
             locLogsSpeaker = {}
-            if args.path_phone_data:
-                phone_criterion, phone_optimizer = constructPhoneCriterionAndOptimizer()
-                locLogsPhone = linsep.trainLinsepClassification(
-                    cpcMdl,
-                    centerModel,
-                    phone_criterion,  # combined with classification model before
-                    linsep_train_loader,
-                    linsep_val_loader,
-                    phone_optimizer,
-                    log_path_phoneme,
-                    args.linsep_task_logging_step,
-                    checkpoint_path_phoneme,
-                    args.linsep_n_epoch,
-                    cpcStateEpochs,
-                    'phone')
-                del phone_criterion
-                del phone_optimizer
-            if args.speaker_sep:
-                speaker_criterion, speaker_optimizer = constructSpeakerCriterionAndOptimizer()
-                locLogsSpeaker = linsep.trainLinsepClassification(
-                    cpcMdl,
-                    centerModel,
-                    speaker_criterion,  # combined with classification model before
-                    linsep_train_loader,
-                    linsep_val_loader,
-                    speaker_optimizer,
-                    log_path_speaker,
-                    args.linsep_task_logging_step,
-                    checkpoint_path_speaker,
-                    args.linsep_n_epoch,
-                    cpcStateEpochs,
-                    'speaker')
-                del speaker_criterion
-                del speaker_optimizer
+            for linsepNr in range(args.linsep_times):
+                log_path_for_epoch = os.path.join(args.linsep_logs_dir, str(numOfEpoch))
+                if not os.path.exists(log_path_for_epoch):
+                    os.makedirs(log_path_for_epoch)
+                log_path_phoneme = os.path.join(log_path_for_epoch, "phoneme_linsep"+str(linsepNr)+"/")
+                log_path_speaker = os.path.join(log_path_for_epoch, "speaker_linsep"+str(linsepNr)+"/")
+                if not os.path.exists(log_path_phoneme):
+                    os.makedirs(log_path_phoneme)
+                if not os.path.exists(log_path_speaker):
+                    os.makedirs(log_path_speaker)
+                if args.linsep_checkpoint_dir:
+                    checpoint_path_for_epoch = os.path.join(args.linsep_checkpoint_dir, str(numOfEpoch))
+                    checkpoint_path_phoneme = os.path.join(checpoint_path_for_epoch, "phoneme_linsep"+str(linsepNr)+"/")
+                    checkpoint_path_speaker = os.path.join(checpoint_path_for_epoch, "speaker_linsep"+str(linsepNr)+"/")
+                    if not os.path.exists(checkpoint_path_phoneme):
+                        os.makedirs(checkpoint_path_phoneme)
+                    if not os.path.exists(checkpoint_path_speaker):
+                        os.makedirs(checkpoint_path_speaker)
+                locLogsPhone = {}
+                locLogsSpeaker = {}
+                if args.path_phone_data:
+                    phone_criterion, phone_optimizer = constructPhoneCriterionAndOptimizer()
+                    locLogsPhone = linsep.trainLinsepClassification(
+                        cpcMdl,
+                        centerModel,
+                        phone_criterion,  # combined with classification model before
+                        linsep_train_loader,
+                        linsep_val_loader,
+                        phone_optimizer,
+                        log_path_phoneme,
+                        args.linsep_task_logging_step,
+                        checkpoint_path_phoneme,
+                        args.linsep_n_epoch,
+                        cpcStateEpochs,
+                        'phone')
+                    del phone_criterion
+                    del phone_optimizer
+                if args.speaker_sep:
+                    speaker_criterion, speaker_optimizer = constructSpeakerCriterionAndOptimizer()
+                    locLogsSpeaker = linsep.trainLinsepClassification(
+                        cpcMdl,
+                        centerModel,
+                        speaker_criterion,  # combined with classification model before
+                        linsep_train_loader,
+                        linsep_val_loader,
+                        speaker_optimizer,
+                        log_path_speaker,
+                        args.linsep_task_logging_step,
+                        checkpoint_path_speaker,
+                        args.linsep_n_epoch,
+                        cpcStateEpochs,
+                        'speaker')
+                    del speaker_criterion
+                    del speaker_optimizer
 
-            locLogsPhone = {"phone_" + k: v for k, v in locLogsPhone.items()}
-            locLogsSpeaker = {"speaker_" + k: v for k, v in locLogsSpeaker.items()}
+                locLogsPhone = {**locLogsPhone, **{"linsep"+str(linsepNr)+"_phone_" + k: v for k, v in locLogsPhone.items()}}
+                locLogsSpeaker = {**locLogsSpeaker, **{"linsep"+str(linsepNr)+"_speaker_" + k: v for k, v in locLogsSpeaker.items()}}
             return {**locLogsPhone, **locLogsSpeaker}
 
         linsepClassificationTaskConfig = (args.linsep_classif_each_epochs,
@@ -1141,6 +1145,8 @@ def parseArgs(argv):
         'Mode with computing additional supervised phoneme classification accuracy, withou influencing CPC training')
     group_supervised_metric.add_argument('--supervised_classif_metric',
                         action='store_true', help='Compute the metric')
+    group_supervised_metric.add_argument('--linsep_times',
+                        type=int, default=1, help='number of linseps (for result avg stability)')
     group_supervised_metric.add_argument('--speaker_sep', action='store_true',
                         help="If given, will"
                         " compute the speaker separability.")
@@ -1246,6 +1252,7 @@ def parseArgs(argv):
     group_fcm.add_argument('--FCMpushLossProtosMult', type=float, default=None)  # like VQ-VAE commitment loss
     group_fcm.add_argument('--FCMpushLossCenterNorm', action='store_true')
     group_fcm.add_argument('--FCMpushLossPointNorm', action='store_true')
+    group_fcm.add_argument('--FCMpushLossNormReweight', action='store_true')
 
     group_fcm.add_argument('--FCMcenter_mode', type=str, default=None)
     group_fcm.add_argument('--FCMcenter_initAfterEpoch', type=int, default=None)

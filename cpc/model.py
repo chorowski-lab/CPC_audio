@@ -334,6 +334,8 @@ class CPCModel(nn.Module):
             self.pushLossProtosMult = fcmSettings["pushLossProtosMult"]
             self.pushLossCenterNorm = fcmSettings["pushLossCenterNorm"]
             self.pushLossPointNorm = fcmSettings["pushLossPointNorm"]  # can be set only if centerNorm
+            self.pushLossNormReweight = fcmSettings["pushLossNormReweight"]
+            print("reweight:", self.pushLossNormReweight)
             if self.pushLossPointNorm:
                 assert self.pushLossCenterNorm
             self.reprsConcat = fcmSettings["reprsConcat"]
@@ -721,6 +723,8 @@ class CPCModel(nn.Module):
             else:
                 centers = centers / torch.clamp(centersLens.view(-1,1), min=1)
                 points = points / torch.clamp(pointsLens.view(*(points.shape[:-1]),1), min=1)
+                if self.pushLossNormReweight:  # for similar pushing weight as without norm
+                    pushLossWeight *= pointsLens.mean()
             # TODO if we make centers much shorter, encodings will just be pushed to 0, each similarly
 
             #pointLens2 = torch.sqrt(torch.clamp((points*points).sum(dim=-1), min=0)).mean()
