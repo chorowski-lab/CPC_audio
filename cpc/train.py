@@ -479,7 +479,7 @@ def run(trainDataset,
         # this performs linsep task for the best CPC model up to date
         if linsepEpochs is not None and epoch != 0 and epoch in linsepEpochs:
             # capturing for current CPC state after this epoch, relying on CPC internal accuracy is vague
-            locLogsLinsep = linsepFun(epoch, cpcModel, (epoch, nEpoch-1))
+            locLogsLinsep = linsepFun(epoch, cpcModel, centerModel, (epoch, nEpoch-1))
 
         print(f'Ran {epoch + 1} epochs '
             f'in {time.time() - start_time:.2f} seconds')
@@ -971,7 +971,7 @@ def main(args):
 
         print("linsep_val_loader ready")
 
-        def runLinsepClassificationTraining(numOfEpoch, cpcMdl, cpcStateEpochs):
+        def runLinsepClassificationTraining(numOfEpoch, cpcMdl, centerModel, cpcStateEpochs):
             locLogsPhone = {}
             locLogsSpeaker = {}
             for linsepNr in range(args.linsep_times):
@@ -1075,7 +1075,7 @@ def main(args):
     #               will use "last state" and not "best in internal CPC accuracy" anyway
         trainedEpoch = cpcEpochCompleted  #len(logs["epoch"]) - 1
         # runPhonemeClassificationTraining created above if args.supervised_classif_metric
-        runLinsepClassificationTraining(trainedEpoch, cpcModel, centerModel, trainedEpoch)
+        runLinsepClassificationTraining(trainedEpoch, cpcModel, centerModel, (trainedEpoch, args.nEpoch))
 
 
 def parseArgs(argv):

@@ -242,7 +242,7 @@ class CentroidModule(nn.Module):
         epoch, allEpochs = epochNrs
         if self.mode in ("reprInit", "onlineKmeans"):
             if epoch == self.initAfterEpoch or \
-                (self.kmeansReinitEachN and (epoch - self.initAfterEpoch) % self.kmeansReinitEachN == 0 and \
+                (epoch > self.initAfterEpoch and self.kmeansReinitEachN and (epoch - self.initAfterEpoch) % self.kmeansReinitEachN == 0 and \
                 (not self.kmeansReinitUpTo or epoch < self.kmeansReinitUpTo)):   
 
                 with torch.no_grad():
