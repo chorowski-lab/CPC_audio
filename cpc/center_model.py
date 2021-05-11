@@ -25,6 +25,7 @@ class CentroidModule(nn.Module):
         self.chosenKMeansBatches = []
         self.numCentroids = settings["numCentroids"]
         self.reprDim = settings["reprDim"]
+        self.numPhones = settings["numPhones"]
         self.mode = settings["mode"]
         if self.mode == "reprInit":
             self.initAfterEpoch = settings["initAfterEpoch"]
@@ -70,7 +71,7 @@ class CentroidModule(nn.Module):
             # inputsBatchUpdate, encodingsBatchUpdate are in turns, always
         
 
-    def encodingsBatchUpdate(self, batch, epochNrs, cpcModel):
+    def encodingsBatchUpdate(self, batch, epochNrs, cpcModel, label=None):
         epoch, totalEpochs = epochNrs
         batch = batch.clone().detach()
         if self.dsCountEpoch is None or self.dsCountEpoch == epoch:
@@ -139,7 +140,7 @@ class CentroidModule(nn.Module):
             closest = distsSq.argmin(-1)
 
             # add new batch data
-            batchSums, closestCounts = self.getBatchSums(batch, closest)
+            batchSums, closestCounts, labelCounts = self.getBatchSums(batch, closest, label=label)
             self.protoSums += batchSums
             self.protoCounts += closestCounts
             batchToRemember = self.last_input_batch.clone() if self.batchRecompute else None
@@ -180,6 +181,8 @@ class CentroidModule(nn.Module):
 
             self.currentGlobalBatch += 1
 
+            return {"labelCounts": labelCounts}
+
     def normLen(self, tens):
         # normalization, but not if very very short - to prevent problems during training
         tensLens = torch.sqrt(torch.clamp((tens*tens).sum(-1), min=0))
@@ -202,7 +205,7 @@ class CentroidModule(nn.Module):
             distsSq = torch.clamp(distsSq, min=0)
             #dists = torch.sqrt(distsSq)
             closest = distsSq.argmin(-1)
-            batchSums, closestCounts = self.getBatchSums(encoded_data, closest)
+            batchSums, closestCounts, _ = self.getBatchSums(encoded_data, closest)
             self.protoSums -= oldBatchSums
             self.protoCounts -= oldBatchCounts
             self.protoSums += batchSums
@@ -217,7 +220,7 @@ class CentroidModule(nn.Module):
 
             
             
-    def getBatchSums(self, batch, closest):
+    def getBatchSums(self, batch, closest, label=None):
         # batch B x n x dim
         # closest B x n
         batchExtended = torch.zeros(batch.shape[0], batch.shape[1], self.protos.shape[0], batch.shape[2], dtype=torch.float32).cuda()
@@ -230,14 +233,25 @@ class CentroidModule(nn.Module):
         indices, indicesCounts = torch.unique(closest, return_counts=True)
         closestCounts = torch.zeros(self.protos.shape[0], dtype=torch.float32).cuda()
         closestCounts[indices] += indicesCounts
-        return batchSums, closestCounts
+        if label is not None and self.numPhones:
+            labelsAssignment = torch.zeros(batch.shape[0], batch.shape[1], self.protos.shape[0], self.numPhones, dtype=torch.float32).cuda()
+            labelsAssignment[firstDim, secondDim, closest, label[firstDim,secondDim]] += 1
+            labelsSums = labelsAssignment.sum(dim=(0,1))
+            return batchSums, closestCounts, labelsSums
+        return batchSums, closestCounts, None
 
 
     def printLens(self):
         with torch.no_grad():
             print((self.protos*self.protos).sum(dim=-1))
             
-        
+    def getDM(self, epoch):
+        protosHere = self.centersForStuff(epoch)
+        if protosHere is None:
+            return None
+        DMsq = seDistancesToCentroidsCpy(protosHere, protosHere).view(protosHere.shape[0], protosHere.shape[0])
+        return torch.sqrt(torch.clamp(DMsq, min=0))
+
     def epochUpdate(self, epochNrs, cpcModel):  # after that epoch
         epoch, allEpochs = epochNrs
         if self.mode in ("reprInit", "onlineKmeans"):
@@ -286,7 +300,7 @@ class CentroidModule(nn.Module):
             #dists = torch.sqrt(distsSq)
             closest = distsSq.argmin(-1)
             # add new batch data
-            batchSums, closestCounts = self.getBatchSums(encoded_data, closest)
+            batchSums, closestCounts, _ = self.getBatchSums(encoded_data, closest)
             newCentersSums += batchSums
             newCentersCounts += closestCounts
         with torch.no_grad():  # just in case it tries to compute grad

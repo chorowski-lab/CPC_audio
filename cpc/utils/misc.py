@@ -56,6 +56,35 @@ def show_logs(text, logs):
             print("closest to protos:", ", ".join([str(x) for x in logs[key]]))
             continue
 
+        if key == "labelCounts":
+
+            cnt = torch.tensor(logs[key])
+            if cnt.shape[0] < 5 or cnt.shape[1] < 5:  # empty no-stats-yet data
+                continue
+            #print(cnt.shape,  cnt.sum(dim=1).view(-1,1).shape, cnt.sum(dim=0).view(1,-1).shape)
+            topForClusters = torch.topk(cnt / cnt.sum(dim=1).view(-1,1), 5, dim=1)
+            topForPhones = torch.topk(cnt / cnt.sum(dim=0).view(1,-1), 5, dim=0)
+
+            print("-> top occ for clusters in 0-1:")
+            for i in range(topForClusters.shape[0]):
+                print(", ".join(map(lambda a,b: str(a)+": "+str(b), zip(topForClusters[i].indices, topForClusters[i].values))))
+            print("-> top occ for phonemes in 0-1:")
+            for i in range(topForPhones.shape[0]):
+                print(", ".join(map(lambda a,b: str(a)+": "+str(b), zip(topForPhones[i].indices, topForPhones[i].values))))
+                
+
+            continue
+
+        if key == "centersDM":
+
+            DM = logs[key]
+            if DM.shape[0] < 5 or DM.shape[1] < 5:  # empty no-stats-yet data
+                continue
+            print("-> DM avg distances")
+            print(", ".join(map(lambda a,b,c: f"({a}-{b}): {c}", [(i, j, DM[i,j]) for i in range(DM.shape[0]) for j in range(i, DM.shape[1])])))
+
+            continue
+
         nPredicts = logs[key].shape[0]
 
         strSteps = ['Step'] + [str(s) for s in range(1, nPredicts + 1)]

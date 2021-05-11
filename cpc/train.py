@@ -155,8 +155,15 @@ def trainStep(dataLoader,
         if centerModel is not None:
             centerModel.inputsBatchUpdate(batchData, epochNrs, cpcModel)
         c_feature, encoded_data, label, pushLoss = cpcModel(batchData, label, givenCenters, epochNrs, False, False)
+        print("!!!!", label.shape)
         if centerModel is not None:
-            centerModel.encodingsBatchUpdate(encoded_data, epochNrs, cpcModel)
+            centerUpdateRes = centerModel.encodingsBatchUpdate(encoded_data, epochNrs, cpcModel, label=label)
+            if centerUpdateRes is None:
+                centerUpdateRes = {}
+            DM = centerModel.getDM(epochNr)
+        else:
+            centerUpdateRes = {}
+            DM = None
         # [!] baseEncDim returned (in tensor) if push loss
 
         if pushLoss is not None:  # else
@@ -214,6 +221,8 @@ def trainStep(dataLoader,
                 logs["grad_enc_push_train"] = np.zeros(1)
                 logs["grad_ctx_cpc_train"] = np.zeros(1)
                 logs["grad_ctx_push_train"] = np.zeros(1)
+        logs["labelCounts"] = np.zeros((1,1))
+        logs["centersDM"] = np.zeros((1,1))
         if "pushloss_closest" not in logs and pushLoss is not None:
             logs["pushloss_closest"] = np.zeros(closestCounts.shape[0])
 
@@ -221,13 +230,17 @@ def trainStep(dataLoader,
         logs["locLoss_train"] += (allCriterionLosses.mean(dim=0)).detach().cpu().numpy()
         logs["locAcc_train"] += (allAcc.mean(dim=0)).cpu().numpy()
         if pushLoss is not None:
-                # already detached previously
-                logs["grad_enc_cpc_train"] += nonpushgradenc.cpu().numpy()
-                logs["grad_enc_push_train"] += pushgradenc.cpu().numpy()
-                logs["grad_ctx_cpc_train"] += nonpushgradctx.cpu().numpy()
-                logs["grad_ctx_push_train"] += pushgradctx.cpu().numpy()
-                #print("!", logs["pushloss_closest"].shape, closestCounts.shape)
-                logs["pushloss_closest"] += closestCounts.detach().cpu().numpy()
+            # already detached previously
+            logs["grad_enc_cpc_train"] += nonpushgradenc.cpu().numpy()
+            logs["grad_enc_push_train"] += pushgradenc.cpu().numpy()
+            logs["grad_ctx_cpc_train"] += nonpushgradctx.cpu().numpy()
+            logs["grad_ctx_push_train"] += pushgradctx.cpu().numpy()
+            #print("!", logs["pushloss_closest"].shape, closestCounts.shape)
+            logs["pushloss_closest"] += closestCounts.detach().cpu().numpy()
+        if "labelCounts" in centerUpdateRes:
+            logs["labelCounts"] = centerUpdateRes["labelCounts"].detach().cpu().numpy() + logs["labelCounts"]
+        if DM is not None:
+            logs["centersDM"] = DM.detach().cpu().numpy() + logs["centersDM"]
 
         if (step + 1) % loggingStep == 0:
             new_time = time.perf_counter()
@@ -713,6 +726,7 @@ def main(args):
             "mode": args.FCMcenter_mode,
             "numCentroids": args.FCMprotos,
             "reprDim": args.hiddenEncoder,
+            "numPhones": nPhones,
             "initAfterEpoch": args.FCMcenter_initAfterEpoch,
             "firstInitNoIters": args.FCMcenter_firstInitNoIters,
             "kmeansInitIters": args.FCMcenter_kmeansInitIters,
