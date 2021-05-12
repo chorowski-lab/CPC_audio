@@ -19,9 +19,9 @@ python train.py --pathDB /pio/scratch/1/i283340/MGR/zs/ds2 \
 --nEpoch 4 \
 --FCMproject \
 --FCMprotos 50 --FCMpushLossWeightEnc 0.01 --FCMcenter_mode onlineKmeans --FCMcenter_onlineKmeansBatches 10 \
---FCMcenter_initAfterEpoch 1 --FCMcenter_batchRecompute 6 --FCMpushLossCenterNorm --FCMpushLossPointNorm --FCMcenter_norm \
+--FCMcenter_initAfterEpoch 1 --FCMcenter_batchRecompute 3 --FCMpushLossCenterNorm --FCMpushLossPointNorm --FCMcenter_norm \
 --FCMcenter_kmeansInitIters 10 --FCMcenter_kmeansInitBatches 50 --FCMcenter_kmeansReinitEachN 2 --FCMcenter_firstInitNoIters \
---FCMpushLossNormReweight
+--FCMpushLossNormReweight --overrideArgsFile
 #--FCMcenter_onlineKmeansBatchesLongTerm 10 --FCMcenter_onlineKmeansBatchesLongTermWeight 0.001
 #  --FCMpushLossLinear #--FCMpushLossProtosMult 0.1 #--FCMpushLossCenterNorm # --FCMpushLossWeightCtx 0.0001 
 # --FCMprotos 50 --FCMpushLossLinear --FCMpushLossWeightEnc 0.0001 --FCMpushLossWeightCtx 0.0001

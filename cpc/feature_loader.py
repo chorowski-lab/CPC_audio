@@ -97,7 +97,9 @@ def loadSupervisedCriterion(pathCheckpoint):
     return criterion, nPhones
 
 
-def getCheckpointData(pathDir):
+# used in many places, so setting noLoadPossible to True; if not present, 
+# and want to load, should crash in first main load in train
+def getCheckpointData(pathDir, noLoadPossible=True):
     if not os.path.isdir(pathDir):
         return None
     checkpoints = [x for x in os.listdir(pathDir)
@@ -109,8 +111,14 @@ def getCheckpointData(pathDir):
     checkpoints.sort(key=lambda x: int(os.path.splitext(x[11:])[0]))
     epochCompleted = int(os.path.splitext(checkpoints[-1][11:])[0])
     data = os.path.join(pathDir, checkpoints[-1])
-    with open(os.path.join(pathDir, 'checkpoint_logs.json'), 'rb') as file:
-        logs = json.load(file)
+    try:
+        with open(os.path.join(pathDir, 'checkpoint_logs.json'), 'rb') as file:
+            logs = json.load(file)
+    except Exception as e:
+        if not noLoadPossible:
+            raise e
+        print("WARNING: NO LOGS")
+        logs = {}
     
     # args_json = os.path.join(pathDir, 'checkpoint_args.json')
     # try:
@@ -121,8 +129,14 @@ def getCheckpointData(pathDir):
     #     print("WARNING: failed to load {args_json}: {e}")
     #     args = argparse.Namespace()
 
-    with open(os.path.join(pathDir, 'checkpoint_args.json'), 'rb') as file:
-        args = json.load(file)
+    try:
+        with open(os.path.join(pathDir, 'checkpoint_args.json'), 'rb') as file:
+            args = json.load(file)
+    except Exception as e:
+        if not noLoadPossible:
+            raise e
+        print("WARNING: NO ARGS")
+        args = {}
 
     args = argparse.Namespace(**args)
     defaultArgs = get_default_cpc_config()

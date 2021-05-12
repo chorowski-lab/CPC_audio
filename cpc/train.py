@@ -565,15 +565,16 @@ def main(args):
     # needed to move thing below later, as adding some args later
     #json.dump(vars(args), open(os.path.join(args.pathCheckpoint, 'checkpoint_args.json'), 'wt'))
     if args.pathCheckpoint is not None and not args.restart:
-        cdata = fl.getCheckpointData(args.pathCheckpoint)
+        cdata = fl.getCheckpointData(args.pathCheckpoint, noLoadPossible=args.overrideArgsFile)
         if cdata is not None:
             data, logs, locArgs, cpcEpochCompleted = cdata
             print(f"Checkpoint detected at {data}")
-            fl.loadArgs(args, locArgs,
-                        forbiddenAttr={"nGPU", "pathCheckpoint",
-                                       "debug", "restart", "world_size",
-                                       "n_nodes", "node_id", "n_gpu_per_node",
-                                       "max_size_loaded"})
+            if not args.overrideArgsFile:
+                fl.loadArgs(args, locArgs,
+                            forbiddenAttr={"nGPU", "pathCheckpoint",
+                                        "debug", "restart", "world_size",
+                                        "n_nodes", "node_id", "n_gpu_per_node",
+                                        "max_size_loaded"})
             args.load, loadOptimizer = [data], True
             args.loadCriterion = True
 
@@ -882,6 +883,7 @@ def main(args):
             scheduler = utils.SchedulerCombiner([scheduler_ramp, scheduler],
                                                 [0, args.schedulerRamp])
     if scheduler is not None:
+        print(f"DOING {len(range(cpcEpochCompleted + 1))} SCHEDULER STEPS")
         for i in range(cpcEpochCompleted + 1):  #len(logs["epoch"])):
             scheduler.step()
 
@@ -1245,6 +1247,7 @@ def parseArgs(argv):
     group_load.add_argument('--restart', action='store_true',
                             help="If any checkpoint is found, ignore it and "
                             "restart the training from scratch.")
+    group_load.add_argument('--overrideArgsFile', action='store_true', help="override args from config file with passed values")
 
     group_fcm = parser.add_argument_group("FCM")
     group_fcm.add_argument('--FCMproject', action='store_true')
