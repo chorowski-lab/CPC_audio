@@ -62,15 +62,18 @@ def show_logs(text, logs):
             if cnt.shape[0] < 5 or cnt.shape[1] < 5:  # empty no-stats-yet data
                 continue
             #print(cnt.shape,  cnt.sum(dim=1).view(-1,1).shape, cnt.sum(dim=0).view(1,-1).shape)
-            topForClusters = torch.topk(cnt / cnt.sum(dim=1).view(-1,1), 5, dim=1)
-            topForPhones = torch.topk(cnt / cnt.sum(dim=0).view(1,-1), 5, dim=0)
+            topForClusters = torch.topk(cnt / torch.clamp(cnt.sum(dim=1).view(-1,1), min=1), 5, dim=1)
+            topForPhones = torch.topk(cnt / torch.clamp(cnt.sum(dim=0).view(1,-1), min=1), 5, dim=0)
+            topForPhonesValues = topForPhones.values.transpose(0,1)
+            topForPhonesIndices = topForPhones.indices.transpose(0,1)
+            #print("::::::", cnt.shape, topForClusters.values.shape, topForPhones.values.shape)
 
-            print("-> top occ for clusters in 0-1:")
-            for i in range(topForClusters.shape[0]):
-                print(", ".join(map(lambda a,b: str(a)+": "+str(b), zip(topForClusters[i].indices, topForClusters[i].values))))
-            print("-> top occ for phonemes in 0-1:")
-            for i in range(topForPhones.shape[0]):
-                print(", ".join(map(lambda a,b: str(a)+": "+str(b), zip(topForPhones[i].indices, topForPhones[i].values))))
+            print("-----------> top occ for clusters in 0-1 format:")
+            for i in range(topForClusters.indices.shape[0]):
+                print(str(i), ":|", ", ".join(map(lambda a: str(a[0].item())+": "+str("{:.4f}".format(a[1].item())), zip(topForClusters.indices[i], topForClusters.values[i]))))
+            print("-----------> top occ for phonemes in 0-1 format:")
+            for i in range(topForPhonesIndices.shape[0]):
+                print(str(i), ":|", ", ".join(map(lambda a: str(a[0].item())+": "+str("{:.4f}".format(a[1].item())), zip(topForPhonesIndices[i], topForPhonesValues[i]))))
                 
 
             continue
@@ -80,8 +83,9 @@ def show_logs(text, logs):
             DM = logs[key]
             if DM.shape[0] < 5 or DM.shape[1] < 5:  # empty no-stats-yet data
                 continue
-            print("-> DM avg distances")
-            print(", ".join(map(lambda a,b,c: f"({a}-{b}): {c}", [(i, j, DM[i,j]) for i in range(DM.shape[0]) for j in range(i, DM.shape[1])])))
+            print(f"--------> DM avg distances, mean: {DM.mean()}")
+            print(", ".join(map(lambda a: f"({a[0]}-{a[1]}): {a[2]}", [(i, j, "{:.3e}".format(DM[i,j])) for i in range(DM.shape[0]) for j in range(i, DM.shape[1])])))
+            print("---")
 
             continue
 

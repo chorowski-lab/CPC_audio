@@ -133,6 +133,8 @@ def trainStep(dataLoader,
     for step, fulldata in enumerate(dataLoader):
         batchData, labelData = fulldata
         label = labelData['speaker']
+        labelPhone = labelData['phone']
+        #print("!!!", labelData.keys())
         n_examples += batchData.size(0)
         batchData = batchData.cuda(non_blocking=True)
         label = label.cuda(non_blocking=True)
@@ -155,9 +157,9 @@ def trainStep(dataLoader,
         if centerModel is not None:
             centerModel.inputsBatchUpdate(batchData, epochNrs, cpcModel)
         c_feature, encoded_data, label, pushLoss = cpcModel(batchData, label, givenCenters, epochNrs, False, False)
-        print("!!!!", label.shape)
+        #print("!!!!", label.shape)
         if centerModel is not None:
-            centerUpdateRes = centerModel.encodingsBatchUpdate(encoded_data, epochNrs, cpcModel, label=label)
+            centerUpdateRes = centerModel.encodingsBatchUpdate(encoded_data, epochNrs, cpcModel, label=labelPhone)
             if centerUpdateRes is None:
                 centerUpdateRes = {}
             DM = centerModel.getDM(epochNr)
