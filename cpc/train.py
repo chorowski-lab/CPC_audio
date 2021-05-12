@@ -223,8 +223,10 @@ def trainStep(dataLoader,
                 logs["grad_enc_push_train"] = np.zeros(1)
                 logs["grad_ctx_cpc_train"] = np.zeros(1)
                 logs["grad_ctx_push_train"] = np.zeros(1)
-        logs["labelCounts"] = np.zeros((1,1))
-        logs["centersDM"] = np.zeros((1,1))
+        if "labelCounts" not in logs and "labelCounts" in centerUpdateRes:
+            logs["labelCounts"] = np.zeros((1,1))
+        if "centersDM" not in logs and DM is not None:
+            logs["centersDM"] = np.zeros((1,1))
         if "pushloss_closest" not in logs and pushLoss is not None:
             logs["pushloss_closest"] = np.zeros(closestCounts.shape[0])
 
