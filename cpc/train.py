@@ -438,6 +438,11 @@ def run(trainDataset,
     bestAcc = 0
     bestStateDict = None
     start_time = time.time()
+
+    if "epoch" not in logs:
+        logs["epoch"] = []
+    while len(logs["epoch"]) < startEpoch:
+        logs["epoch"].append(None)
     
     captureDataset, captureOptions, captureStatsCollector = captureDatasetWithOptions
     linsepEpochsConfig, linsepFun = linsepClassificationTaskConfig
@@ -579,6 +584,10 @@ def main(args):
             args.loadCriterion = True
 
     logs["logging_step"] = args.logging_step
+    logs0 = {"epoch": [], "iter": [], "saveStep": args.save_step}
+    for k in logs0:
+        if k not in logs:
+            logs[k] = logs0[k]
 
     print(f'CONFIG:\n{json.dumps(vars(args), indent=4, sort_keys=True)}')
     print('-' * 50)
