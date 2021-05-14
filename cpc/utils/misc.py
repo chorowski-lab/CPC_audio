@@ -68,12 +68,30 @@ def show_logs(text, logs):
             topForPhonesIndices = topForPhones.indices.transpose(0,1)
             #print("::::::", cnt.shape, topForClusters.values.shape, topForPhones.values.shape)
 
+            topForClustersSums = torch.zeros(3, dtype=float)
+            topForClustersCounts = 0
+            topForPhonesSums = torch.zeros(3, dtype=float)
+            topForPhonesCounts = 0
             print("-----------> top occ for clusters in 0-1 format:")
             for i in range(topForClusters.indices.shape[0]):
                 print(str(i), ":|", ", ".join(map(lambda a: str(a[0].item())+": "+str("{:.4f}".format(a[1].item())), zip(topForClusters.indices[i], topForClusters.values[i]))))
+                if topForClusters.values[i][0] > 0.000001:  # non-zeroed cluster
+                    topForClustersCounts += 1
+                    for to in range(3):
+                        for where in range(to + 1):
+                            topForClustersSums[to] += topForClusters.values[i][where]
+            topForClustersSums /= topForClustersCounts
+            print(f"averages of top 1-3 sums for non-zeroed: top1 {topForClustersSums[0]}, top2 {topForClustersSums[1]}, top3 {topForClustersSums[2]}")
             print("-----------> top occ for phonemes in 0-1 format:")
             for i in range(topForPhonesIndices.shape[0]):
                 print(str(i), ":|", ", ".join(map(lambda a: str(a[0].item())+": "+str("{:.4f}".format(a[1].item())), zip(topForPhonesIndices[i], topForPhonesValues[i]))))
+                if topForPhonesValues[i][0] > 0.000001:  # non-zeroed cluster
+                    topForPhonesCounts += 1
+                    for to in range(3):
+                        for where in range(to + 1):
+                            topForPhonesSums[to] += topForPhonesValues[i][where]
+            topForPhonesSums /= topForPhonesCounts
+            print(f"averages of top 1-3 sums for non-zeroed: top1 {topForPhonesSums[0]}, top2 {topForPhonesSums[1]}, top3 {topForPhonesSums[2]}")
                 
 
             continue
