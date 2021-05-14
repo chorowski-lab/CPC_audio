@@ -70,6 +70,8 @@ def show_logs(text, logs):
 
             topForClustersSums = torch.zeros(3, dtype=float)
             topForClustersCounts = 0
+            topForClustersSumsNoPh0 = torch.zeros(3, dtype=float)
+            topForClustersCountsNoPh0 = 0
             topForPhonesSums = torch.zeros(3, dtype=float)
             topForPhonesCounts = 0
             print("-----------> top occ for clusters in 0-1 format:")
@@ -80,8 +82,15 @@ def show_logs(text, logs):
                     for to in range(3):
                         for where in range(to + 1):
                             topForClustersSums[to] += topForClusters.values[i][where]
+                    if topForClusters.indices[i][0] != 0:
+                        topForClustersCountsNoPh0 += 1
+                        for to in range(3):
+                            for where in range(to + 1):
+                                topForClustersSumsNoPh0[to] += topForClusters.values[i][where]
             topForClustersSums /= topForClustersCounts
-            print(f"averages of top 1-3 sums for non-zeroed: top1 {topForClustersSums[0]}, top2 {topForClustersSums[1]}, top3 {topForClustersSums[2]}")
+            topForClustersSumsNoPh0 /= topForClustersCountsNoPh0
+            print(f"averages of top 1-3 sums for non-zeroed ({topForClustersCounts} clusters): top1 {topForClustersSums[0]}, top2 {topForClustersSums[1]}, top3 {topForClustersSums[2]}")
+            print(f"averages of top 1-3 sums for non-zeroed non-ph-0 ({topForClustersCountsNoPh0} clusters): top1 {topForClustersSumsNoPh0[0]}, top2 {topForClustersSumsNoPh0[1]}, top3 {topForClustersSumsNoPh0[2]}")
             print("-----------> top occ for phonemes in 0-1 format:")
             for i in range(topForPhonesIndices.shape[0]):
                 print(str(i), ":|", ", ".join(map(lambda a: str(a[0].item())+": "+str("{:.4f}".format(a[1].item())), zip(topForPhonesIndices[i], topForPhonesValues[i]))))
@@ -91,7 +100,7 @@ def show_logs(text, logs):
                         for where in range(to + 1):
                             topForPhonesSums[to] += topForPhonesValues[i][where]
             topForPhonesSums /= topForPhonesCounts
-            print(f"averages of top 1-3 sums for non-zeroed: top1 {topForPhonesSums[0]}, top2 {topForPhonesSums[1]}, top3 {topForPhonesSums[2]}")
+            print(f"averages of top 1-3 sums for non-zeroed ({topForPhonesCounts}): top1 {topForPhonesSums[0]}, top2 {topForPhonesSums[1]}, top3 {topForPhonesSums[2]}")
                 
 
             continue
