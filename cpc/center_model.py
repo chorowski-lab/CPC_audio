@@ -223,23 +223,36 @@ class CentroidModule(nn.Module):
     def getBatchSums(self, batch, closest, label=None):
         # batch B x n x dim
         # closest B x n
-        batchExtended = torch.zeros(batch.shape[0], batch.shape[1], self.protos.shape[0], batch.shape[2], dtype=torch.float32).cuda()
-        firstDim = torch.arange(batch.shape[0]).repeat_interleave(batch.shape[1]).view(batch.shape[0], batch.shape[1])
+        ###batchExtended = torch.zeros(batch.shape[0], batch.shape[1], self.protos.shape[0], batch.shape[2], dtype=torch.float32).cuda()
+        ###firstDim = torch.arange(batch.shape[0]).repeat_interleave(batch.shape[1]).view(batch.shape[0], batch.shape[1])
         #print(firstDim)
-        secondDim = torch.arange(batch.shape[1]).repeat(batch.shape[0]).view(batch.shape[0], batch.shape[1])
+        ###secondDim = torch.arange(batch.shape[1]).repeat(batch.shape[0]).view(batch.shape[0], batch.shape[1])
         #print(batchExtended.dtype, batch.dtype)
-        batchExtended[firstDim, secondDim, closest, :] = batch
-        batchSums = batchExtended.sum(dim=(0,1))  #[closest] += batch  # only takes last value for index, pathetic
+        ###batchExtended[firstDim, secondDim, closest, :] = batch
+        ###batchSums = batchExtended.sum(dim=(0,1))  #[closest] += batch  # only takes last value for index, pathetic
+        batchSums = torch.zeros(self.protos.shape[0], batch.shape[2], dtype=torch.float32).cuda()
+        for i in range(self.protos.shape[0]):
+            batchSums[i] += batch[closest==i, :].sum(dim=(0))
         indices, indicesCounts = torch.unique(closest, return_counts=True)
         closestCounts = torch.zeros(self.protos.shape[0], dtype=torch.float32).cuda()
         closestCounts[indices] += indicesCounts
         if label is not None and self.numPhones:
-            labelsAssignment = torch.zeros(batch.shape[0], batch.shape[1], self.protos.shape[0], self.numPhones, dtype=torch.float32).cuda()
-            labelsAssignment[firstDim, secondDim, closest, label[firstDim,secondDim]] += 1
-            labelsSums = labelsAssignment.sum(dim=(0,1))
+            label = label.cuda()
+            ###labelsAssignment = torch.zeros(batch.shape[0], batch.shape[1], self.protos.shape[0], self.numPhones, dtype=torch.float32).cuda()
+            labelsSums = torch.zeros(self.protos.shape[0], self.numPhones, dtype=torch.float32).cuda()
+            ###labelsAssignment[firstDim, secondDim, closest, label[firstDim,secondDim]] += 1
+            for i in range(self.protos.shape[0]):
+                labelclosest = label[closest==i]
+                lindices, lindicesCounts = torch.unique(labelclosest, return_counts=True)
+                lclosestCounts = torch.zeros(self.numPhones, dtype=torch.float32).cuda()
+                lclosestCounts[lindices] += lindicesCounts
+                labelsSums[i] += lclosestCounts
+            ###labelsSums = labelsAssignment.sum(dim=(0,1))
             return batchSums, closestCounts, labelsSums
+        
         return batchSums, closestCounts, None
 
+        
 
     def printLens(self):
         with torch.no_grad():

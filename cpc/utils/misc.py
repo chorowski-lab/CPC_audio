@@ -107,6 +107,8 @@ def show_logs(text, logs):
 
         if key == "centersDM":
 
+            continue
+
             DM = logs[key]
             if DM.shape[0] < 5 or DM.shape[1] < 5:  # empty no-stats-yet data
                 continue
