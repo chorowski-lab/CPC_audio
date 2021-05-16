@@ -275,14 +275,17 @@ class CentroidModule(nn.Module):
                 (epoch > self.initAfterEpoch and self.kmeansReinitEachN and (epoch - self.initAfterEpoch) % self.kmeansReinitEachN == 0 and \
                 (not self.kmeansReinitUpTo or epoch < self.kmeansReinitUpTo)):   
 
-                self.currentGlobalBatch = 0  # to prevent pushing with incomplete means
-                # to remove info that will be invalid with new clusters
-                self.lastKmBatches = {}
-                self.longTermKmBatches = {}
-                if self.batchUpdateQ:
-                    self.batchUpdateQ.clear()
-
                 with torch.no_grad():
+
+                    self.currentGlobalBatch = 0  # to prevent pushing with incomplete means
+                    # to remove info that will be invalid with new clusters
+                    self.lastKmBatches = {}
+                    self.longTermKmBatches = {}
+                    self.protoCounts = torch.zeros(self.protos.shape[0], dtype=torch.float32).cuda()
+                    self.protoSums = torch.zeros((self.numCentroids, self.reprDim), dtype=torch.float32).cuda()
+                    if self.batchUpdateQ:
+                        self.batchUpdateQ.clear()
+
                     print("K-MEANS CENTERS REINIT FROM REPRESENTATIONS")
                     self.initKmeansCenters(epochNrs, cpcModel)  # initialize centroids
                     if self.kmeansInitBatches and (not self.firstInitNoIters or epoch != self.initAfterEpoch):
