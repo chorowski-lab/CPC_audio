@@ -96,25 +96,26 @@ def intTensorToSegmDict(tens):
     return dct
 
 def mergeStats(segmDictTens, label, numPhones):
-    label = label.cpu()
-    segmDict = intTensorToSegmDict(segmDictTens)
-    merges = torch.zeros(numPhones, numPhones, dtype=torch.float32).cpu()
-    counts = torch.zeros(numPhones, dtype=torch.float32).cpu()
-    for line, idxInLine in segmDict.keys():
-        line2, begin, end = segmDict[(line, idxInLine)]
-        labelsThere = list(map(lambda x: x.item(), label[line2, begin:(end+1)]))
-        for x in labelsThere:
-            counts[x] += 1
-            for y in labelsThere:
-                merges[x,y] += 1
-            merges[x,x] -= 1
-    return merges, counts
+    with torch.no_grad():
+        label = label.cpu()
+        segmDict = intTensorToSegmDict(segmDictTens)
+        merges = torch.zeros(numPhones, numPhones, dtype=torch.float32).cpu()
+        counts = torch.zeros(numPhones, dtype=torch.float32).cpu()
+        for line, idxInLine in segmDict.keys():
+            line2, begin, end = segmDict[(line, idxInLine)]
+            labelsThere = list(map(lambda x: x.item(), label[line2, begin:(end+1)]))
+            for x in labelsThere:
+                counts[x] += 1
+                for y in labelsThere:
+                    merges[x,y] += 1
+                merges[x,x] -= 1
+        return merges, counts
                 
 
 # [!] lines has to be a numpy array, np.sum() crashes if done on tensor
 def hierarchicalSegmentation(lines, padMask=None, k=None, minSegmsPerLine=None, mergePriority="se", centroids=None):  # k is sum of number of segments for all lines
     
-    t0 = time.time()
+    #--t0 = time.time()
 
     if mergePriority == "se":  # var not divided by size, square error
         segmentsDict = SegmentDict(lines, padMask=padMask, minSegmsPerLine=minSegmsPerLine,
@@ -260,152 +261,156 @@ class HierarchicalSegmentationLayer(Function):
     # k for strict num of segments (SUM FOR ALL LINES), allowKsumRange for range OF SUM OF SEGMENTS IN ALL LINES and choosing 'best' split point
     # min and max number of merges adjusted to what is possible - e.g. because of minSegmsPerLine
 
+        with torch.no_grad():
         #--t0 = time.time()
 
-        assert k is None or allowKsumRange is None  # mutually exclusive options
-        assert shorteningPolicy in ("shorten", "orig_len")  # orig_len+guess_orig is only at the higher level
-        assert roundingLossType in ("se", "var", "lin", "cos", None)
-        if roundingLossType == "se":  
-            roundingLossFun = seRoundingLoss  
-        elif roundingLossType == "var":  
-            roundingLossFun = varRoundingLoss 
-        elif roundingLossType == "lin":  
-            roundingLossFun = linRoundingLoss  
-        elif roundingLossType == "cos":
-            roundingLossFun = cosRoundingLoss  
-        else:
-            assert roundingLossType is None
-            roundingLossFun = None
-
-        # TODO if input only 2-dim, add another dimension possibly (W x H -> 1 x W x H, consistent with B x W x H - later assuming that in some places)
-
-        inputDevice = inputGPU.device
-        padMaskInputDevice = padMask.device if padMask is not None else False
-
-        # tensor to CPU  (don't really need copy, will just need to put tensors in segmentsDict)
-        input = inputGPU.detach().to('cpu').numpy()  
-        # https://discuss.pytorch.org/t/cant-convert-cuda-tensor-to-numpy-use-tensor-cpu-to-copy-the-tensor-to-host-memory-first/38301 ,
-        # https://discuss.pytorch.org/t/what-is-the-cpu-in-pytorch/15007/3
-
-        costInfo, merges, segmentsDict = hierarchicalSegmentation(input, padMask=padMask, k=k, minSegmsPerLine=minSegmsPerLine, mergePriority=mergePriority, centroids=centroids)  # won't modify input
-        _1, _2, varChanges = costInfo  
-        #print("MERGES0: ", merges)
-        if allowKsumRange:  # full merge done above, k=None, so each line now has minSegmsPerLine, but can also just get it from SegmDict - cleaner
-            begin, end = allowKsumRange
-            assert begin <= end
-            # [!] min and max number of merges adjusted to what is possible - e.g. because of minSegmsPerLine
-            beginIdx = max(0, min(len(varChanges) - 1, (segmentsDict.numSegments() + (len(varChanges) - 1) - end)))  # max allowed num of segments, smallest num of merges; input.shape[0] is num of segments if all merges done
-            endIdx = max(0, min(len(varChanges) - 1, (segmentsDict.numSegments() + (len(varChanges) - 1) - begin)))  # min allowed num of segments, biggest num of merges; input.shape[0] is num of segments if all merges done
-            #print("::::::::::", beginIdx, endIdx)
-            prefSums = []
-            s = 0.
-            for chng in varChanges:
-                s += chng
-                prefSums.append(s)
-            best = -1
-            where = -1
-            #print("PREFSUMS: ", prefSums)
-            for i in range(beginIdx, min(endIdx+1, len(varChanges))):
-                sufSum = s - prefSums[i]  # sum after this index
-                prefSum = prefSums[i] if prefSums[i] > 0. else .0000001  # don't div by 0
-                # v the bigger the better split point; suffix div by prefix averages of variance change
-                here = (sufSum / (len(varChanges)-i))  /  (prefSum / (i+1.))  
-                #print("!", i, ":", prefSum ,sufSum, here)
-                
-                if here > best:
-                    best = here
-                    where = i
-            if where == -1:
-                print("WARNING: problems choosing best num segments")
-                where = int((beginIdx + endIdx) // 2)
-            varChanges = varChanges[:where+1]  # this one is not really needed
-            merges = merges[:where+1]
-            
-        finalSegments, segmentNumsInLines = SegmentDict.getFinalSegments(merges, input.shape[:2], padMask=padMask)
-        #print("MERGES: ", merges)
-        #print("FINAL SEGMENTS: ", finalSegments)
-
-        #--t1 = time.time()
-
-        maxSegments = max(segmentNumsInLines)
-        
-        if shorteningPolicy == "shorten":
-            segmented = np.full((input.shape[0], maxSegments, input.shape[2]), 0.)  #torch.tensor(size=(input.shape[0], maxSegments, input.shape[2])).fill_(0.)
-            if padMask is not None:
-                paddingMaskOut = np.full((input.shape[0], maxSegments), False)  #torch.BoolTensor(size=(input.shape[0], maxSegments)).fill_(False)
-                for i, n in enumerate(segmentNumsInLines):
-                    paddingMaskOut[i][n:] = True
-                resPadMask = torch.BoolTensor(paddingMaskOut).to(padMaskInputDevice)
-        else:
-            segmented = np.full(input.shape, 0.)
-            if padMask is not None:
-                resPadMask = padMask
-        if padMask is None:
-            resPadMask = torch.zeros(1).to(inputDevice)
-        # can perhaps return a tensor with 1 at the beginning of the segments, -1 at the end, 0s elsewhere
-        segmentBorders = np.zeros((input.shape[0], input.shape[1]), dtype=np.int8)
-        roundingLoss = torch.tensor(0, dtype=torch.float32).requires_grad_(True).to(inputDevice)  # TODO dtype (?)
-        for line, idxInLine in finalSegments.keys():
-            line, begin, end = finalSegments[(line, idxInLine)]
-            if shorteningPolicy == "shorten":
-                segmented[line][idxInLine] = np.mean(input[line][begin:(end+1)], axis=0)  #torch.mean(input[line][begin:(end+1)])
+            assert k is None or allowKsumRange is None  # mutually exclusive options
+            assert shorteningPolicy in ("shorten", "orig_len")  # orig_len+guess_orig is only at the higher level
+            assert roundingLossType in ("se", "var", "lin", "cos", None)
+            if roundingLossType == "se":  
+                roundingLossFun = seRoundingLoss  
+            elif roundingLossType == "var":  
+                roundingLossFun = varRoundingLoss 
+            elif roundingLossType == "lin":  
+                roundingLossFun = linRoundingLoss  
+            elif roundingLossType == "cos":
+                roundingLossFun = cosRoundingLoss  
             else:
-                segmented[line][begin:(end+1)] = np.mean(input[line][begin:(end+1)], axis=0)
-            if roundingLossFun is not None:
-                roundingLoss += roundingLossFun(torch.mean(input[line][begin:(end+1)], dim=0), input[line][begin:(end+1)])
-            segmentBorders[line][end] = -1  
-            segmentBorders[line][begin] = 1  # [!] can be e.g. [...0, 0, 1, 1, ...] with segment of length 1 
-            # - marking begins when length 1 as * scaling doesn't need + (scale-1) there if logging only begins
+                assert roundingLossType is None
+                roundingLossFun = None
 
-        resOutput = torch.tensor(segmented, dtype=inputGPU.dtype).to(inputDevice)   #if wasInputOnGPU else torch.tensor(segmented)  #.requires_grad_(True)
-        # resPadMask created above, as for some reason torch.BoolTensor(paddingMaskOut).to(padMaskInputDevice) thrown an error if paddingMaskOut was a tensor on a correct device
-        segmentBorders = torch.IntTensor(segmentBorders).to(inputDevice)
+            # TODO if input only 2-dim, add another dimension possibly (W x H -> 1 x W x H, consistent with B x W x H - later assuming that in some places)
 
-        #print("********************", dir(ctx))
-        #[not really needed] ctx.save_for_backward(padMask, resPadMask)
-        # save_for_backward is only for tensors / variables / stuff
-        if shorteningPolicy == "shorten":
-            ctx.shortened = True
-        else:
-            ctx.shortened = False
-        ctx.finalSegments = finalSegments
-        ctx.segmentNumsInLines = segmentNumsInLines
-        ctx.inputShape = input.shape
-        ctx.mark_non_differentiable(resPadMask)  # can only pass torch variables here and only that makes sense
+            inputDevice = inputGPU.device
+            padMaskInputDevice = padMask.device if padMask is not None else False
 
-        #--t2 = time.time()
+            # tensor to CPU  (don't really need copy, will just need to put tensors in segmentsDict)
+            input = inputGPU.detach().to('cpu').numpy()  
+            # https://discuss.pytorch.org/t/cant-convert-cuda-tensor-to-numpy-use-tensor-cpu-to-copy-the-tensor-to-host-memory-first/38301 ,
+            # https://discuss.pytorch.org/t/what-is-the-cpu-in-pytorch/15007/3
 
-        #--print(f"hier segm time: merging {t1 - t0}, rest {t2 - t1}")
-        #--print(f"segments: {sum(segmentNumsInLines)}, {segmentNumsInLines}")
+        
+            costInfo, merges, segmentsDict = hierarchicalSegmentation(input, padMask=padMask, k=k, minSegmsPerLine=minSegmsPerLine, mergePriority=mergePriority, centroids=centroids)  # won't modify input
+            _1, _2, varChanges = costInfo  
+            #print("MERGES0: ", merges)
+            if allowKsumRange:  # full merge done above, k=None, so each line now has minSegmsPerLine, but can also just get it from SegmDict - cleaner
+                begin, end = allowKsumRange
+                assert begin <= end
+                # [!] min and max number of merges adjusted to what is possible - e.g. because of minSegmsPerLine
+                beginIdx = max(0, min(len(varChanges) - 1, (segmentsDict.numSegments() + (len(varChanges) - 1) - end)))  # max allowed num of segments, smallest num of merges; input.shape[0] is num of segments if all merges done
+                endIdx = max(0, min(len(varChanges) - 1, (segmentsDict.numSegments() + (len(varChanges) - 1) - begin)))  # min allowed num of segments, biggest num of merges; input.shape[0] is num of segments if all merges done
+                #print("::::::::::", beginIdx, endIdx)
+                prefSums = []
+                s = 0.
+                for chng in varChanges:
+                    s += chng
+                    prefSums.append(s)
+                best = -1
+                where = -1
+                #print("PREFSUMS: ", prefSums)
+                for i in range(beginIdx, min(endIdx+1, len(varChanges))):
+                    sufSum = s - prefSums[i]  # sum after this index
+                    prefSum = prefSums[i] if prefSums[i] > 0. else .0000001  # don't div by 0
+                    # v the bigger the better split point; suffix div by prefix averages of variance change
+                    here = (sufSum / (len(varChanges)-i))  /  (prefSum / (i+1.))  
+                    #print("!", i, ":", prefSum ,sufSum, here)
+                    
+                    if here > best:
+                        best = here
+                        where = i
+                if where == -1:
+                    print("WARNING: problems choosing best num segments")
+                    where = int((beginIdx + endIdx) // 2)
+                varChanges = varChanges[:where+1]  # this one is not really needed
+                merges = merges[:where+1]
+                
+            finalSegments, segmentNumsInLines = SegmentDict.getFinalSegments(merges, input.shape[:2], padMask=padMask)
+            #print("MERGES: ", merges)
+            #print("FINAL SEGMENTS: ", finalSegments)
 
-        #print("FINAL SEGMENTS: ", finalSegments, segmentNumsInLines)
+            #--t1 = time.time()
 
-        # with rounding loss None, will just return 0
-        return resOutput, resPadMask, segmentBorders, roundingLoss, segmDictToIntTensor(finalSegments)  #, finalSegments, segmentNumsInLines can only return torch variables... TODO maybe check how to fetch this info, but not sure if needed
+            maxSegments = max(segmentNumsInLines)
+            
+            if shorteningPolicy == "shorten":
+                segmented = np.full((input.shape[0], maxSegments, input.shape[2]), 0.)  #torch.tensor(size=(input.shape[0], maxSegments, input.shape[2])).fill_(0.)
+                if padMask is not None:
+                    paddingMaskOut = np.full((input.shape[0], maxSegments), False)  #torch.BoolTensor(size=(input.shape[0], maxSegments)).fill_(False)
+                    for i, n in enumerate(segmentNumsInLines):
+                        paddingMaskOut[i][n:] = True
+                    resPadMask = torch.BoolTensor(paddingMaskOut).to(padMaskInputDevice)
+            else:
+                segmented = np.full(input.shape, 0.)
+                if padMask is not None:
+                    resPadMask = padMask
+            if padMask is None:
+                resPadMask = torch.zeros(1).to(inputDevice)
+            # can perhaps return a tensor with 1 at the beginning of the segments, -1 at the end, 0s elsewhere
+            segmentBorders = np.zeros((input.shape[0], input.shape[1]), dtype=np.int8)
+            roundingLoss = torch.tensor(0, dtype=torch.float32).requires_grad_(True).cpu()  #.to(inputDevice)  # TODO dtype (?)
+            for line, idxInLine in finalSegments.keys():
+                line, begin, end = finalSegments[(line, idxInLine)]
+                if shorteningPolicy == "shorten":
+                    segmented[line][idxInLine] = np.mean(input[line][begin:(end+1)], axis=0)  #torch.mean(input[line][begin:(end+1)])
+                else:
+                    segmented[line][begin:(end+1)] = np.mean(input[line][begin:(end+1)], axis=0)
+                if roundingLossFun is not None:
+                    roundingLoss += roundingLossFun(torch.mean(input[line][begin:(end+1)], dim=0), input[line][begin:(end+1)])
+                segmentBorders[line][end] = -1  
+                segmentBorders[line][begin] = 1  # [!] can be e.g. [...0, 0, 1, 1, ...] with segment of length 1 
+                # - marking begins when length 1 as * scaling doesn't need + (scale-1) there if logging only begins
+
+            resOutput = torch.tensor(segmented, dtype=inputGPU.dtype).to(inputDevice)   #if wasInputOnGPU else torch.tensor(segmented)  #.requires_grad_(True)
+            # resPadMask created above, as for some reason torch.BoolTensor(paddingMaskOut).to(padMaskInputDevice) thrown an error if paddingMaskOut was a tensor on a correct device
+            segmentBorders = torch.IntTensor(segmentBorders).to(inputDevice)
+            roundingLoss = roundingLoss.to(inputDevice)
+
+            #print("********************", dir(ctx))
+            #[not really needed] ctx.save_for_backward(padMask, resPadMask)
+            # save_for_backward is only for tensors / variables / stuff
+            if shorteningPolicy == "shorten":
+                ctx.shortened = True
+            else:
+                ctx.shortened = False
+            ctx.finalSegments = finalSegments
+            ctx.segmentNumsInLines = segmentNumsInLines
+            ctx.inputShape = input.shape
+            ctx.mark_non_differentiable(resPadMask)  # can only pass torch variables here and only that makes sense
+
+            #--t2 = time.time()
+
+            #--print(f"hier segm time: merging {t1 - t0}, rest {t2 - t1}")
+            #--print(f"segments: {sum(segmentNumsInLines)}, {segmentNumsInLines}")
+
+            #print("FINAL SEGMENTS: ", finalSegments, segmentNumsInLines)
+
+            # with rounding loss None, will just return 0
+            return resOutput, resPadMask, segmentBorders, roundingLoss, segmDictToIntTensor(finalSegments)  #, finalSegments, segmentNumsInLines can only return torch variables... TODO maybe check how to fetch this info, but not sure if needed
 
     @staticmethod
     def backward(ctx, dxThrough, outPadMask=None, segmentBorders=None, roundingLoss=None, finalSegmentsAsTens=None):  #, finalSegments=None, segmentNumsInLines=None):
 
-        dxThroughDevice = dxThrough.device
+        with torch.no_grad():
+            dxThroughDevice = dxThrough.device
 
-        #[not really needed] paddingMask, paddingMaskOut = ctx.saved_tensors
-        dx = torch.empty(size=ctx.inputShape, dtype=dxThrough.dtype).fill_(0.).to('cpu')
+            #[not really needed] paddingMask, paddingMaskOut = ctx.saved_tensors
+            dx = torch.empty(size=ctx.inputShape, dtype=dxThrough.dtype).fill_(0.).to('cpu')
 
-        wasShortened = ctx.shortened
-        dxThrough = dxThrough.detach().cpu()
-        #print(f"was shortened: {wasShortened}")
+            wasShortened = ctx.shortened
+            dxThrough = dxThrough.detach().cpu()
+            #print(f"was shortened: {wasShortened}")
 
-        for line, idxInLine in ctx.finalSegments.keys():
-            line, begin, end = ctx.finalSegments[(line, idxInLine)]
-            #print("!", line, idxInLine, begin, end, dxThrough[line][idxInLine])
-            if wasShortened:
-                dx[line][begin:(end+1)] = dxThrough[line][idxInLine] / (end - begin + 1)
-            else:
-                dx[line][begin:(end+1)] = (dxThrough[line][begin:(end+1)].sum(dim=0)) / (end - begin + 1)
+            for line, idxInLine in ctx.finalSegments.keys():
+                line, begin, end = ctx.finalSegments[(line, idxInLine)]
+                #print("!", line, idxInLine, begin, end, dxThrough[line][idxInLine])
+                if wasShortened:
+                    dx[line][begin:(end+1)] = dxThrough[line][idxInLine] / (end - begin + 1)
+                else:
+                    dx[line][begin:(end+1)] = (dxThrough[line][begin:(end+1)].sum(dim=0)) / (end - begin + 1)
 
-        dx = dx.to(dxThroughDevice)
+            dx = dx.to(dxThroughDevice)
 
-        return dx, None, None, None, None, None, None, None, None
+            return dx, None, None, None, None, None, None, None, None
 
 
 class HierarchicalSegmentationRestoreLengthLayer(Function):
@@ -428,68 +433,69 @@ class HierarchicalSegmentationRestoreLengthLayer(Function):
     @staticmethod
     def forward(ctx, shortenedInputGPU, finalSegmentsAsTens): 
     
-        finalSegments = intTensorToSegmDict(finalSegmentsAsTens)
+        with torch.no_grad():
+            finalSegments = intTensorToSegmDict(finalSegmentsAsTens)
 
-        #TODO
-        # save finalSegments in ctx
-        ctx.finalSegments = finalSegments
-        # save input shape in ctx
-        ctx.shrinkedShape = shortenedInputGPU.shape
-        # similar as main-hier's backward
-        device = shortenedInputGPU.device  # this can have smaller dim than original thing
-        # NEED to restore original dim - done below v
-        originalLen = 0
-        for line, idxInLine in finalSegments.keys():
-            line, begin, end = finalSegments[(line, idxInLine)]
-            originalLen = max(originalLen, end+1)
+            #TODO
+            # save finalSegments in ctx
+            ctx.finalSegments = finalSegments
+            # save input shape in ctx
+            ctx.shrinkedShape = shortenedInputGPU.shape
+            # similar as main-hier's backward
+            device = shortenedInputGPU.device  # this can have smaller dim than original thing
+            # NEED to restore original dim - done below v
+            originalLen = 0
+            for line, idxInLine in finalSegments.keys():
+                line, begin, end = finalSegments[(line, idxInLine)]
+                originalLen = max(originalLen, end+1)
 
-        shortenedInput = shortenedInputGPU.detach().cpu()
+            shortenedInput = shortenedInputGPU.detach().cpu()
 
-        #[not really needed] paddingMask, paddingMaskOut = ctx.saved_tensors
-        restored = torch.zeros(size=(shortenedInput.shape[0], originalLen, shortenedInput.shape[2]), dtype=shortenedInput.dtype).to('cpu')
+            #[not really needed] paddingMask, paddingMaskOut = ctx.saved_tensors
+            restored = torch.zeros(size=(shortenedInput.shape[0], originalLen, shortenedInput.shape[2]), dtype=shortenedInput.dtype).to('cpu')
 
-        #wasShortened = ctx.shortened
+            #wasShortened = ctx.shortened
 
-        for line, idxInLine in finalSegments.keys():
-            line, begin, end = finalSegments[(line, idxInLine)]
-            #if wasShortened:  # TODO? for now only shortening mode
-            restored[line][begin:(end+1)] = shortenedInput[line][idxInLine] #/ (end - begin + 1)
-            #else:
-            #    dx[line][begin:(end+1)] = (dxThrough[line][begin:(end+1)].sum(dim=0)) / (end - begin + 1)
+            for line, idxInLine in finalSegments.keys():
+                line, begin, end = finalSegments[(line, idxInLine)]
+                #if wasShortened:  # TODO? for now only shortening mode
+                restored[line][begin:(end+1)] = shortenedInput[line][idxInLine] #/ (end - begin + 1)
+                #else:
+                #    dx[line][begin:(end+1)] = (dxThrough[line][begin:(end+1)].sum(dim=0)) / (end - begin + 1)
 
-        restored = restored.to(device)
+            restored = restored.to(device)
 
-        return restored  #, resPadMask, segmentBorders, roundingLoss, finalSegments  #, finalSegments, segmentNumsInLines can only return torch variables... TODO maybe check how to fetch this info, but not sure if needed
+            return restored  #, resPadMask, segmentBorders, roundingLoss, finalSegments  #, finalSegments, segmentNumsInLines can only return torch variables... TODO maybe check how to fetch this info, but not sure if needed
 
     @staticmethod
     def backward(ctx, dxThrough):  #, outPadMask=None, segmentBorders=None, roundingLoss=None, finalSegments=None):  #, finalSegments=None, segmentNumsInLines=None):
 
         #TODO
+        with torch.no_grad():
+            finalSegments = ctx.finalSegments
+            device = dxThrough.device  # this can have smaller dim than original thing
+            # NEED to restore original dim - done below v
+            shrinkedLen = 0
+            for line, idxInLine in finalSegments.keys():
+                #line, begin, end = finalSegments[(line, idxInLine)]
+                shrinkedLen = max(shrinkedLen, idxInLine+1)
 
-        finalSegments = ctx.finalSegments
-        device = dxThrough.device  # this can have smaller dim than original thing
-        # NEED to restore original dim - done below v
-        shrinkedLen = 0
-        for line, idxInLine in finalSegments.keys():
-            #line, begin, end = finalSegments[(line, idxInLine)]
-            shrinkedLen = max(shrinkedLen, idxInLine+1)
+            #[not really needed] paddingMask, paddingMaskOut = ctx.saved_tensors
+            dxThrough = dxThrough.detach().cpu()
+            reshrinkeddx = torch.zeros(size=ctx.shrinkedShape, dtype=dxThrough.dtype).to('cpu')
 
-        #[not really needed] paddingMask, paddingMaskOut = ctx.saved_tensors
-        dxThrough = dxThrough.detach().cpu()
-        reshrinkeddx = torch.zeros(size=ctx.shrinkedShape, dtype=dxThrough.dtype).to('cpu')
+            #wasShortened = ctx.shortened
 
-        #wasShortened = ctx.shortened
+            for line, idxInLine in finalSegments.keys():
+                line, begin, end = finalSegments[(line, idxInLine)]
+                #if wasShortened:
+                reshrinkeddx[line][idxInLine] = dxThrough[line][begin:(end+1)].sum(dim=0)  #/ (end - begin + 1)
+                #else:
+                #    dx[line][begin:(end+1)] = (dxThrough[line][begin:(end+1)].sum(dim=0)) / (end - begin + 1)
 
-        for line, idxInLine in finalSegments.keys():
-            line, begin, end = finalSegments[(line, idxInLine)]
-            #if wasShortened:
-            reshrinkeddx[line][idxInLine] = dxThrough[line][begin:(end+1)].sum(dim=0)  #/ (end - begin + 1)
-            #else:
-            #    dx[line][begin:(end+1)] = (dxThrough[line][begin:(end+1)].sum(dim=0)) / (end - begin + 1)
+            reshrinkeddx = reshrinkeddx.to(device)
 
-        reshrinkeddx = reshrinkeddx.to(device)
-
-        return reshrinkeddx, None
+            return reshrinkeddx, None
 
 
 if __name__ == '__main__':
