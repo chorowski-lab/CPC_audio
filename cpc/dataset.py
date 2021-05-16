@@ -24,7 +24,7 @@ class AudioBatchData(Dataset):
                  path,
                  sizeWindow,
                  seqNames,
-                 phoneLabelsDict,
+                 phoneLabelsData,
                  nSpeakers,
                  nProcessLoader=50,
                  MAX_SIZE_LOADED=4000000000):
@@ -56,6 +56,11 @@ class AudioBatchData(Dataset):
         self.prepare()
         self.speakers = list(range(nSpeakers))
         self.data = []
+
+        if phoneLabelsData is not None:
+            phoneLabelsDict, self.phoneNr = phoneLabelsData
+        else:
+            phoneLabelsDict, self.phoneNr = None, None
 
         self.phoneSize = 0 if phoneLabelsDict is None else \
             phoneLabelsDict["step"]
@@ -201,6 +206,8 @@ class AudioBatchData(Dataset):
         if self.phoneSize > 0:
             label_phone = torch.tensor(self.getPhonem(idx), dtype=torch.long)
             labelData['phone'] = label_phone
+            labelData['phoneNr'] = self.phoneNr
+            #print(f"################# DS phoneNr: {self.phoneNr}, label shape {labelData['phone'].shape}")
             # if not self.doubleLabels:
             #     label = label_phone
         # else:

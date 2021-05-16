@@ -23,6 +23,7 @@ import cpc.eval.linear_separability as linsep
 from cpc.cpc_default_config import set_default_cpc_config
 from cpc.dataset import AudioBatchData, findAllSeqs, filterSeqs, parseSeqLabels
 import cpc.stats.stat_utils as statutil
+from cpc.segm.hier_segm import mergeStats
 
 
 def getCriterion(args, downsampling, nSpeakers, nPhones):
@@ -156,7 +157,7 @@ def trainStep(dataLoader,
         # also, can't just check cpcModel.hasPushLoss as dataParallel makes it harder to access
         if centerModel is not None:
             centerModel.inputsBatchUpdate(batchData, epochNrs, cpcModel)
-        c_feature, encoded_data, label, pushLoss = cpcModel(batchData, label, givenCenters, epochNrs, False, False)
+        c_feature, encoded_data, label, pushLoss, segmDictTens = cpcModel(batchData, label, givenCenters, epochNrs, False, False)
         #print("!!!!", label.shape)
         if centerModel is not None:
             centerUpdateRes = centerModel.encodingsBatchUpdate(encoded_data, epochNrs, cpcModel, label=labelPhone)
@@ -229,6 +230,8 @@ def trainStep(dataLoader,
             logs["centersDM"] = np.zeros((1,1))
         if "pushloss_closest" not in logs and pushLoss is not None:
             logs["pushloss_closest"] = np.zeros(closestCounts.shape[0])
+        if "merge_stats_train" not in logs and segmDictTens is not None:
+            logs["merge_stats_train"] = np.zeros((1,1))
 
         iter += 1
         logs["locLoss_train"] += (allCriterionLosses.mean(dim=0)).detach().cpu().numpy()
@@ -245,6 +248,11 @@ def trainStep(dataLoader,
             logs["labelCounts"] = centerUpdateRes["labelCounts"].detach().cpu().numpy() + logs["labelCounts"]
         if DM is not None:
             logs["centersDM"] = DM.detach().cpu().numpy() + logs["centersDM"]
+        if segmDictTens is not None:
+            numPhones = labelData['phoneNr'][0].item()
+            #--print(f"-------->*************** train numPhones: {numPhones}, label shape {labelPhone.shape}")
+            mergesNums, _ = mergeStats(segmDictTens, labelPhone, numPhones)
+            logs["merge_stats_train"] = mergesNums.cpu().numpy() + logs["merge_stats_train"]
 
         if (step + 1) % loggingStep == 0:
             new_time = time.perf_counter()
@@ -290,6 +298,7 @@ def valStep(dataLoader,
 
         batchData, labelData = fulldata
         label = labelData['speaker']
+        labelPhone = labelData['phone']
 
         batchData = batchData.cuda(non_blocking=True)
         label = label.cuda(non_blocking=True)
@@ -299,16 +308,23 @@ def valStep(dataLoader,
             numGPUs = len(cpcModel.device_ids)
             if givenCenters is not None:
                 givenCenters = givenCenters.repeat(numGPUs,1)
-            c_feature, encoded_data, label, pushLoss = cpcModel(batchData, label, givenCenters, epochNrs, False, False)
+            c_feature, encoded_data, label, pushLoss, segmDictTens = cpcModel(batchData, label, givenCenters, epochNrs, False, False)
             allLosses, allAcc, _ = cpcCriterion(c_feature, encoded_data, label, None)
 
         if "locLoss_val" not in logs:
             logs["locLoss_val"] = np.zeros(allLosses.size(1))
             logs["locAcc_val"] = np.zeros(allLosses.size(1))
+        if "merge_stats_val" not in logs and segmDictTens is not None:
+            logs["merge_stats_val"] = np.zeros((1,1))
 
         iter += 1
         logs["locLoss_val"] += allLosses.mean(dim=0).cpu().numpy()
         logs["locAcc_val"] += allAcc.mean(dim=0).cpu().numpy()
+        if segmDictTens is not None:
+            numPhones = labelData['phoneNr'][0].item()
+            #print(f"-------->*************** val numPhones: {numPhones}")
+            mergesNums, _ = mergeStats(segmDictTens, labelPhone, numPhones)
+            logs["merge_stats_val"] = mergesNums.cpu().numpy() + logs["merge_stats_val"]
 
     logs = utils.update_logs(logs, iter)
     logs["iter"] = iter
@@ -372,7 +388,7 @@ def captureStep(
             numGPUs = len(cpcModel.device_ids)
             if givenCenters is not None:
                 givenCenters = givenCenters.repeat(numGPUs,1)
-            c_feature, encoded_data, labelSpeaker, _ = cpcModel(batchData, labelSpeaker, givenCenters, epochNrs, False, False)
+            c_feature, encoded_data, labelSpeaker, _, _ = cpcModel(batchData, labelSpeaker, givenCenters, epochNrs, False, False)
             allLosses, allAcc, captured = cpcCriterion(c_feature, encoded_data, labelSpeaker, cpcCaptureOpts)
         
             # saving it with IDs like that assumes deterministic order of elements
@@ -663,10 +679,11 @@ def main(args):
         print("")
         print(f'Loading audio data at {args.pathDB}')
         print("Loading the training dataset")
+        #print(f"############### NPHONES {nPhones}")
         trainDataset = AudioBatchData(args.pathDB,
                                     args.sizeWindow,
                                     seqTrain,
-                                    phoneLabels,
+                                    (phoneLabels, nPhones),
                                     len(speakers),
                                     nProcessLoader=args.n_process_loader,
                                     MAX_SIZE_LOADED=args.max_size_loaded)
@@ -677,7 +694,7 @@ def main(args):
         valDataset = AudioBatchData(args.pathDB,
                                     args.sizeWindow,
                                     seqVal,
-                                    phoneLabels,
+                                    (phoneLabels, nPhones),
                                     len(speakers),
                                     nProcessLoader=args.n_process_loader)
         print("Validation dataset loaded")
@@ -691,7 +708,7 @@ def main(args):
 
         if args.path_phone_data:
             print("Loading the phone labels at " + args.path_phone_data)
-            phoneLabelsForCapture, _ = parseSeqLabels(args.path_phone_data)
+            phoneLabelsForCapture, nPhonesCapture = parseSeqLabels(args.path_phone_data)
         else:
             assert not args.capturePhoneAlign
             phoneLabelsForCapture = None
@@ -700,7 +717,7 @@ def main(args):
         captureDataset = AudioBatchData(args.pathDB,
                                     args.sizeWindow,
                                     seqCapture,
-                                    phoneLabelsForCapture,
+                                    (phoneLabelsForCapture, nPhonesCapture),
                                     len(speakers),
                                     nProcessLoader=args.n_process_loader)
         print("Capture dataset loaded")
@@ -714,8 +731,9 @@ def main(args):
         captureDataset = None
         captureSetStatsCollector = None
 
-    if args.FCMproject:
+    if args.FCMsettings:
         fcmSettings = {
+            "FCMproject": args.FCMproject,
             "numProtos": args.FCMprotos, 
             "mBeforeAR": args.FCMmBeforeAR, 
             "leftProtos": args.FCMleaveProtos,
@@ -732,27 +750,32 @@ def main(args):
             "pushLossProtosMult": args.FCMpushLossProtosMult,
             "pushLossCenterNorm": args.FCMpushLossCenterNorm,
             "pushLossPointNorm": args.FCMpushLossPointNorm,
-            "pushLossNormReweight": args.FCMpushLossNormReweight
+            "pushLossNormReweight": args.FCMpushLossNormReweight,
+            "hierARshorten": args.FCMhierARshorten,
+            "hierARmergePrior": args.FCMhierARmergePrior
             #"reprsConcatDontIncreaseARdim": args.FCMreprsConcatIncreaseARdim
         }
         # TODO: maybe better settings? or maybe ok
-        centerInitSettings = {
-            "mode": args.FCMcenter_mode,
-            "numCentroids": args.FCMprotos,
-            "reprDim": args.hiddenEncoder,
-            "numPhones": nPhones,
-            "initAfterEpoch": args.FCMcenter_initAfterEpoch,
-            "firstInitNoIters": args.FCMcenter_firstInitNoIters,
-            "kmeansInitIters": args.FCMcenter_kmeansInitIters,
-            "kmeansInitBatches": args.FCMcenter_kmeansInitBatches,
-            "kmeansReinitEachN": args.FCMcenter_kmeansReinitEachN,
-            "kmeansReinitUpTo": args.FCMcenter_kmeansReinitUpTo,
-            "onlineKmeansBatches": args.FCMcenter_onlineKmeansBatches,
-            "onlineKmeansBatchesLongTerm": args.FCMcenter_onlineKmeansBatchesLongTerm,
-            "onlineKmeansBatchesLongTermWeight": args.FCMcenter_onlineKmeansBatchesLongTermWeight,
-            "centerNorm": args.FCMcenter_norm,
-            "batchRecompute": args.FCMcenter_batchRecompute
-        }
+        if args.FCMcentermodule:
+            centerInitSettings = {
+                "mode": args.FCMcenter_mode,
+                "numCentroids": args.FCMprotos,
+                "reprDim": args.hiddenEncoder,
+                "numPhones": nPhones,
+                "initAfterEpoch": args.FCMcenter_initAfterEpoch,
+                "firstInitNoIters": args.FCMcenter_firstInitNoIters,
+                "kmeansInitIters": args.FCMcenter_kmeansInitIters,
+                "kmeansInitBatches": args.FCMcenter_kmeansInitBatches,
+                "kmeansReinitEachN": args.FCMcenter_kmeansReinitEachN,
+                "kmeansReinitUpTo": args.FCMcenter_kmeansReinitUpTo,
+                "onlineKmeansBatches": args.FCMcenter_onlineKmeansBatches,
+                "onlineKmeansBatchesLongTerm": args.FCMcenter_onlineKmeansBatchesLongTerm,
+                "onlineKmeansBatchesLongTermWeight": args.FCMcenter_onlineKmeansBatchesLongTermWeight,
+                "centerNorm": args.FCMcenter_norm,
+                "batchRecompute": args.FCMcenter_batchRecompute
+            }
+        else:
+            centerInitSettings = None
         if args.FCMleaveProtos is not None and args.FCMleaveProtos > 0:
             assert args.FCMleaveProtos <= args.FCMprotos
             args.FCMprotosForCriterion = args.FCMleaveProtos
@@ -1260,6 +1283,7 @@ def parseArgs(argv):
 
     group_fcm = parser.add_argument_group("FCM")
     group_fcm.add_argument('--FCMproject', action='store_true')
+    group_fcm.add_argument('--FCMsettings', action='store_true')
     group_fcm.add_argument('--FCMprotos', type=int, default=50)
     group_fcm.add_argument('--FCMmBeforeAR', type=float, default=None)
     group_fcm.add_argument('--FCMleaveProtos', type=int, default=None)  # only makes sense for mBeforeAR
@@ -1283,7 +1307,10 @@ def parseArgs(argv):
     group_fcm.add_argument('--FCMpushLossCenterNorm', action='store_true')
     group_fcm.add_argument('--FCMpushLossPointNorm', action='store_true')
     group_fcm.add_argument('--FCMpushLossNormReweight', action='store_true')
+    group_fcm.add_argument('--FCMhierARshorten', type=float, default=None)  # how big length reduction to make
+    group_fcm.add_argument('--FCMhierARmergePrior', type=str, default="se")  # how big length reduction to make
 
+    group_fcm.add_argument('--FCMcentermodule', action='store_true')
     group_fcm.add_argument('--FCMcenter_mode', type=str, default=None)
     group_fcm.add_argument('--FCMcenter_initAfterEpoch', type=int, default=None)
     group_fcm.add_argument('--FCMcenter_firstInitNoIters', action='store_true')

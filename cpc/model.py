@@ -10,6 +10,10 @@ import torch
 
 import math
 
+import time
+
+from cpc.segm.hier_segm import HierarchicalSegmentationLayer, HierarchicalSegmentationRestoreLengthLayer
+
 ###########################################
 # Networks
 ###########################################
@@ -326,6 +330,9 @@ class CPCModel(nn.Module):
         self.doing_push_loss = False
         if self.fcm:
             self.fcmDebug = False   #True
+            self.fcmReal = fcmSettings["FCMproject"]
+            self.hierARshorten = fcmSettings["hierARshorten"]
+            self.hierARmergePrior = fcmSettings["hierARmergePrior"]
             # caution - need to set args.hiddenGar to same as args.FCMprotos
             self.pushLossWeightEnc = fcmSettings["pushLossWeightEnc"]
             self.pushLossWeightCtx = fcmSettings["pushLossWeightCtx"]
@@ -430,7 +437,7 @@ class CPCModel(nn.Module):
                 print('--------------------------------------forward fcmDebug')
                 print(f'baseEncDim {baseEncDim}')
                 print(f'epochNrs: {epochNrs}')
-            if self.fcm:
+            if self.fcmReal:
                 # could just invoke with some of those as None but this way it's more readable I guess
                 if self.reprsConcat and self.mBeforeAR is not None:
                     encodedDataM = self._FCMlikeBelong(encodedData, givenCenters, self.mBeforeAR, None)
@@ -474,10 +481,38 @@ class CPCModel(nn.Module):
             #print("!!", encodedData.shape)
             if self.fcmDebug:
                 print(f'enc data shape before AR: {encodedData.shape}')
-            cFeature = self.gAR(encodedData)
+            
+            encForCfeature = encodedData
+            if self.hierARshorten is not None:
+                #--t0 = time.time()
+                lengthSumToObtain = HierarchicalSegmentationLayer.getKforGivenShorteningAndShape(encodedData.shape, self.hierARshorten)
+                encForCfeature, _, _, _, segmDictTens = HierarchicalSegmentationLayer.apply(
+                    encodedData,
+                    None,
+                    lengthSumToObtain,
+                    None,  # could also have range here
+                    5,
+                    self.hierARmergePrior,
+                    "shorten",
+                    None,
+                    None
+                )
+                #--t1 = time.time()
+                #--print(f"hier 1 time: {t1 - t0}")
+                #--print(f"whape segmented: {encForCfeature.shape}")
+            else:
+                segmDictTens = None
+            cFeature = self.gAR(encForCfeature)
+            if self.hierARshorten is not None:  # TODO here or at the end, unsure
+                #--t0 = time.time()
+                cFeature = HierarchicalSegmentationRestoreLengthLayer.apply(cFeature, segmDictTens)
+                #--t1 = time.time()
+                #--print(f"hier 2 time: {t1 - t0}")
+                segmDictTens = segmDictTens.cuda()  # for return
+            
             if self.fcmDebug:
                 print(f'ctx data shape just after AR: {cFeature.shape}')
-            if self.fcm:
+            if self.fcmReal:
                 
                 B = cFeature.shape[0]
                 N = cFeature.shape[1]
@@ -647,7 +682,7 @@ class CPCModel(nn.Module):
 
             pushLoss = torch.full((1,), baseEncDim, dtype=int).cuda() if self.doing_push_loss else None
             
-            return cFeature, encodedData, label, pushLoss
+            return cFeature, encodedData, label, pushLoss, segmDictTens
 
         else:
 

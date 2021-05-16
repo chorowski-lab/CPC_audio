@@ -118,6 +118,21 @@ def show_logs(text, logs):
 
             continue
 
+        if key.startswith("merge_stats"):
+
+            cnt = torch.tensor(logs[key])
+            if cnt.shape[0] < 5 or cnt.shape[1] < 5:  # empty no-stats-yet data
+                continue
+
+            topLen = cnt.shape[0]  # for now just write all
+            topForPhones = torch.topk(cnt / torch.clamp(cnt.sum(dim=1).view(-1,1), min=1), topLen, dim=1)
+
+            print("-----------> top merges for phones in 0-1 format:")
+            for i in range(topForPhones.indices.shape[0]):
+                print(str(i), ":|", ", ".join(map(lambda a: str(a[0].item())+": "+str("{:.4f}".format(a[1].item())), zip(topForPhones.indices[i], topForPhones.values[i]))))
+
+            continue
+
         nPredicts = logs[key].shape[0]
 
         strSteps = ['Step'] + [str(s) for s in range(1, nPredicts + 1)]

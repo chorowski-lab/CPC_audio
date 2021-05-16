@@ -20,12 +20,14 @@ class CentroidModule(nn.Module):
         self.chosenExamples = None
         self.kmeansInitBatches = None  # will be set below if value given
         self.kmeansReinitEachN = None  # same as above
+        self.centerNorm = None # same
         #self.inBatch = 0
         self.chosenBatchInputs = []
         self.chosenKMeansBatches = []
         self.numCentroids = settings["numCentroids"]
         self.reprDim = settings["reprDim"]
         self.numPhones = settings["numPhones"]
+        #print(f"-------->*************** centermodel numPhones: {self.numPhones}")
         self.mode = settings["mode"]
         if self.mode == "reprInit":
             self.initAfterEpoch = settings["initAfterEpoch"]

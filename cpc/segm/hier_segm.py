@@ -4,6 +4,7 @@ import numpy as np
 from cpc.segm.segment_dict import *
 from heapq import *
 from torch.autograd import Function, Variable
+import time
 
 def variance(linearSum, squaresSum, size):
     return np.sum((squaresSum / size) - np.square(linearSum / size))  # sum of "variance mse vector"
@@ -81,6 +82,7 @@ def segmDictToIntTensor(segmDict):
     return tens
 
 def intTensorToSegmDict(tens):
+    tens = tens.cpu()
     dct = {}
     i = 0
     while i < tens.shape[0]:
@@ -93,9 +95,27 @@ def intTensorToSegmDict(tens):
         i += 5
     return dct
 
+def mergeStats(segmDictTens, label, numPhones):
+    label = label.cpu()
+    segmDict = intTensorToSegmDict(segmDictTens)
+    merges = torch.zeros(numPhones, numPhones, dtype=torch.float32).cpu()
+    counts = torch.zeros(numPhones, dtype=torch.float32).cpu()
+    for line, idxInLine in segmDict.keys():
+        line2, begin, end = segmDict[(line, idxInLine)]
+        labelsThere = list(map(lambda x: x.item(), label[line2, begin:(end+1)]))
+        for x in labelsThere:
+            counts[x] += 1
+            for y in labelsThere:
+                merges[x,y] += 1
+            merges[x,x] -= 1
+    return merges, counts
+                
+
 # [!] lines has to be a numpy array, np.sum() crashes if done on tensor
 def hierarchicalSegmentation(lines, padMask=None, k=None, minSegmsPerLine=None, mergePriority="se", centroids=None):  # k is sum of number of segments for all lines
     
+    t0 = time.time()
+
     if mergePriority == "se":  # var not divided by size, square error
         segmentsDict = SegmentDict(lines, padMask=padMask, minSegmsPerLine=minSegmsPerLine,
                                     segmStats = [lambda x: x, lambda x: np.square(x), lambda x: 1],  # for lengths 1
@@ -130,7 +150,7 @@ def hierarchicalSegmentation(lines, padMask=None, k=None, minSegmsPerLine=None, 
         assert False
 
     ###segmentsDict = SegmentDict(lines, padMask=padMask, minSegmsPerLine=minSegmsPerLine)
-    
+    #--t1 = time.time()
     # maybe will need to change this to arrays or so instead of dicts for efficiency
     
     # q for ranges to merge
@@ -162,6 +182,8 @@ def hierarchicalSegmentation(lines, padMask=None, k=None, minSegmsPerLine=None, 
 
     varChanges = []
     merges = []
+
+    #--t2 = time.time()
     
     while len(q) and (k is None or segmentsDict.numSegments() > k):  # will stop merging before k reached if minSegmsPerLine reached
     
@@ -200,6 +222,9 @@ def hierarchicalSegmentation(lines, padMask=None, k=None, minSegmsPerLine=None, 
             costDiff = costFun(statsMerged, stats2)  #linSumMerged, sqSumMerged, sizeMerged, linSum2, sqSum2, size2)
             heappush(q, (costDiff, merged, toRight))
             
+    #--t3 = time.time()
+    #--print(f"inside merging times: {t1-t0}, {t2-t1}, {t3-t2}")
+
     return (len1cost, costSum, varChanges), merges, segmentsDict
 
 class HierarchicalSegmentationLayer(Function):
@@ -234,6 +259,8 @@ class HierarchicalSegmentationLayer(Function):
         centroids=None): 
     # k for strict num of segments (SUM FOR ALL LINES), allowKsumRange for range OF SUM OF SEGMENTS IN ALL LINES and choosing 'best' split point
     # min and max number of merges adjusted to what is possible - e.g. because of minSegmsPerLine
+
+        #--t0 = time.time()
 
         assert k is None or allowKsumRange is None  # mutually exclusive options
         assert shorteningPolicy in ("shorten", "orig_len")  # orig_len+guess_orig is only at the higher level
@@ -298,6 +325,8 @@ class HierarchicalSegmentationLayer(Function):
         #print("MERGES: ", merges)
         #print("FINAL SEGMENTS: ", finalSegments)
 
+        #--t1 = time.time()
+
         maxSegments = max(segmentNumsInLines)
         
         if shorteningPolicy == "shorten":
@@ -323,7 +352,7 @@ class HierarchicalSegmentationLayer(Function):
             else:
                 segmented[line][begin:(end+1)] = np.mean(input[line][begin:(end+1)], axis=0)
             if roundingLossFun is not None:
-                roundingLoss += roundingLossFun(torch.mean(inputGPU[line][begin:(end+1)], dim=0), inputGPU[line][begin:(end+1)])
+                roundingLoss += roundingLossFun(torch.mean(input[line][begin:(end+1)], dim=0), input[line][begin:(end+1)])
             segmentBorders[line][end] = -1  
             segmentBorders[line][begin] = 1  # [!] can be e.g. [...0, 0, 1, 1, ...] with segment of length 1 
             # - marking begins when length 1 as * scaling doesn't need + (scale-1) there if logging only begins
@@ -344,6 +373,11 @@ class HierarchicalSegmentationLayer(Function):
         ctx.inputShape = input.shape
         ctx.mark_non_differentiable(resPadMask)  # can only pass torch variables here and only that makes sense
 
+        #--t2 = time.time()
+
+        #--print(f"hier segm time: merging {t1 - t0}, rest {t2 - t1}")
+        #--print(f"segments: {sum(segmentNumsInLines)}, {segmentNumsInLines}")
+
         #print("FINAL SEGMENTS: ", finalSegments, segmentNumsInLines)
 
         # with rounding loss None, will just return 0
@@ -358,6 +392,7 @@ class HierarchicalSegmentationLayer(Function):
         dx = torch.empty(size=ctx.inputShape, dtype=dxThrough.dtype).fill_(0.).to('cpu')
 
         wasShortened = ctx.shortened
+        dxThrough = dxThrough.detach().cpu()
         #print(f"was shortened: {wasShortened}")
 
         for line, idxInLine in ctx.finalSegments.keys():
@@ -408,15 +443,17 @@ class HierarchicalSegmentationRestoreLengthLayer(Function):
             line, begin, end = finalSegments[(line, idxInLine)]
             originalLen = max(originalLen, end+1)
 
+        shortenedInput = shortenedInputGPU.detach().cpu()
+
         #[not really needed] paddingMask, paddingMaskOut = ctx.saved_tensors
-        restored = torch.zeros(size=(shortenedInputGPU.shape[0], originalLen, shortenedInputGPU.shape[2]), dtype=shortenedInputGPU.dtype).to('cpu')
+        restored = torch.zeros(size=(shortenedInput.shape[0], originalLen, shortenedInput.shape[2]), dtype=shortenedInput.dtype).to('cpu')
 
         #wasShortened = ctx.shortened
 
         for line, idxInLine in finalSegments.keys():
             line, begin, end = finalSegments[(line, idxInLine)]
             #if wasShortened:  # TODO? for now only shortening mode
-            restored[line][begin:(end+1)] = shortenedInputGPU[line][idxInLine] #/ (end - begin + 1)
+            restored[line][begin:(end+1)] = shortenedInput[line][idxInLine] #/ (end - begin + 1)
             #else:
             #    dx[line][begin:(end+1)] = (dxThrough[line][begin:(end+1)].sum(dim=0)) / (end - begin + 1)
 
@@ -438,6 +475,7 @@ class HierarchicalSegmentationRestoreLengthLayer(Function):
             shrinkedLen = max(shrinkedLen, idxInLine+1)
 
         #[not really needed] paddingMask, paddingMaskOut = ctx.saved_tensors
+        dxThrough = dxThrough.detach().cpu()
         reshrinkeddx = torch.zeros(size=ctx.shrinkedShape, dtype=dxThrough.dtype).to('cpu')
 
         #wasShortened = ctx.shortened
