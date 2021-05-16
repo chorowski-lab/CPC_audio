@@ -161,6 +161,7 @@ def trainStep(dataLoader,
         #print("!!!!", label.shape)
         if centerModel is not None:
             centerUpdateRes = centerModel.encodingsBatchUpdate(encoded_data, epochNrs, cpcModel, label=labelPhone)
+            #print(f"!!! centerUpdate is None: {centerUpdateRes is None}")
             if centerUpdateRes is None:
                 centerUpdateRes = {}
             DM = centerModel.getDM(epochNr)

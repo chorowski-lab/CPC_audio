@@ -16,13 +16,13 @@ python train.py --pathDB /pio/scratch/1/i283340/MGR/zs/ds2 \
 --linsep_checkpoint_dir /pio/gluster/i283340/cpcfcmtries/spam002/linsep/checkp2-001 \
 --linsep_classif_each_epochs 2 \
 --pathCheckpoint /pio/gluster/i283340/cpcfcmtries/spam002/ \
---nEpoch 4 \
+--nEpoch 6 \
 --FCMsettings --FCMcentermodule \
---FCMprotos 50 --FCMpushLossWeightEnc 0.01 --FCMcenter_mode onlineKmeans --FCMcenter_onlineKmeansBatches 10 \
+--FCMprotos 50 --FCMpushLossWeightEnc 0.01 --FCMcenter_mode onlineKmeans --FCMcenter_onlineKmeansBatches 13 \
 --FCMcenter_initAfterEpoch 1 --FCMcenter_batchRecompute 3 --FCMpushLossCenterNorm --FCMpushLossPointNorm --FCMcenter_norm \
---FCMcenter_kmeansInitIters 10 --FCMcenter_kmeansInitBatches 50 --FCMcenter_kmeansReinitEachN 2 --FCMcenter_firstInitNoIters \
+--FCMcenter_kmeansInitIters 10 --FCMcenter_kmeansInitBatches 50 --FCMcenter_kmeansReinitEachN 2 \
 --FCMpushLossNormReweight --overrideArgsFile
-# --FCMproject
+# --FCMproject  --FCMcenter_firstInitNoIters \
 
 #--FCMcenter_onlineKmeansBatchesLongTerm 10 --FCMcenter_onlineKmeansBatchesLongTermWeight 0.001
 #  --FCMpushLossLinear #--FCMpushLossProtosMult 0.1 #--FCMpushLossCenterNorm # --FCMpushLossWeightCtx 0.0001 

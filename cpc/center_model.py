@@ -176,14 +176,15 @@ class CentroidModule(nn.Module):
 
             # re-average centroids
             with torch.no_grad():  # just in case it tries to compute grad
-                self.protos = self.protoSums / torch.clamp(self.protoCounts.view(-1,1), min=1)
+                if self.currentGlobalBatch >= self.keepBatches:
+                    self.protos = self.protoSums / torch.clamp(self.protoCounts.view(-1,1), min=1)
                 if self.centerNorm:
                     with torch.no_grad():
                         self.protos = self.normLen(self.protos)
 
             self.currentGlobalBatch += 1
 
-            return {"labelCounts": labelCounts}
+            return {"labelCounts": labelCounts} if self.currentGlobalBatch >= self.keepBatches else None
 
     def normLen(self, tens):
         # normalization, but not if very very short - to prevent problems during training
@@ -274,6 +275,13 @@ class CentroidModule(nn.Module):
                 (epoch > self.initAfterEpoch and self.kmeansReinitEachN and (epoch - self.initAfterEpoch) % self.kmeansReinitEachN == 0 and \
                 (not self.kmeansReinitUpTo or epoch < self.kmeansReinitUpTo)):   
 
+                self.currentGlobalBatch = 0  # to prevent pushing with incomplete means
+                # to remove info that will be invalid with new clusters
+                self.lastKmBatches = {}
+                self.longTermKmBatches = {}
+                if self.batchUpdateQ:
+                    self.batchUpdateQ.clear()
+
                 with torch.no_grad():
                     print("K-MEANS CENTERS REINIT FROM REPRESENTATIONS")
                     self.initKmeansCenters(epochNrs, cpcModel)  # initialize centroids
@@ -337,6 +345,7 @@ class CentroidModule(nn.Module):
 
         if self.mode == "onlineKmeans":
             # count starts after init, but more fireproof with epoch check
+            #print("!!!", self.initAfterEpoch, self.currentGlobalBatch)
             if epoch > self.initAfterEpoch and self.currentGlobalBatch >= self.keepBatches:
                 return self.protos
             else:
