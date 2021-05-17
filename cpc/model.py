@@ -328,6 +328,7 @@ class CPCModel(nn.Module):
         print(f'--------- FCM: {self.fcm} ----------')
         self.fcmDebug = False
         self.doing_push_loss = False
+        self.fcmReal = False
         if self.fcm:
             self.fcmDebug = False   #True
             self.fcmReal = fcmSettings["FCMproject"]
