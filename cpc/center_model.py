@@ -21,6 +21,9 @@ class CentroidModule(nn.Module):
         self.kmeansInitBatches = None  # will be set below if value given
         self.kmeansReinitEachN = None  # same as above
         self.centerNorm = None # same
+        self.batchUpdateQ = None  # same
+        self.protoCounts = None
+        self.protoSums = None
         #self.inBatch = 0
         self.chosenBatchInputs = []
         self.chosenKMeansBatches = []
@@ -283,7 +286,7 @@ class CentroidModule(nn.Module):
                     self.longTermKmBatches = {}
                     self.protoCounts = torch.zeros(self.protos.shape[0], dtype=torch.float32).cuda()
                     self.protoSums = torch.zeros((self.numCentroids, self.reprDim), dtype=torch.float32).cuda()
-                    if self.batchUpdateQ:
+                    if self.batchUpdateQ is not None:
                         self.batchUpdateQ.clear()
 
                     print("K-MEANS CENTERS REINIT FROM REPRESENTATIONS")
