@@ -89,8 +89,36 @@ def show_logs(text, logs):
                                 topForClustersSumsNoPh0[to] += topForClusters.values[i][where]
             topForClustersSums /= topForClustersCounts
             topForClustersSumsNoPh0 /= topForClustersCountsNoPh0
-            print(f"averages of top 1-3 sums for non-zeroed ({topForClustersCounts} clusters): top1 {topForClustersSums[0]}, top2 {topForClustersSums[1]}, top3 {topForClustersSums[2]}")
-            print(f"averages of top 1-3 sums for non-zeroed non-ph-0 ({topForClustersCountsNoPh0} clusters): top1 {topForClustersSumsNoPh0[0]}, top2 {topForClustersSumsNoPh0[1]}, top3 {topForClustersSumsNoPh0[2]}")
+            print(f"averages of top 1-3 sums for non-zeroed ({topForClustersCounts} clusters): "
+                    f"top1 {topForClustersSums[0]}, top2 {topForClustersSums[1]}, top3 {topForClustersSums[2]}")
+            print(f"averages of top 1-3 sums for non-zeroed non-ph-0 ({topForClustersCountsNoPh0} clusters): ",
+                    f"top1 {topForClustersSumsNoPh0[0]}, top2 {topForClustersSumsNoPh0[1]}, top3 {topForClustersSumsNoPh0[2]}")
+            if "pushloss_closest" in logs:
+                cntClust = logs["pushloss_closest"]
+                if cntClust.max() < 0.001:  # empty counts, no pushing yet
+                    continue
+                topForClustersSumsW = torch.zeros(3, dtype=float)
+                topForClustersCountsW = 0
+                topForClustersSumsNoPh0W = torch.zeros(3, dtype=float)
+                topForClustersCountsNoPh0W = 0
+                for i in range(topForClusters.indices.shape[0]):
+                    if topForClusters.values[i][0] > 0.000001:  # non-zeroed cluster
+                        topForClustersCountsW += cntClust[i]
+                        for to in range(3):
+                            for where in range(to + 1):
+                                topForClustersSumsW[to] += topForClusters.values[i][where] * cntClust[i]
+                        if topForClusters.indices[i][0] != 0:
+                            topForClustersCountsNoPh0W += 1
+                            for to in range(3):
+                                for where in range(to + 1):
+                                    topForClustersSumsNoPh0W[to] += topForClusters.values[i][where] * cntClust[i]
+                    topForClustersSumsW /= topForClustersCountsW
+                    topForClustersSumsNoPh0W /= topForClustersCountsNoPh0W
+                    print(f"cluster-assigned-phoneme-nr weighted averages of top 1-3 sums for non-zeroed ({topForClustersCounts} clusters): ",
+                            f"top1 {topForClustersSumsW[0]}, top2 {topForClustersSumsW[1]}, top3 {topForClustersSumsW[2]}")
+                    print(f"cluster-assigned-phoneme-nr weighted averages of top 1-3 sums for non-zeroed non-ph-0 ({topForClustersCountsNoPh0} clusters): "
+                            f"top1 {topForClustersSumsNoPh0W[0]}, top2 {topForClustersSumsNoPh0W[1]}, top3 {topForClustersSumsNoPh0W[2]}")
+            
             print("-----------> top occ for phonemes in 0-1 format:")
             for i in range(topForPhonesIndices.shape[0]):
                 print(str(i), ":|", ", ".join(map(lambda a: str(a[0].item())+": "+str("{:.4f}".format(a[1].item())), zip(topForPhonesIndices[i], topForPhonesValues[i]))))
@@ -101,6 +129,18 @@ def show_logs(text, logs):
                             topForPhonesSums[to] += topForPhonesValues[i][where]
             topForPhonesSums /= topForPhonesCounts
             print(f"averages of top 1-3 sums for non-zeroed ({topForPhonesCounts}): top1 {topForPhonesSums[0]}, top2 {topForPhonesSums[1]}, top3 {topForPhonesSums[2]}")
+            if "phones_train" in logs:
+                topForPhonesSumsW = torch.zeros(3, dtype=float)
+                topForPhonesCountsW = 0
+                phoneTrainCounts = logs["phones_train"]
+                for i in range(topForPhonesIndices.shape[0]):
+                    if topForPhonesValues[i][0] > 0.000001:  # non-zeroed phoneme
+                        topForPhonesCountsW += phoneTrainCounts[i]
+                        for to in range(3):
+                            for where in range(to + 1):
+                                topForPhonesSumsW[to] += topForPhonesValues[i][where] * phoneTrainCounts[i]
+                topForPhonesSumsW /= topForPhonesCountsW
+                print(f"phoneme-nr weighted averages of top 1-3 sums for non-zeroed ({topForPhonesCounts}): top1 {topForPhonesSumsW[0]}, top2 {topForPhonesSumsW[1]}, top3 {topForPhonesSumsW[2]}")
                 
 
             continue

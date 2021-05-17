@@ -139,6 +139,7 @@ def trainStep(dataLoader,
         n_examples += batchData.size(0)
         batchData = batchData.cuda(non_blocking=True)
         label = label.cuda(non_blocking=True)
+        labelPhone = labelPhone.cuda(non_blocking=True)
 
         #print("!!!", batchData.shape)
         # [!] ok, this has concatenated shape and later DataParallel splits it by 2
@@ -218,6 +219,7 @@ def trainStep(dataLoader,
         optimizer.zero_grad()
 
         if "locLoss_train" not in logs:
+            logs["phones_train"] = np.zeros(labelData['phoneNr'][0].item())
             logs["locLoss_train"] = np.zeros(allCriterionLosses.size(1))
             logs["locAcc_train"] = np.zeros(allCriterionLosses.size(1))
             if pushLoss is not None:
@@ -237,6 +239,10 @@ def trainStep(dataLoader,
         iter += 1
         logs["locLoss_train"] += (allCriterionLosses.mean(dim=0)).detach().cpu().numpy()
         logs["locAcc_train"] += (allAcc.mean(dim=0)).cpu().numpy()
+        phoneIndices, phoneIndicesCounts = torch.unique(labelPhone, return_counts=True)
+        phoneCounts = torch.zeros(logs["phones_train"].shape, dtype=torch.float32).cuda()
+        phoneCounts[phoneIndices] += phoneIndicesCounts
+        logs["phones_train"] += phoneCounts
         if pushLoss is not None:
             # already detached previously
             logs["grad_enc_cpc_train"] += nonpushgradenc.cpu().numpy()
