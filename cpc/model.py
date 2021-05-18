@@ -304,7 +304,6 @@ class CPCModelNullspace(nn.Module):
     def forward(self, batchData, label):
         cFeature, encodedData, label = self.cpc(batchData, label)
         cFeature = self.nullspace(cFeature)
-        encodedData = self.nullspace(encodedData)
         return cFeature, encodedData, label
 
 
