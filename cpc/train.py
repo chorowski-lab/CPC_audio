@@ -239,10 +239,10 @@ def trainStep(dataLoader,
         iter += 1
         logs["locLoss_train"] += (allCriterionLosses.mean(dim=0)).detach().cpu().numpy()
         logs["locAcc_train"] += (allAcc.mean(dim=0)).cpu().numpy()
-        phoneIndices, phoneIndicesCounts = torch.unique(labelPhone, return_counts=True)
+        phoneIndices, phoneIndicesCounts = torch.unique(labelPhone.detach(), return_counts=True)
         phoneCounts = torch.zeros(logs["phones_train"].shape, dtype=torch.float32).cuda()
         phoneCounts[phoneIndices] += phoneIndicesCounts
-        logs["phones_train"] += phoneCounts
+        logs["phones_train"] = logs["phones_train"] + phoneCounts.cpu().numpy()
         if pushLoss is not None:
             # already detached previously
             logs["grad_enc_cpc_train"] += nonpushgradenc.cpu().numpy()

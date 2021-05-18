@@ -329,6 +329,7 @@ class CPCModel(nn.Module):
         self.fcmDebug = False
         self.doing_push_loss = False
         self.fcmReal = False
+        self.hierARshorten = None  # will be set below if needed; otherwise need to set None
         if self.fcm:
             self.fcmDebug = False   #True
             self.fcmReal = fcmSettings["FCMproject"]
