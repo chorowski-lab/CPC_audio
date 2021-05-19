@@ -158,7 +158,7 @@ def trainStep(dataLoader,
         # also, can't just check cpcModel.hasPushLoss as dataParallel makes it harder to access
         if centerModel is not None:
             centerModel.inputsBatchUpdate(batchData, epochNrs, cpcModel)
-        c_feature, encoded_data, label, pushLoss, segmDictTens = cpcModel(batchData, label, givenCenters, epochNrs, False, False)
+        c_feature, encoded_data, pure_enc, label, pushLoss, segmDictTens = cpcModel(batchData, label, None, None, givenCenters, epochNrs, False, False)
         #print("!!!!", label.shape)
         if centerModel is not None:
             centerUpdateRes = centerModel.encodingsBatchUpdate(encoded_data, epochNrs, cpcModel, label=labelPhone)
@@ -174,15 +174,15 @@ def trainStep(dataLoader,
         if pushLoss is not None:  # else
             baseEncDim = pushLoss[0].item()
             c_feature1 = c_feature.clone()
-            encoded_data1 = encoded_data.clone()
+            #encoded_data1 = encoded_data.clone()
             c_feature2 = c_feature.clone()
-            encoded_data2 = encoded_data.clone()
+            encoded_data2 = pure_enc #encoded_data.clone()
             c_feature = c_feature1
-            encoded_data = encoded_data1
-            pushLoss, closestCountsDataPar = \
-                cpcModel(c_feature2, encoded_data2, givenCenters, epochNrs, True, False)
+            #encoded_data = encoded_data1
+            pushLoss, closestCountsDataPar, c_feature, encoded_data = \
+                cpcModel(c_feature, encoded_data, c_feature2, encoded_data2, givenCenters, epochNrs, True, False)
             closestCounts = closestCountsDataPar.sum(dim=0).view(-1)
-            c_feature.retain_grad()
+            c_feature.retain_grad()  # grad can be retained after possible VQ-VAE, as grad is copied anyway with detach-some-stuff trick
             c_feature2.retain_grad()
             encoded_data.retain_grad()
             encoded_data2.retain_grad()
@@ -315,7 +315,7 @@ def valStep(dataLoader,
             numGPUs = len(cpcModel.device_ids)
             if givenCenters is not None:
                 givenCenters = givenCenters.repeat(numGPUs,1)
-            c_feature, encoded_data, label, pushLoss, segmDictTens = cpcModel(batchData, label, givenCenters, epochNrs, False, False)
+            c_feature, encoded_data, pure_enc, label, pushLoss, segmDictTens = cpcModel(batchData, label, None, None, givenCenters, epochNrs, False, False)
             allLosses, allAcc, _ = cpcCriterion(c_feature, encoded_data, label, None)
 
         if "locLoss_val" not in logs:
@@ -395,7 +395,7 @@ def captureStep(
             numGPUs = len(cpcModel.device_ids)
             if givenCenters is not None:
                 givenCenters = givenCenters.repeat(numGPUs,1)
-            c_feature, encoded_data, labelSpeaker, _, _ = cpcModel(batchData, labelSpeaker, givenCenters, epochNrs, False, False)
+            c_feature, encoded_data, pure_enc, labelSpeaker, _, _ = cpcModel(batchData, labelSpeaker, None, None, givenCenters, epochNrs, False, False)
             allLosses, allAcc, captured = cpcCriterion(c_feature, encoded_data, labelSpeaker, cpcCaptureOpts)
         
             # saving it with IDs like that assumes deterministic order of elements
@@ -752,6 +752,11 @@ def main(args):
             "reprsConcatNormSumsNotLengths": args.FCMreprsConcatNormSumsNotLengths,
             "pushLossWeightEnc": args.FCMpushLossWeightEnc,
             "pushLossWeightCtx": args.FCMpushLossWeightCtx,
+            "VQpushEncCenterWeightOnTopConv": args.FCMVQpushEncCenterWeightOnTopConv,
+            "VQpushEncCenterWeightOnlyAR": args.FCMVQpushEncCenterWeightOnlyAR,
+            "VQpushEncCenterWeightOnlyCriterion": args.FCMVQpushEncCenterWeightOnlyCriterion,
+            "VQgradualStart": args.FCMVQgradualStart,
+            "VQpushCtxCenterWeight": args.FCMVQpushCtxCenterWeight,
             "pushLossLinear": args.FCMpushLossLinear,
             "pushLossGradual": args.FCMpushLossGradual,
             "pushLossProtosMult": args.FCMpushLossProtosMult,
@@ -1307,6 +1312,11 @@ def parseArgs(argv):
     #group_fcm.add_argument('--FCMreprsConcatDontIncreaseARdim', action='store_true')
     group_fcm.add_argument('--FCMpushLossWeightEnc', type=float, default=None)  # not really FCM part but well
     group_fcm.add_argument('--FCMpushLossWeightCtx', type=float, default=None)  # not really FCM part but well
+    group_fcm.add_argument('--FCMVQpushEncCenterWeightOnTopConv', type=float, default=None)  # not really FCM part but well
+    group_fcm.add_argument('--FCMVQpushEncCenterWeightOnlyAR', type=float, default=None)  # not really FCM part but well
+    group_fcm.add_argument('--FCMVQpushEncCenterWeightOnlyCriterion', type=float, default=None)  # not really FCM part but well
+    group_fcm.add_argument('--FCMVQpushCtxCenterWeight', type=float, default=None)  # not really FCM part but well
+    group_fcm.add_argument('--FCMVQgradualStart', type=int, default=None)  # not really FCM part but well
     # TODO think about adding linear loss option, but don't think makes too much sense?
     group_fcm.add_argument('--FCMpushLossLinear', action='store_true')
     group_fcm.add_argument('--FCMpushLossGradual', action='store_true')  # increase loss weight from 0 * x to 1 * x through the training

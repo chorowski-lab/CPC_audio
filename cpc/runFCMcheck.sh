@@ -21,7 +21,7 @@ python train.py --pathDB /pio/scratch/1/i283340/MGR/zs/ds2 \
 --FCMprotos 50 --FCMpushLossWeightEnc 0.01 --FCMcenter_mode onlineKmeans --FCMcenter_onlineKmeansBatches 13 \
 --FCMcenter_initAfterEpoch 1 --FCMcenter_batchRecompute 3 --FCMpushLossCenterNorm --FCMpushLossPointNorm --FCMcenter_norm \
 --FCMcenter_kmeansInitIters 10 --FCMcenter_kmeansInitBatches 50 --FCMcenter_kmeansReinitEachN 2 \
---FCMpushLossNormReweight --overrideArgsFile
+--FCMpushLossNormReweight --FCMVQpushEncCenterWeightOnTopConv 0.1 --overrideArgsFile
 # --FCMproject  --FCMcenter_firstInitNoIters \
 
 #--FCMcenter_onlineKmeansBatchesLongTerm 10 --FCMcenter_onlineKmeansBatchesLongTermWeight 0.001

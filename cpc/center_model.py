@@ -202,7 +202,7 @@ class CentroidModule(nn.Module):
                 continue  # old batch out of window, no update
             oldBatchSums, oldBatchCounts, batch = self.lastKmBatches[batchNr]
             with torch.no_grad():
-                encoded_data = cpcModel(batch, None, None, epochNrs, False, True)
+                encoded_data = cpcModel(batch, None, None, None, None, epochNrs, False, True)
             if self.centerNorm:
                 encoded_data = self.normLen(encoded_data) 
                 with torch.no_grad():
@@ -299,7 +299,7 @@ class CentroidModule(nn.Module):
 
                 # for i, (batchData, lineNr, lineOffset) in enumerate(self.chosenBatchInputs):
                 #     with torch.no_grad():
-                #         encoded_data = cpcModel(batchData, None, None, epochNrs, False, True)  # c_feature, encoded_data, label, pushLoss
+                #         encoded_data = cpcModel(batchData, None, None, None, None, epochNrs, False, True)  # c_feature, encoded_data, label, pushLoss
                 #         self.protos[i] = encoded_data[lineNr,lineOffset]
                 #         print(f"--> EXAMPLE #{i}: sqlen {(self.protos[i]*self.protos[i]).sum(-1)}")  #"; {self.protos[i]}")
 
@@ -307,7 +307,7 @@ class CentroidModule(nn.Module):
     def initKmeansCenters(self, epochNrs, cpcModel):
         for i, (batchData, lineNr, lineOffset) in enumerate(self.chosenBatchInputs):
             with torch.no_grad():
-                encoded_data = cpcModel(batchData, None, None, epochNrs, False, True)  # c_feature, encoded_data, label, pushLoss
+                encoded_data = cpcModel(batchData, None, None, None, None, epochNrs, False, True)  # c_feature, encoded_data, label, pushLoss
                 self.protos[i] = encoded_data[lineNr,lineOffset]
                 # [!!!] here it's not normed, it's normed before any distance operation or before giving it outside
                 print(f"--> EXAMPLE #{i}: sqlen {(self.protos[i]*self.protos[i]).sum(-1)}")  #"; {self.protos[i]}")
@@ -319,7 +319,7 @@ class CentroidModule(nn.Module):
         newCentersCounts = torch.zeros(self.protos.shape[0], dtype=torch.float32).cuda()
         print(f"ACTUAL BATCHES for k-means init epoch: {len(self.chosenKMeansBatches)}")
         for i, batch in enumerate(self.chosenKMeansBatches):
-            encoded_data = cpcModel(batch, None, None, epochNrs, False, True)
+            encoded_data = cpcModel(batch, None, None, None, None, epochNrs, False, True)
             if self.centerNorm:
                 encoded_data = self.normLen(encoded_data) 
                 with torch.no_grad():
