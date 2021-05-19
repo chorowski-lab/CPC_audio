@@ -758,7 +758,7 @@ def main(args):
             "VQgradualStart": args.FCMVQgradualStart,
             "VQpushCtxCenterWeight": args.FCMVQpushCtxCenterWeight,
             "pushLossLinear": args.FCMpushLossLinear,
-            "pushLossGradual": args.FCMpushLossGradual,
+            "pushLossGradualStart": args.FCMpushLossGradualStart,
             "pushLossProtosMult": args.FCMpushLossProtosMult,
             "pushLossCenterNorm": args.FCMpushLossCenterNorm,
             "pushLossPointNorm": args.FCMpushLossPointNorm,
@@ -1319,7 +1319,7 @@ def parseArgs(argv):
     group_fcm.add_argument('--FCMVQgradualStart', type=int, default=None)  # not really FCM part but well
     # TODO think about adding linear loss option, but don't think makes too much sense?
     group_fcm.add_argument('--FCMpushLossLinear', action='store_true')
-    group_fcm.add_argument('--FCMpushLossGradual', action='store_true')  # increase loss weight from 0 * x to 1 * x through the training
+    group_fcm.add_argument('--FCMpushLossGradualStart', type=int, default=None)  # increase loss weight from 0 * x at chosen start epoch to 1 * x through the training
     group_fcm.add_argument('--FCMpushLossProtosMult', type=float, default=None)  # like VQ-VAE commitment loss
     group_fcm.add_argument('--FCMpushLossCenterNorm', action='store_true')
     group_fcm.add_argument('--FCMpushLossPointNorm', action='store_true')

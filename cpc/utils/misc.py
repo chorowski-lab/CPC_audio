@@ -87,8 +87,8 @@ def show_logs(text, logs):
                         for to in range(3):
                             for where in range(to + 1):
                                 topForClustersSumsNoPh0[to] += topForClusters.values[i][where]
-            topForClustersSums /= topForClustersCounts
-            topForClustersSumsNoPh0 /= topForClustersCountsNoPh0
+            topForClustersSums /= max(topForClustersCounts, 0.00000000001)
+            topForClustersSumsNoPh0 /= max(topForClustersCountsNoPh0, 0.00000000001)
             print(f"averages of top 1-3 sums for non-zeroed ({topForClustersCounts} clusters): "
                     f"top1 {topForClustersSums[0]}, top2 {topForClustersSums[1]}, top3 {topForClustersSums[2]}")
             print(f"averages of top 1-3 sums for non-zeroed non-ph-0 ({topForClustersCountsNoPh0} clusters): ",
@@ -108,16 +108,16 @@ def show_logs(text, logs):
                             for where in range(to + 1):
                                 topForClustersSumsW[to] += topForClusters.values[i][where] * cntClust[i]
                         if topForClusters.indices[i][0] != 0:
-                            topForClustersCountsNoPh0W += 1
+                            topForClustersCountsNoPh0W += cntClust[i]
                             for to in range(3):
                                 for where in range(to + 1):
                                     topForClustersSumsNoPh0W[to] += topForClusters.values[i][where] * cntClust[i]
-                    topForClustersSumsW /= topForClustersCountsW
-                    topForClustersSumsNoPh0W /= topForClustersCountsNoPh0W
-                    print(f"cluster-assigned-phoneme-nr weighted averages of top 1-3 sums for non-zeroed ({topForClustersCounts} clusters): ",
-                            f"top1 {topForClustersSumsW[0]}, top2 {topForClustersSumsW[1]}, top3 {topForClustersSumsW[2]}")
-                    print(f"cluster-assigned-phoneme-nr weighted averages of top 1-3 sums for non-zeroed non-ph-0 ({topForClustersCountsNoPh0} clusters): "
-                            f"top1 {topForClustersSumsNoPh0W[0]}, top2 {topForClustersSumsNoPh0W[1]}, top3 {topForClustersSumsNoPh0W[2]}")
+                topForClustersSumsW /= max(topForClustersCountsW, 0.00000000001)
+                topForClustersSumsNoPh0W /= max(topForClustersCountsNoPh0W, 0.0000000000001)
+                print(f"cluster-assigned-phoneme-nr weighted averages of top 1-3 sums for non-zeroed ({topForClustersCounts} clusters): ",
+                        f"top1 {topForClustersSumsW[0]}, top2 {topForClustersSumsW[1]}, top3 {topForClustersSumsW[2]}")
+                print(f"cluster-assigned-phoneme-nr weighted averages of top 1-3 sums for non-zeroed non-ph-0 ({topForClustersCountsNoPh0} clusters): "
+                        f"top1 {topForClustersSumsNoPh0W[0]}, top2 {topForClustersSumsNoPh0W[1]}, top3 {topForClustersSumsNoPh0W[2]}")
             
             print("-----------> top occ for phonemes in 0-1 format:")
             for i in range(topForPhonesIndices.shape[0]):
@@ -127,7 +127,7 @@ def show_logs(text, logs):
                     for to in range(3):
                         for where in range(to + 1):
                             topForPhonesSums[to] += topForPhonesValues[i][where]
-            topForPhonesSums /= topForPhonesCounts
+            topForPhonesSums /= max(topForPhonesCounts, 0.00000000001)
             print(f"averages of top 1-3 sums for non-zeroed ({topForPhonesCounts}): top1 {topForPhonesSums[0]}, top2 {topForPhonesSums[1]}, top3 {topForPhonesSums[2]}")
             if "phones_train" in logs:
                 topForPhonesSumsW = torch.zeros(3, dtype=float)
@@ -139,7 +139,7 @@ def show_logs(text, logs):
                         for to in range(3):
                             for where in range(to + 1):
                                 topForPhonesSumsW[to] += topForPhonesValues[i][where] * phoneTrainCounts[i]
-                topForPhonesSumsW /= topForPhonesCountsW
+                topForPhonesSumsW /= max(topForPhonesCountsW, 0.00000000001)
                 print(f"phoneme-nr weighted averages of top 1-3 sums for non-zeroed ({topForPhonesCounts}): top1 {topForPhonesSumsW[0]}, top2 {topForPhonesSumsW[1]}, top3 {topForPhonesSumsW[2]}")
                 
 

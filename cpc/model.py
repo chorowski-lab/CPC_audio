@@ -349,7 +349,7 @@ class CPCModel(nn.Module):
             self.pushLossWeightEnc = fcmSettings["pushLossWeightEnc"]
             self.pushLossWeightCtx = fcmSettings["pushLossWeightCtx"]
             self.pushLossLinear = fcmSettings["pushLossLinear"]
-            self.pushLossGradual = fcmSettings["pushLossGradual"]
+            self.pushLossGradualStart = fcmSettings["pushLossGradualStart"]
             self.pushLossProtosMult = fcmSettings["pushLossProtosMult"]
             self.pushLossCenterNorm = fcmSettings["pushLossCenterNorm"]
             self.pushLossPointNorm = fcmSettings["pushLossPointNorm"]  # can be set only if centerNorm
@@ -726,7 +726,9 @@ class CPCModel(nn.Module):
             cFeatureOut = cFeature
             encodedDataOut = encodedData
 
-            if self.pushLossWeightEnc is not None or self.pushLossWeightCtx is not None:
+            if self.pushLossWeightEnc is not None or self.pushLossWeightCtx is not None\
+                and (self.pushLossGradualStart is None or epochNow_ >= self.pushLossGradualStart):
+
                 # needs enc to go through LSTM; shouldn't have non-loss pushing set
                 pushLoss = torch.zeros(1).cuda().sum()
                 # there was a bug with just [:baseEncDim] here, but with only-pushloss config should change anything
@@ -734,9 +736,9 @@ class CPCModel(nn.Module):
                 ctxDataPushLossPart = cFeatureForPushLoss[:, :, :baseEncDim]  #.clone()
                 # [!] need to also clone original tensors, otherwise gradient there would also have pushLoss part
                 #     ^ BUT NEED TO DO SO IN TRAIN BECAUSE OF DATAPARALLEL
-                if self.pushLossGradual:
-                    currentEpoch, allEpochs = epochNrs
-                    weightMult = currentEpoch / max(allEpochs, 1.)
+                if self.pushLossGradualStart is not None:
+                    #currentEpoch, allEpochs = epochNrs
+                    weightMult = max(epochNow_ - self.pushLossGradualStart,0.) / max(epochAll_ - self.pushLossGradualStart, 1.)
                 else:
                     weightMult = 1.
                 protoUsedCounts1 = 0
