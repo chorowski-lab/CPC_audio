@@ -3,6 +3,7 @@
 import torch
 import time
 from heapq import *
+from cpc.segm.shrink_reshrink import *
 
 def computeSEcosts(enc, maxSegmLen):
 
@@ -87,49 +88,50 @@ def costSegm(costs, shape, k, minSegmsInLine):
     return segms
 
 
+# TODO whole segment and restore-length layers using shrink_reshrink
 
 
+if __name__ == "__main__":
+
+    enc1 = torch.tensor([[[1.],[1.],[2.],[3.]], [[4.],[5.],[6.],[7.]]])
+    costs1 = computeSEcosts(enc1, 4)
+    segms1 = costSegm(costs1, enc1.shape, 5, 2)
+    print(costs1)
+    print(segms1)
+    print("----------")
+    enc2 = torch.tensor([[[1.,1.],[1.,1.],[2.,2.],[3.,3.]], [[4.,4.],[5.,5.],[6.,6.],[7.,7.]]])
+    print(computeSEcosts(enc2, 4))
 
 
-enc1 = torch.tensor([[[1.],[1.],[2.],[3.]], [[4.],[5.],[6.],[7.]]])
-costs1 = computeSEcosts(enc1, 4)
-segms1 = costSegm(costs1, enc1.shape, 5, 2)
-print(costs1)
-print(segms1)
-print("----------")
-enc2 = torch.tensor([[[1.,1.],[1.,1.],[2.,2.],[3.,3.]], [[4.,4.],[5.,5.],[6.,6.],[7.,7.]]])
-print(computeSEcosts(enc2, 4))
+    enc3 = torch.rand(64, 128, 256, dtype=torch.float32)
+    t0 = time.time()
+    costs = computeSEcosts(enc3, 10)
+    #print("***", costs.shape)
+    t1 = time.time()
+    costs=costs.cpu()
+    t2 = time.time()
+    segms = costSegm(costs, enc3.shape, 2000, 2)
+    t3 = time.time()
+    print(len(segms))
+    print(f"Normal batch time: {t1-t0}, {t2-t1}, {t3-t2} | sum: {t3-t0}")
 
+    t0 = time.time()
+    d = {}
+    for i in range(1000000):
+        d[i] = i
+    t1 = time.time()
+    print(f"sth time: {t1-t0}")
 
-enc3 = torch.rand(64, 128, 256, dtype=torch.float32)
-t0 = time.time()
-costs = computeSEcosts(enc3, 10)
-#print("***", costs.shape)
-t1 = time.time()
-costs=costs.cpu()
-t2 = time.time()
-segms = costSegm(costs, enc3.shape, 2000, 2)
-t3 = time.time()
-print(len(segms))
-print(f"Normal batch time: {t1-t0}, {t2-t1}, {t3-t2} | sum: {t3-t0}")
+    # print("::::::::::::::")
 
-t0 = time.time()
-d = {}
-for i in range(1000000):
-    d[i] = i
-t1 = time.time()
-print(f"sth time: {t1-t0}")
-
-# print("::::::::::::::")
-
-# enc3 = torch.rand(2, 25, 256, dtype=torch.float32)
-# t0 = time.time()
-# costs = computeSEcosts(enc3, 10)
-# #print("***", costs.shape)
-# t1 = time.time()
-# costs=costs.cpu()
-# t2 = time.time()
-# segms = costSegm(costs, enc3.shape, 10, 2)
-# t3 = time.time()
-# print(len(segms))
-# print(f"Normal batch time: {t1-t0}, {t2-t1}, {t3-t2}")
+    # enc3 = torch.rand(2, 25, 256, dtype=torch.float32)
+    # t0 = time.time()
+    # costs = computeSEcosts(enc3, 10)
+    # #print("***", costs.shape)
+    # t1 = time.time()
+    # costs=costs.cpu()
+    # t2 = time.time()
+    # segms = costSegm(costs, enc3.shape, 10, 2)
+    # t3 = time.time()
+    # print(len(segms))
+    # print(f"Normal batch time: {t1-t0}, {t2-t1}, {t3-t2}")
