@@ -30,10 +30,10 @@ def computeSEcosts(enc, maxSegmLen):
 
 def costSegm(costs, shape, k, minSegmsInLine):
     maxSegmLen = costs.shape[0]
-    print(f"maxsegmlen: {maxSegmLen}")
+    #print(f"maxsegmlen: {maxSegmLen}")
     # shape: B x N
     h, w = shape[0], shape[1]
-    print("!!", h, w)
+    #print("!!", h, w)
     segms = set()  #{}
     lenOnRight = {}
     lenOnLeft = {}
@@ -50,7 +50,7 @@ def costSegm(costs, shape, k, minSegmsInLine):
     linesSegms = [w for _ in range(h)]
     #numSegms = len(segms)
     loopIters = 0
-    print("--", len(pq))
+    #print("--", len(pq))
     while len(pq) > 0 and len(segms) > k:  #numSegms > k:
         loopIters += 1
         cost, i1, j1, l1, i2, j2, l2 = heappop(pq)
@@ -81,9 +81,9 @@ def costSegm(costs, shape, k, minSegmsInLine):
                 #print((i1,j2,newLen) in segms, (i1,j2+lr,lr) in segms)
         #print(len(pq), len(segms))
         #print(segms)
-    print(len(pq), len(segms))
+    #print(len(pq), len(segms))
 
-    print(f"Loop iters: {loopIters}")
+    #print(f"Loop iters: {loopIters}")
     return segms
 
 

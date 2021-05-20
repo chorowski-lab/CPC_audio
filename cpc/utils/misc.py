@@ -32,7 +32,7 @@ def update_logs(logs, logStep, prevlogs=None):
     for key in logs:
         out[key] = deepcopy(logs[key])
 
-        if prevlogs is not None:
+        if prevlogs is not None and key in prevlogs:
             out[key] -= prevlogs[key]
         out[key] /= logStep
     return out
