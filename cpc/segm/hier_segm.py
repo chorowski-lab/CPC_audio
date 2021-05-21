@@ -604,5 +604,26 @@ if __name__ == '__main__':
     print("---")
     resOutRestored = HierarchicalSegmentationRestoreLengthLayer.apply(resOutput, dictTens)
     print(resOutRestored)
-    resOutput.sum().backward()
+    resOutRestored.sum().backward()  # 1s everywhere are correct, as sum is taken and stuff is copied length times after shortening
     print(tensor.grad)
+
+    print("-------------------------- measure batch time ---------------------------")
+    encAllTimed = torch.rand(64, 128, 256, dtype=torch.float32).cuda().requires_grad_(True)
+    ta0 = time.time()
+    resOutput, resPadMask, borders, roundingLoss, dictTens = HierarchicalSegmentationLayer.apply(
+        encAllTimed, 
+        None, 
+        2000, 
+        None,   # could also have range here
+        2, 
+        "se", 
+        "shorten", 
+        None,
+        None)
+    ta1 = time.time()
+    resOutRestored = HierarchicalSegmentationRestoreLengthLayer.apply(resOutput, dictTens)
+    ta2 = time.time()
+    resOutRestored.sum().backward()
+    print(encAllTimed.grad.mean())
+    ta3 = time.time()
+    print(f"Measured time on 1 batch 64: forward ({ta1-ta0}, {ta2-ta1}), backward: ({ta3-ta2})")

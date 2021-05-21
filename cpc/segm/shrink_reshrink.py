@@ -84,7 +84,7 @@ def expandSegms(batchShrinked, numsInLinesOrig, fullShape, lengthsForAveraging=N
     for line in range(len(numsInLines)):
         zerosToAdd = Nshrinked - len(numsInLines[line])
         numsInLines[line] = numsInLines[line] + [0 for _ in range(zerosToAdd)]  # concat
-        #print("!", batchShrinked[line], torch.tensor(numsInLines[line]))
+        #print(":", batchShrinked[line], torch.tensor(numsInLines[line]))
         restored[line] = torch.repeat_interleave(batchShrinked[line], torch.tensor(numsInLines[line]).cuda(), dim=0)
 
     # this is the case when backward segmentation - want to pump each segm to length before segmentation,
