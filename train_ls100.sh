@@ -29,6 +29,7 @@ rsync --exclude '.*' \
     $RVERB -lrpt $CPC_DIR/ ${SAVE_DIR}/code/
 
 echo $0 "$@" >> ${SAVE_DIR}/out.txt
+hostname >> ${SAVE_DIR}/out.txt
 exec python -u cpc/train.py \
     --pathDB /pio/data/zerospeech2021/LibriSpeech-wav/train-clean-100 \
     --pathTrain /pio/scratch/2/jch/wav2vec/LibriSpeech100_labels_split/train_split.txt \
