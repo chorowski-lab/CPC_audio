@@ -7,10 +7,17 @@ from heapq import *
 from cpc.segm.shrink_reshrink import *
 from cpc.segm.fast_segm_torch_conversions import *
 import numpy as np
+from math import sqrt, ceil
 
 def computeSEcosts(enc, maxSegmLen):
 
     # enc: B x N x D
+
+    #maxSegmLen = maxSegmLenSqrt * maxSegmLenSqrt
+
+    # maxSegmLenSqrt = int(ceil(sqrt(maxSegmLen)))
+    # maxSegmLen = maxSegmLenSqrt*maxSegmLenSqrt
+    # print("!!!!!!", maxSegmLen)
 
     linSums = torch.zeros((maxSegmLen, *(enc.shape)), dtype=torch.float32).cuda()
     sqSums = torch.zeros((maxSegmLen, *(enc.shape)), dtype=torch.float32).cuda()
@@ -19,9 +26,15 @@ def computeSEcosts(enc, maxSegmLen):
     linSums[0] = enc
     sqSums[0] = encSq
 
-    for i in range(1,maxSegmLen):
+    for i in range(1,maxSegmLen):  #Sqrt):
         linSums[i, :, 1:, :] = linSums[i-1, :, :-1, :] + enc[:, 1:, :]
         sqSums[i, :, 1:, :] = sqSums[i-1, :, :-1, :] + encSq[:, 1:, :]
+
+    # for i in range(1,maxSegmLenSqrt):
+    #     linSums[i*maxSegmLenSqrt:(i+1)*maxSegmLenSqrt, :, maxSegmLenSqrt:, :] = \
+    #         linSums[(i-1)*maxSegmLenSqrt:i*maxSegmLenSqrt, :, :-maxSegmLenSqrt, :] + linSums[maxSegmLenSqrt-1, :, :-maxSegmLenSqrt, :]
+    #     sqSums[i*maxSegmLenSqrt:(i+1)*maxSegmLenSqrt, :, maxSegmLenSqrt:, :] = \
+    #         sqSums[(i-1)*maxSegmLenSqrt:i*maxSegmLenSqrt, :, :-maxSegmLenSqrt, :] + sqSums[maxSegmLenSqrt-1, :, :-maxSegmLenSqrt, :]
 
     costs = torch.zeros((maxSegmLen, *(enc.shape[:-1])), dtype=torch.float32).cuda()
 
