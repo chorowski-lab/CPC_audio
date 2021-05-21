@@ -522,7 +522,7 @@ class CPCModel(nn.Module):
                 lengthSumToObtain = FastHierarchicalSegmentationLayer\
                     .getKforGivenShorteningAndShape(encodedData.shape, self.hierARshorten)
                 encForCfeature, segmDictTens, shrinkIndices_, lengths_, numsInLinesC0_, numsInLinesC1_, maxInLine_, encShapeTens_ = \
-                    FastHierarchicalSegmentationLayer.apply(encodedData, lengthSumToObtain, 10, 2)
+                    FastHierarchicalSegmentationLayer.apply(encodedData, lengthSumToObtain, 10, 5)
                 #print("!!!", encShapeTens_)
                 #--t1 = time.time()
                 #--print(f"hier 1 time: {t1 - t0}; lengthSumToObtain {lengthSumToObtain}")

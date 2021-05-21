@@ -15,8 +15,8 @@ def segmSetLengthChangeThings(segmSet, shape, D):
     B = shape[0]
     N = shape[1]
     fullLen = B*N
-    scatterIndices = torch.fill_(torch.zeros(shape, dtype=torch.long).cpu(), -1).cpu()
-    scatterLengths = torch.fill_(torch.zeros(shape, dtype=torch.int32).cpu(), -1).cpu()
+    scatterIndices = torch.fill_(torch.zeros(shape, dtype=torch.long).cpu(), -1).cpu().numpy()
+    scatterLengths = torch.fill_(torch.zeros(shape, dtype=torch.int32).cpu(), -1).cpu().numpy()
     # [!] segmSet MUST contain entry por every place inside shape, otherwise problems here
     # would then need to add in some additional place and then remove it
     #print("C")
@@ -36,7 +36,7 @@ def segmSetLengthChangeThings(segmSet, shape, D):
     maxInLine = max(map(len, numsInLines))
     #print("D")
     #sys.stdout.flush()
-    return scatterIndices.view(-1,1).repeat(1,D).cuda(), scatterLengths.cuda(), numsInLines, maxInLine
+    return torch.tensor(scatterIndices).view(-1,1).repeat(1,D).cuda(), torch.tensor(scatterLengths).cuda(), numsInLines, maxInLine
 
 
 def shrinkSegms(batchLong, scatterIndices, maxInLine, lengths=None):
