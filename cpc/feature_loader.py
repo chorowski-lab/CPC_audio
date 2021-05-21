@@ -147,7 +147,7 @@ def getEncoder(args):
         return LFBEnconder(args.hiddenEncoder)
     else:
         from .model import CPCEncoder
-        return CPCEncoder(args.hiddenEncoder, args.normMode)
+        return CPCEncoder(args.hiddenEncoder, args.normMode, paddingMode=args.paddingMode)
 
 
 def getAR(args):
@@ -165,7 +165,8 @@ def getAR(args):
                       args.samplingType == "sequential",
                       args.nLevelsGRU,
                       mode=args.arMode,
-                      reverse=args.cpc_mode == "reverse")
+                      reverse=args.cpc_mode == "reverse",
+                      final_lengt_factor=args.arLenReduction)
     return arNet
 
 

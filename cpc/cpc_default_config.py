@@ -79,6 +79,10 @@ def set_default_cpc_config(parser):
                                 'batchNorm'],
                        help="Type of normalization to use in the encoder "
                        "network (default is layerNorm).")
+    group.add_argument('--paddingMode', type=str, default='zeros',
+                       choices=['zeros', 'reflect', 'replicate',
+                                'circular'],
+                       help="Conv padding mode (default: zeros).")
     group.add_argument('--onEncoder', action='store_true',
                        help="(Supervised mode only) Perform the "
                        "classification on the encoder's output.")
@@ -93,6 +97,8 @@ def set_default_cpc_config(parser):
                        "network (default is lstm).")
     group.add_argument('--nLevelsGRU', type=int, default=1,
                        help='Number of layers in the autoregressive network.')
+    group.add_argument('--arLenReduction', type=float, default=None,
+                       help='Length reduction of the autreg net.')
     group.add_argument('--rnnMode', type=str, default='transformer',
                        choices=['transformer', 'RNN', 'LSTM', 'linear',
                                 'ffd', 'conv4', 'conv8', 'conv12'],

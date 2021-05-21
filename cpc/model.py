@@ -62,7 +62,8 @@ class CPCEncoder(nn.Module):
 
     def __init__(self,
                  sizeHidden=512,
-                 normMode="layerNorm"):
+                 normMode="layerNorm",
+                 paddingMode="zeros"):
 
         super(CPCEncoder, self).__init__()
 
@@ -80,16 +81,15 @@ class CPCEncoder(nn.Module):
             normLayer = nn.BatchNorm1d
 
         self.dimEncoded = sizeHidden
-        self.conv0 = nn.Conv1d(1, sizeHidden, 10, stride=5, padding=3)
+        self.conv0 = nn.Conv1d(1, sizeHidden, 10, stride=5, padding=3, padding_mode=paddingMode)
         self.batchNorm0 = normLayer(sizeHidden)
-        self.conv1 = nn.Conv1d(sizeHidden, sizeHidden, 8, stride=4, padding=2)
+        self.conv1 = nn.Conv1d(sizeHidden, sizeHidden, 8, stride=4, padding=2, padding_mode=paddingMode)
         self.batchNorm1 = normLayer(sizeHidden)
-        self.conv2 = nn.Conv1d(sizeHidden, sizeHidden, 4,
-                               stride=2, padding=1)
+        self.conv2 = nn.Conv1d(sizeHidden, sizeHidden, 4, stride=2, padding=1, padding_mode=paddingMode)
         self.batchNorm2 = normLayer(sizeHidden)
-        self.conv3 = nn.Conv1d(sizeHidden, sizeHidden, 4, stride=2, padding=1)
+        self.conv3 = nn.Conv1d(sizeHidden, sizeHidden, 4, stride=2, padding=1, padding_mode=paddingMode)
         self.batchNorm3 = normLayer(sizeHidden)
-        self.conv4 = nn.Conv1d(sizeHidden, sizeHidden, 4, stride=2, padding=1)
+        self.conv4 = nn.Conv1d(sizeHidden, sizeHidden, 4, stride=2, padding=1, padding_mode=paddingMode)
         self.batchNorm4 = normLayer(sizeHidden)
         self.DOWNSAMPLING = 160
 
@@ -152,6 +152,77 @@ class LFBEnconder(nn.Module):
         return x
 
 
+def sequence_segmenter(encodedData, final_lengt_factor, step_reduction=0.2):
+    assert not torch.isnan(encodedData).any()
+    device = encodedData.device
+    encFlat = F.pad(encodedData.reshape(-1, encodedData.size(-1)).detach(), (0, 0, 1, 0))
+    feat_csum = encFlat.cumsum(0)
+    feat_csum2 = (encFlat**2).cumsum(0)
+    idx = torch.arange(feat_csum.size(0), device=feat_csum.device)
+
+    final_length = int(final_lengt_factor * len(encFlat))
+
+    while len(idx) > final_length:
+        begs = idx[:-2]
+        ends = idx[2:]
+
+        sum1 = (feat_csum.index_select(0, ends) - feat_csum.index_select(0, begs))
+        sum2 = (feat_csum2.index_select(0, ends) - feat_csum2.index_select(0, begs))
+        num_elem = (ends-begs).float().unsqueeze(1)
+
+        diffs = F.pad(torch.sqrt(((sum2/ num_elem - (sum1/ num_elem)**2) ).mean(1)), (1,1), value=1e10)
+
+        num_to_retain = max(final_length, int(idx.shape[-1] * step_reduction))
+        _, keep_idx = torch.topk(diffs, num_to_retain)
+        keep_idx = torch.sort(keep_idx)[0]
+        idx = idx.index_select(0, keep_idx)
+    
+    # Ensure that minibatch boundaries are preserved
+    seq_end_idx = torch.arange(0, encodedData.size(0)*encodedData.size(1), encodedData.size(1), device=device)
+    idx = torch.unique(torch.cat((idx, seq_end_idx)), sorted=True)
+
+    # now work out cut indices in each minibatch element
+    batch_elem_idx = idx // encodedData.size(1)
+    transition_idx = F.pad(torch.nonzero(batch_elem_idx[1:] != batch_elem_idx[:-1]), (0,0, 1,0))
+    cutpoints = (torch.nonzero((idx % encodedData.size(1)) == 0))
+    compressed_lens = (cutpoints[1:]-cutpoints[:-1]).squeeze(1)
+
+    seq_idx = torch.nn.utils.rnn.pad_sequence(
+        torch.split(idx[1:] % encodedData.size(1), tuple(cutpoints[1:]-cutpoints[:-1])), batch_first=True)
+    seq_idx[seq_idx==0] = encodedData.size(1)
+    seq_idx = F.pad(seq_idx, (1,0,0,0))
+
+    frame_idxs = torch.arange(encodedData.size(1), device=device).view(1, 1, -1)
+    compress_matrices = (
+        (seq_idx[:,:-1, None] <= frame_idxs)
+        & (seq_idx[:,1:, None] > frame_idxs)
+    ).float()
+
+    compressed_lens = compressed_lens.cpu()
+    assert compress_matrices.shape[0] == encodedData.shape[0]
+    return compress_matrices, compressed_lens
+
+
+def compress_batch(encodedData, compress_matrices, compressed_lens, pack=False):
+    ret = torch.bmm(
+        compress_matrices / torch.maximum(compress_matrices.sum(-1, keepdim=True), torch.ones(1, device=compress_matrices.device)), 
+        encodedData)
+    if pack:
+        ret = torch.nn.utils.rnn.pack_padded_sequence(
+                ret, compressed_lens, batch_first=True, enforce_sorted=False
+            )
+    return ret
+
+
+def decompress_padded_batch(compressed_data, compress_matrices, compressed_lens):
+    if isinstance(compressed_data, torch.nn.utils.rnn.PackedSequence):
+        compressed_data, unused_lens = torch.nn.utils.rnn.pad_packed_sequence(
+            compressed_data, batch_first=True, total_length=compress_matrices.size(1))
+    assert (compress_matrices.sum(1) == 1).all()
+    return torch.bmm(
+        compress_matrices.transpose(1, 2), compressed_data)
+
+
 class CPCAR(nn.Module):
 
     def __init__(self,
@@ -160,7 +231,10 @@ class CPCAR(nn.Module):
                  keepHidden,
                  nLevelsGRU,
                  mode="GRU",
-                 reverse=False):
+                 reverse=False,
+                 final_lengt_factor=None, 
+                 step_reduction=0.2
+                 ):
 
         super(CPCAR, self).__init__()
         self.RESIDUAL_STD = 0.1
@@ -178,6 +252,17 @@ class CPCAR(nn.Module):
         self.hidden = None
         self.keepHidden = keepHidden
         self.reverse = reverse
+        self.final_lengt_factor = final_lengt_factor
+        self.step_reduction = step_reduction
+
+    def extra_repr(self):
+        extras = [
+            f'reverse={self.reverse}',
+            f'final_lengt_factor={self.final_lengt_factor}',
+            f'step_reduction={self.step_reduction}',
+        ]
+        return ', '.join(extras)
+
 
     def getDimOutput(self):
         return self.baseNet.hidden_size
@@ -190,10 +275,21 @@ class CPCAR(nn.Module):
             self.baseNet.flatten_parameters()
         except RuntimeError:
             pass
-        x, h = self.baseNet(x, self.hidden)
+
+        if self.final_lengt_factor is None:
+            x, h = self.baseNet(x, self.hidden)
+        else:
+            compress_matrices, compressed_lens = sequence_segmenter(
+                x, self.final_lengt_factor, self.step_reduction)
+            packed_compressed_x = compress_batch(
+                x, compress_matrices, compressed_lens, pack=True
+            )
+            packed_x, packed_h = self.baseNet(packed_compressed_x)
+            x = decompress_padded_batch(packed_x, compress_matrices, compressed_lens)
+
         if self.keepHidden:
             if isinstance(h, tuple):
-                self.hidden = tuple(x.detach() for x in h)
+                self.hidden = tuple(h_elem.detach() for h_elem in h)
             else:
                 self.hidden = h.detach()
 
