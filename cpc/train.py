@@ -473,15 +473,18 @@ def run(trainDataset,
         or (captureDataset is not None and captureOptions is not None)
     if captureOptions is not None:
         captureEachEpochs = captureOptions['eachEpochs']
-    linsepEpochsConfig = linsepEpochsConfig.strip()
-    if linsepEpochsConfig.startswith('('):
-        linsepEpochs = list(map(int, (linsepEpochsConfig[1:-1]).split(',')))
+    if linsepEpochsConfig is not None:
+        linsepEpochsConfig = linsepEpochsConfig.strip()
+        if linsepEpochsConfig.startswith('('):
+            linsepEpochs = list(map(int, (linsepEpochsConfig[1:-1]).split(',')))
+        else:
+            eachn = int(linsepEpochsConfig)
+            nextok = startEpoch - (startEpoch % eachn)
+            if nextok < startEpoch:
+                nextok += eachn
+            linsepEpochs = list(range(nextok, nEpoch, eachn))
     else:
-        eachn = int(linsepEpochsConfig)
-        nextok = startEpoch - (startEpoch % eachn)
-        if nextok < startEpoch:
-            nextok += eachn
-        linsepEpochs = list(range(nextok, nEpoch, eachn))
+        linsepEpochs = None
         #print("@@@@@@", eachn, linsepEpochs)
 
     print(f'DS sizes: train {str(len(trainDataset)) if trainDataset is not None else "-"}, '

@@ -64,7 +64,8 @@ def shrinkSegms(batchLong, scatterIndices, maxInLine, lengths=None):
         batchDivByLens = batchLong / torch.clamp(lengths.view(*(lengths.shape), -1), min=1.)
     else:  # restore-length-layer backward, need to sum gradients as shrinked things impact on all length
         batchDivByLens = batchLong
-    scattered = scatterTens.scatter_add_(0, scatterIndices, batchDivByLens.view(B*N, D))
+    #print("@@", scatterTens.shape, scatterIndices.shape, batchDivByLens.shape, B, N, D)
+    scattered = scatterTens.scatter_add_(0, scatterIndices, batchDivByLens.contiguous().view(B*N, D))
     return scattered.view(B,N,-1)[:, :maxInLine]
 
 

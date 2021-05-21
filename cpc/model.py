@@ -12,7 +12,7 @@ import math
 
 import time
 
-from cpc.segm.hier_segm import HierarchicalSegmentationLayer, HierarchicalSegmentationRestoreLengthLayer
+from cpc.segm.hier_fast import FastHierarchicalSegmentationLayer, FastSegmentationLengthRestoreLayer
 
 ###########################################
 # Networks
@@ -327,7 +327,7 @@ class CPCModel(nn.Module):
         self.fcm = fcmSettings is not None
         print(f'--------- FCM: {self.fcm} ----------')
         self.fcmDebug = False
-        self.doing_push_loss = False
+        self.doing_push_loss_or_push_after = False
         self.fcmReal = False
         self.hierARshorten = None  # will be set below if needed; otherwise need to set None
         self.VQpushEncCenterWeightOnTopConv = None
@@ -507,21 +507,26 @@ class CPCModel(nn.Module):
             encForCfeature = encodedData
             if self.hierARshorten is not None:
                 #--t0 = time.time()
-                lengthSumToObtain = HierarchicalSegmentationLayer.getKforGivenShorteningAndShape(encodedData.shape, self.hierARshorten)
-                encForCfeature, _, _, _, segmDictTens = HierarchicalSegmentationLayer.apply(
-                    encodedData,
-                    None,
-                    lengthSumToObtain,
-                    None,  # could also have range here
-                    5,
-                    self.hierARmergePrior,
-                    "shorten",
-                    None,
-                    None
-                )
+                # lengthSumToObtain = HierarchicalSegmentationLayer.getKforGivenShorteningAndShape(encodedData.shape, self.hierARshorten)
+                # encForCfeature, _, _, _, segmDictTens = HierarchicalSegmentationLayer.apply(
+                #     encodedData,
+                #     None,
+                #     lengthSumToObtain,
+                #     None,  # could also have range here
+                #     5,
+                #     self.hierARmergePrior,
+                #     "shorten",
+                #     None,
+                #     None
+                # )
+                lengthSumToObtain = FastHierarchicalSegmentationLayer\
+                    .getKforGivenShorteningAndShape(encodedData.shape, self.hierARshorten)
+                encForCfeature, segmDictTens, shrinkIndices_, lengths_, numsInLinesC0_, numsInLinesC1_, maxInLine_, encShapeTens_ = \
+                    FastHierarchicalSegmentationLayer.apply(encodedData, lengthSumToObtain, 10, 2)
+                #print("!!!", encShapeTens_)
                 #--t1 = time.time()
-                #--print(f"hier 1 time: {t1 - t0}")
-                #--print(f"whape segmented: {encForCfeature.shape}")
+                #--print(f"hier 1 time: {t1 - t0}; lengthSumToObtain {lengthSumToObtain}")
+                #--print(f"shape segmented: {encForCfeature.shape}")
             else:
                 segmDictTens = None
             if givenCenters is not None and self.VQpushEncCenterWeightOnlyAR and (self.VQgradualStart is None or epochNow_ >= self.VQgradualStart):
@@ -531,7 +536,9 @@ class CPCModel(nn.Module):
             cFeature = self.gAR(encForCfeature)
             if self.hierARshorten is not None:  # TODO here or at the end, unsure
                 #--t0 = time.time()
-                cFeature = HierarchicalSegmentationRestoreLengthLayer.apply(cFeature, segmDictTens)
+                #cFeature = HierarchicalSegmentationRestoreLengthLayer.apply(cFeature, segmDictTens)
+                cFeature = FastSegmentationLengthRestoreLayer.apply(
+                    cFeature, numsInLinesC0_, numsInLinesC1_, shrinkIndices_, maxInLine_, torch.Size(encShapeTens_))
                 #--t1 = time.time()
                 #--print(f"hier 2 time: {t1 - t0}")
                 segmDictTens = segmDictTens.cuda()  # for return

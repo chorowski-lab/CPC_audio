@@ -114,7 +114,7 @@ class FastHierarchicalSegmentationLayer(Function):
 
     @staticmethod
     def forward(ctx, inputGPU, k, maxSegmLen, minSegmsPerLine=None): 
-
+        #print(f"input shape: {inputGPU.shape}")
         with torch.no_grad():
             #t0 = time.time()
             minSegmsPerLine = 5 if minSegmsPerLine is None else minSegmsPerLine
@@ -124,6 +124,7 @@ class FastHierarchicalSegmentationLayer(Function):
             #t2 = time.time()
             indices, lengths, numsInLines, maxInLine = segmSetLengthChangeThings(segms, (inputGPU.shape[0],inputGPU.shape[1]), inputGPU.shape[2])
             #t3 = time.time()
+            #print(f"SHAPES: {indices.shape}, {lengths.shape}")
             shrinked = shrinkSegms(inputGPU, indices, maxInLine, lengths)
             #t4 = time.time()
             ctx.numsInLines = numsInLines
@@ -139,26 +140,29 @@ class FastHierarchicalSegmentationLayer(Function):
             ctx.mark_non_differentiable(segmsConverted)
             maxNumConverted = convertNumToTens(maxInLine)
             ctx.mark_non_differentiable(maxNumConverted)
+            shapeTens = torch.tensor(inputGPU.shape).cpu()
+            ctx.mark_non_differentiable(shapeTens)
+            #print(f"shape tens: {shapeTens}")
             #t5 = time.time()
             #print(f"actual time: {t1-t0}, {t2-t1}, {t3-t2}, {t4-t3}, nonsense conversion times: {t5-t4}")
             return shrinked, segmsConverted, indices, lengths, \
-                numInLinesConverted[0], numInLinesConverted[1], maxNumConverted
+                numInLinesConverted[0], numInLinesConverted[1], maxNumConverted, shapeTens
 
     @staticmethod
-    def backward(ctx, dxThrough, segm=None, ind=None, lens=None, nums0=None, nums1=None, maxl=None):  #, finalSegments=None, segmentNumsInLines=None):
+    def backward(ctx, dxThrough, segm=None, ind=None, lens=None, nums0=None, nums1=None, maxl=None, shapet=None):  #, finalSegments=None, segmentNumsInLines=None):
 
         with torch.no_grad():
             #print("!!!", dxThrough, ctx.numsInLines, ctx.lengths)
             backprop = expandSegms(dxThrough, ctx.numsInLines, ctx.inputShape, ctx.lengths)
             #print("***", backprop)
-            return backprop, None, None, None
+            return backprop, None, None, None, None
 
 
 class FastSegmentationLengthRestoreLayer(Function):
 
     @staticmethod
     def forward(ctx, inputGPU, numsInLinesC0, numsInLinesC1, shrinkIndices, maxInLine, targetShape): # shrinkIndices & maxInLine only for backward
-
+        #print(f"target shape: {targetShape}")
         numsInLines = convert2DimListTensBack((numsInLinesC0, numsInLinesC1))
         maxInLine = convertNumTensBack(maxInLine)
         with torch.no_grad():
@@ -251,7 +255,7 @@ if __name__ == "__main__":
     tensor = torch.tensor([[[1,2],[1,2],[3,4],[3,4],[3,4],[8,9],[8,9]], [[1,2],[1,2],[3,4],[3,4],[3,4],[8,9],[8,9]]], dtype=torch.float32)\
         .cuda().requires_grad_(True)
     
-    resOutput, segms, shrinkIndices, lengths, numsInLinesC0, numsInLinesC1, maxInLine = FastHierarchicalSegmentationLayer.apply(
+    resOutput, segms, shrinkIndices, lengths, numsInLinesC0, numsInLinesC1, maxInLine, inShapeTens = FastHierarchicalSegmentationLayer.apply(
         tensor, 
         5, 
         10,
@@ -267,7 +271,7 @@ if __name__ == "__main__":
     print(tensor.grad)
     tensor.grad.data.zero_()
     print("---")
-    resOutRestored = FastSegmentationLengthRestoreLayer.apply(resOutput, numsInLinesC0, numsInLinesC1, shrinkIndices, maxInLine, tensor.shape)
+    resOutRestored = FastSegmentationLengthRestoreLayer.apply(resOutput, numsInLinesC0, numsInLinesC1, shrinkIndices, maxInLine, torch.Size(inShapeTens))
     print(resOutRestored)
     resOutRestored.sum().backward()
     print(tensor.grad)  # 1s everywhere are correct, as sum is taken and stuff is copied length times after shortening
@@ -275,17 +279,32 @@ if __name__ == "__main__":
     print("------------------measure batch time")
     encAllTimed = torch.rand(64, 128, 256, dtype=torch.float32).cuda().requires_grad_(True)
     ta0 = time.time()
-    resOutput, segms, shrinkIndices, lengths, numsInLinesC0, numsInLinesC1, maxInLine = FastHierarchicalSegmentationLayer.apply(
+    resOutput, segms, shrinkIndices, lengths, numsInLinesC0, numsInLinesC1, maxInLine, inShapeEncAllTimedTens = FastHierarchicalSegmentationLayer.apply(
         encAllTimed, 
         2000, 
         10,
         2)
     ta1 = time.time()
-    resOutRestored = FastSegmentationLengthRestoreLayer.apply(resOutput, numsInLinesC0, numsInLinesC1, shrinkIndices, maxInLine, encAllTimed.shape)
+    resOutRestored = FastSegmentationLengthRestoreLayer.apply(resOutput, numsInLinesC0, numsInLinesC1, shrinkIndices, maxInLine, torch.Size(inShapeEncAllTimedTens))
     ta2 = time.time()
     resOutRestored.sum().backward()
     print(encAllTimed.grad.mean())
     ta3 = time.time()
     print(f"Measured time on 1 batch 64: forward ({ta1-ta0}, {ta2-ta1}), backward: ({ta3-ta2})")
+
+    encAllTimed = torch.rand(32, 128, 256, dtype=torch.float32).cuda().requires_grad_(True)
+    ta0 = time.time()
+    resOutput, segms, shrinkIndices, lengths, numsInLinesC0, numsInLinesC1, maxInLine, inShapeEncAllTimedTens = FastHierarchicalSegmentationLayer.apply(
+        encAllTimed, 
+        1365, 
+        10,
+        2)
+    ta1 = time.time()
+    resOutRestored = FastSegmentationLengthRestoreLayer.apply(resOutput, numsInLinesC0, numsInLinesC1, shrinkIndices, maxInLine, torch.Size(inShapeEncAllTimedTens))
+    ta2 = time.time()
+    resOutRestored.sum().backward()
+    print(encAllTimed.grad.mean())
+    ta3 = time.time()
+    print(f"Measured time on 1 batch 32: forward ({ta1-ta0}, {ta2-ta1}), backward: ({ta3-ta2})")
     
 
