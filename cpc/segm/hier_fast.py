@@ -93,6 +93,8 @@ def costSegm(costs, shape, k, minSegmsInLine):
 
 if __name__ == "__main__":
 
+    enc0 = torch.tensor([1.]).cuda()  # first move to GPU takes >2s, so would spoil timed results
+
     enc1 = torch.tensor([[[1.],[1.],[2.],[3.]], [[4.],[5.],[6.],[7.]]])
     costs1 = computeSEcosts(enc1, 4)
     segms1 = costSegm(costs1, enc1.shape, 5, 2)
@@ -113,7 +115,26 @@ if __name__ == "__main__":
     segms = costSegm(costs, enc3.shape, 2000, 2)
     t3 = time.time()
     print(len(segms))
-    print(f"Normal batch time: {t1-t0}, {t2-t1}, {t3-t2} | sum: {t3-t0}")
+    t4_0 = time.time()
+    indices, lengths, numsInLines, maxInLine = segmSetLengthChangeThings(segms, (enc3.shape[0],enc3.shape[1]), 256)
+    #print("E")
+    #sys.stdout.flush()
+    t4 = time.time()
+    indices = indices.cuda()
+    lengths = lengths.cuda()
+    print("!", indices.shape, lengths.shape)
+    t5_0 = time.time()
+    shrinked = shrinkSegms(enc3, indices, maxInLine, lengths)
+    t5 = time.time()
+    shrinkedBackprop = shrinkSegms(enc3, indices, maxInLine)
+    t6 = time.time()
+    restored = expandSegms(shrinked, numsInLines, enc3.shape)
+    t7 = time.time()
+    restoredMean = expandSegms(shrinked, numsInLines, enc3.shape, lengths)
+    t8 = time.time()
+    print(f"Normal batch time: {t1-t0}, {t2-t1}, {t3-t2} | sum: {t3-t0} | shrink things without grad: {t4-t4_0}, {t5-t5_0}, {t6-t5}, {t7-t6}, {t8-t7}")
+
+
 
     t0 = time.time()
     d = {}

@@ -2,19 +2,25 @@
 
 import torch
 from copy import deepcopy
+import sys
 
 def segmSetLengthChangeThings(segmSet, shape, D):
     # 2 things needed: indices to sum with _scatter_add, and numbers of things in rows
+    #print("A")
+    #sys.stdout.flush()
     srt = sorted(segmSet)
+    #print("B")
+    #sys.stdout.flush()
     # shape here is shape without last dim! : B x N
     B = shape[0]
     N = shape[1]
     fullLen = B*N
-    scatterIndices = torch.fill_(torch.zeros(shape, dtype=torch.long).cuda(), -1).cpu()
-    scatterLengths = torch.fill_(torch.zeros(shape, dtype=torch.long).cuda(), -1).cpu()
+    scatterIndices = torch.fill_(torch.zeros(shape, dtype=torch.long).cpu(), -1).cpu()
+    scatterLengths = torch.fill_(torch.zeros(shape, dtype=torch.int32).cpu(), -1).cpu()
     # [!] segmSet MUST contain entry por every place inside shape, otherwise problems here
     # would then need to add in some additional place and then remove it
-    
+    #print("C")
+    #sys.stdout.flush()
     lastLine = -1
     startInThisLine = 0
     numsInLines = []
@@ -28,7 +34,9 @@ def segmSetLengthChangeThings(segmSet, shape, D):
         scatterIndices[i, j-l+1:j+1] = lastLine*N + startInThisLine
         scatterLengths[i, j-l+1:j+1] = l
     maxInLine = max(map(len, numsInLines))
-    return scatterIndices.cuda().view(-1,1).repeat(1,D), scatterLengths.cuda(), numsInLines, maxInLine
+    #print("D")
+    #sys.stdout.flush()
+    return scatterIndices.view(-1,1).repeat(1,D).cuda(), scatterLengths.cuda(), numsInLines, maxInLine
 
 
 def shrinkSegms(batchLong, scatterIndices, maxInLine, lengths=None):
@@ -43,8 +51,10 @@ def shrinkSegms(batchLong, scatterIndices, maxInLine, lengths=None):
 
     # batchLong already on cuda
     # actually those below also
+    batchLong = batchLong.cuda()
     scatterIndices = scatterIndices.cuda()
-    lengths = lengths.cuda()
+    if lengths is not None:
+        lengths = lengths.cuda()
     
     scatterTens = torch.zeros((scatterLen,D), dtype=torch.float32).cuda()
     #print("!", scatterTens.shape, scatterIndices.shape, batchLong.view(B*N, D).shape)
@@ -64,6 +74,9 @@ def expandSegms(batchShrinked, numsInLinesOrig, fullShape, lengthsForAveraging=N
     Nshrinked = batchShrinked.shape[1]
 
     # batchShrinked already on cuda
+    batchShrinked = batchShrinked.cuda()
+    if lengthsForAveraging is not None:
+        lengthsForAveraging = lengthsForAveraging.cuda()
 
     restored = torch.zeros(fullShape, dtype=torch.float32).cuda()
     numsInLines = deepcopy(numsInLinesOrig)
@@ -72,7 +85,7 @@ def expandSegms(batchShrinked, numsInLinesOrig, fullShape, lengthsForAveraging=N
         zerosToAdd = Nshrinked - len(numsInLines[line])
         numsInLines[line] = numsInLines[line] + [0 for _ in range(zerosToAdd)]  # concat
         #print("!", batchShrinked[line], torch.tensor(numsInLines[line]))
-        restored[line] = torch.repeat_interleave(batchShrinked[line], torch.tensor(numsInLines[line].cuda()), dim=0)
+        restored[line] = torch.repeat_interleave(batchShrinked[line], torch.tensor(numsInLines[line]).cuda(), dim=0)
 
     # this is the case when backward segmentation - want to pump each segm to length before segmentation,
     # but operating on dx, so need to make each place contirbution sum up to what was there
@@ -85,6 +98,8 @@ def expandSegms(batchShrinked, numsInLinesOrig, fullShape, lengthsForAveraging=N
         
 if __name__ == "__main__":
     
+    enc0 = torch.tensor([1.]).cuda()  # first move to GPU takes >2s, so would spoil timed results
+    
     print([1,2]+[3,4])
 
     segms = set([(0,1,2), (1,0,1), (1,4,2), (0,4,3), (1,2,2)])
@@ -94,6 +109,9 @@ if __name__ == "__main__":
 
     indices, lengths, numsInLines, maxInLine = segmSetLengthChangeThings(segms, (2,5), 3)
     print(indices, lengths, numsInLines, maxInLine)
+    #indices = indices.cuda()
+    #lengths = lengths.cuda()
+    print("---------change things end")
 
     points = torch.tensor([[[1.,1.,1.], [2.,2.,2.], [3.,3.,5.], [4.,4.,5.], [5.,5.,5.]], 
                         [[1.,1.,1.], [2.,2.,2.], [3.,3.,3.], [4.,4.,4.], [5.,5.,5.]]])
@@ -101,14 +119,16 @@ if __name__ == "__main__":
     print(points.shape, indices.shape)
     shrinked = shrinkSegms(points, indices, maxInLine, lengths)
     print(shrinked)
+    print("---------shrinked end")
 
-    # TODO test it and on CUDA also
     shrinkedBackprop = shrinkSegms(points, indices, maxInLine)
     print(shrinkedBackprop)
+    print("---------shrinkedBackprop end")
 
     restored = expandSegms(shrinked, numsInLines, points.shape)
     print(restored)
+    print("---------restored end")
 
-    # TODO test it and on CUDA also
     restoredMean = expandSegms(shrinked, numsInLines, points.shape, lengths)
     print(restoredMean)
+    print("---------restoredMean end")
