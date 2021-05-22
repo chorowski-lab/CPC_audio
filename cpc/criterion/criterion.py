@@ -222,7 +222,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
 
         return "orthoLoss", self.orthoLoss * self.wPrediction.orthoCriterion()
 
-    def forward(self, cFeature, encodedData, label, captureOptions):
+    def forward(self, cFeature, encodedData, label, captureOptions=None):
 
         if self.mode == "reverse":
             encodedData = torch.flip(encodedData, [1])
@@ -282,6 +282,29 @@ class SpeakerCriterion(BaseCriterion):
                 outLayers.append(nn.ReLU())
                 outLayers.append(nn.Linear(nSpeakers, nSpeakers))
             self.linearSpeakerClassifier = nn.Sequential(*outLayers)
+        self.lossCriterion = nn.CrossEntropyLoss()
+        self.entropyCriterion = nn.LogSoftmax(dim=1)
+
+    def forward(self, cFeature, otherEncoded, label):
+
+        # cFeature.size() : batchSize x seq Size x hidden size
+        batchSize = cFeature.size(0)
+        cFeature = cFeature[:, -1, :]
+        cFeature = cFeature.view(batchSize, -1)
+        predictions = self.linearSpeakerClassifier(cFeature)
+
+        loss = self.lossCriterion(predictions, label).view(1, -1)
+        acc = (predictions.max(1)[1] == label).double().mean().view(1, -1)
+
+        return loss, acc
+
+class SpeakerDoubleCriterion(BaseCriterion):
+
+    def __init__(self, dimEncoder, dimInter, nSpeakers):
+
+        super(SpeakerDoubleCriterion, self).__init__()
+        self.linearSpeakerClassifier = nn.Sequential(nn.Linear(dimEncoder, dimInter), 
+            nn.Linear(dimInter, nSpeakers))
         self.lossCriterion = nn.CrossEntropyLoss()
         self.entropyCriterion = nn.LogSoftmax(dim=1)
 

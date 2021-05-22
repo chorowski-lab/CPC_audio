@@ -96,7 +96,11 @@ class AudioBatchData(Dataset):
             del self.seqLabel
 
     def prepare(self):
+        randomstate = random.getstate()
+        random.seed(767543)  # set seed only for batching so that it is random but always same for same dataset
+                             # so that capturing captures data for same audio across runs if same dataset provided
         random.shuffle(self.seqNames)
+        random.setstate(randomstate)  # restore random state so that other stuff changes with seed in args
         start_time = time.time()
 
         print("Checking length...")
@@ -278,6 +282,7 @@ class AudioBatchData(Dataset):
 def loadFile(data):
     speaker, fullPath = data
     seqName = fullPath.stem
+
     # Due to some issues happening when combining torchaudio.load
     # with torch.multiprocessing we use soundfile to load the data
     seq = torch.tensor(sf.read(str(fullPath))[0]).float()
@@ -491,7 +496,8 @@ def findAllSeqs(dirName,
     prefixSize = len(dirName)
     speakersTarget = {}
     outSequences = []
-    for root, dirs, filenames in tqdm.tqdm(os.walk(dirName)):
+    #for root, dirs, filenames in tqdm.tqdm(os.walk(dirName)):
+    for root, dirs, filenames in tqdm.tqdm(os.walk(dirName, followlinks=True)):
         filtered_files = [f for f in filenames if f.endswith(extension)]
 
         if len(filtered_files) > 0:

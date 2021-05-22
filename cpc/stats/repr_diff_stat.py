@@ -26,7 +26,7 @@ class ReprDiffStat(statTempl.Stat):
     def __init__(self, metric, reprType, stepSize, histDir):
         super().__init__()
         assert metric in ('cosine', 'euclid', 'euclidsq', 'coscorr')
-        assert reprType in ('repr', 'ctx')
+        assert reprType in ('conv_repr', 'ctx_repr')
         self.metric = metric
         self.reprType = reprType
         self.stepSize = stepSize

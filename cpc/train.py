@@ -12,6 +12,7 @@ from copy import deepcopy
 import random
 import psutil
 import sys
+#import torchaudio
 
 import cpc.criterion as cr
 import cpc.criterion.soft_align as sa
@@ -70,6 +71,12 @@ def getCriterion(args, downsampling, nSpeakers, nPhones):
                                                         allowed_skips_beg=args.CPCCTCSkipBeg,
                                                         allowed_skips_end=args.CPCCTCSkipEnd,
                                                         predict_self_loop=args.CPCCTCSelfLoop,
+                                                        learn_blank=args.CPCCTCLearnBlank,
+                                                        normalize_enc=args.CPCCTCNormalizeEncs,
+                                                        normalize_preds=args.CPCCTCNormalizePreds,
+                                                        masq_rules=args.CPCCTCMasq,
+                                                        loss_temp=args.CPCCTCLossTemp,
+                                                        no_negs_in_match_window=args.CPCCTCNoNegsMatchWin,
                                                         limit_negs_in_batch=args.limitNegsInBatch,
                                                         mode=args.cpc_mode,
                                                         rnnMode=args.rnnMode,
@@ -364,6 +371,8 @@ def captureStep(
         cpcCaptureOpts.append('pred')
     if 'cpcctc_align' in whatToSave:
         cpcCaptureOpts.append('cpcctc_align')
+    if 'cpcctc_log_scores' in whatToSave:
+        cpcCaptureOpts.append('cpcctc_log_scores')
 
     # they merge (perhaps each speaker's) audio into one long chunk
     # and AFAIU sample can begin in one file and end in other one
@@ -400,12 +409,12 @@ def captureStep(
         
             # saving it with IDs like that assumes deterministic order of elements
             # which is there as dataLoader is a sequential one here
-            if 'repr' in whatToSave:
+            if 'conv_repr' in whatToSave:
                 # encoded data shape: batch_size x len x repr_dim
-                torch.save(encoded_data.cpu(), os.path.join(epochDir, 'repr', f'repr_batch{batchBegin}-{batchEnd}.pt'))
-            if 'ctx' in whatToSave:
+                torch.save(encoded_data.cpu(), os.path.join(epochDir, 'conv_repr', f'conv_repr_batch{batchBegin}-{batchEnd}.pt'))
+            if 'ctx_repr' in whatToSave:
                 # ctx data shape: also batch_size x len x repr_dim
-                torch.save(c_feature.cpu(), os.path.join(epochDir, 'ctx', f'ctx_batch{batchBegin}-{batchEnd}.pt'))
+                torch.save(c_feature.cpu(), os.path.join(epochDir, 'ctx_repr', f'ctx_repr_batch{batchBegin}-{batchEnd}.pt'))
             if 'speaker_align' in whatToSave:
                 # speaker data shape: batch_size (1-dim, each one in batch is whole by 1 speaker)
                 torch.save(labelSpeaker.cpu(), os.path.join(epochDir, 'speaker_align', f'speaker_align_batch{batchBegin}-{batchEnd}.pt'))
@@ -414,14 +423,15 @@ def captureStep(
                 torch.save(labelData['phone'].cpu(), os.path.join(epochDir, 'phone_align', f'phone_align_batch{batchBegin}-{batchEnd}.pt'))
             for cpcCaptureThing in cpcCaptureOpts:
                 # pred shape (CPC-CTC): batch_size x (len - num_matched) x repr_dim x num_predicts (or num_predicts +1 if self loop allowed)
-                # align shape (CPC-CTC): batch_size x (len - num_matched) x num_matched
+                # cpcctc_align shape (CPC-CTC): batch_size x (len - num_matched) x num_matched
+                # cpcctc_log_scores shape (CPC-CTC): batch_size x (len - num_matched) x num_matched x num_predicts (or num_predicts +1 if self loop allowed)
                 torch.save(captured[cpcCaptureThing].cpu(), os.path.join(epochDir, cpcCaptureThing, 
                             f'{cpcCaptureThing}_batch{batchBegin}-{batchEnd}.pt'))
 
             if captureStatsCollector:
                 allBatchData = {}
-                allBatchData['repr'] = encoded_data
-                allBatchData['ctx'] = c_feature
+                allBatchData['conv_repr'] = encoded_data
+                allBatchData['ctx_repr'] = c_feature
                 allBatchData['speaker_align'] = labelSpeaker
                 if 'phone' in labelData:
                     allBatchData['phone_align'] = labelData['phone']
@@ -592,9 +602,11 @@ def main(args):
     logs = {"epoch": [], "iter": [], "saveStep": args.save_step}
     loadOptimizer = False
     os.makedirs(args.pathCheckpoint, exist_ok=True)
+
     cpcEpochCompleted = -1  # enabling to train form checkpoint epoch and not logs epoch, possibly messing up logs but not model
     # needed to move thing below later, as adding some args later
     #json.dump(vars(args), open(os.path.join(args.pathCheckpoint, 'checkpoint_args.json'), 'wt'))
+
     if args.pathCheckpoint is not None and not args.restart:
         cdata = fl.getCheckpointData(args.pathCheckpoint, noLoadPossible=args.overrideArgsFile)
         if cdata is not None:
@@ -642,19 +654,21 @@ def main(args):
         assert args.pathCaptureSave is not None
         whatToSave = []
         if args.captureEverything:
-            whatToSave = ['repr', 'ctx', 'speaker_align', 'pred']
+            whatToSave = ['conv_repr', 'ctx_repr', 'speaker_align', 'pred']
             if args.path_phone_data:
                 whatToSave.append('phone_align')
             if args.CPCCTC:
                 whatToSave.append('cpcctc_align')
+                whatToSave.append('cpcctc_log_scores')
         else:
-            for argVal, name in zip([args.captureRepr, 
-                                    args.captureCtx, 
+            for argVal, name in zip([args.captureConvRepr, 
+                                    args.captureCtxRepr, 
                                     args.captureSpeakerAlign, 
                                     args.capturePhoneAlign,
                                     args.capturePred,
-                                    args.captureCPCCTCalign], 
-                                    ['repr', 'ctx', 'speaker_align', 'phone_align', 'pred', 'cpcctc_align']):
+                                    args.captureCPCCTCalign,
+                                    args.captureCPCCTClogScores], 
+                                    ['conv_repr', 'ctx_repr', 'speaker_align', 'phone_align', 'pred', 'cpcctc_align', 'cpcctc_log_scores']):
                 if argVal:
                     whatToSave.append(name)
         ###assert len(whatToSave) > 0
@@ -839,6 +853,12 @@ def main(args):
     json.dump(vars(args), open(os.path.join(args.pathCheckpoint, 'checkpoint_args.json'), 'wt'))
 
     if args.load is not None:
+        if args.gru_level is not None and args.gru_level > 0:
+            updateConfig = argparse.Namespace(nLevelsGRU=args.gru_level)
+        else:
+            updateConfig = None
+
+
         # loadBestNotLast = args.onlyCapture or args.only_classif_metric
         # could use this option for loading best state when not running actual training
         # but relying on CPC internal acc isn't very reliable
@@ -848,8 +868,16 @@ def main(args):
         #     in epoch 150, checkpoint from epoch 200 has "best from epoch 150" saved as globally best
         #     (but this is internal-CPC-score best anyway, which is quite vague)
         cpcModel, args.hiddenGar, args.hiddenEncoder = \
-            fl.loadModel(args.load, fcmSettings=fcmSettings)
-        CPChiddenGar, CPChiddenEncoder = args.hiddenGar, args.hiddenEncoder
+            fl.loadModel(args.load, fcmSettings=fcmSettings, load_nullspace=args.nullspace, updateConfig=updateConfig)
+        CPChiddenGar, CPChiddenEncoder = args.hiddenGar, args.hiddenEncoder            
+
+        if args.gru_level is not None and args.gru_level > 0:
+            # Keep hidden units at LSTM layers on sequential batches
+            if args.nullspace:
+                cpcModel.cpc.gAR.keepHidden = True
+            else:
+                cpcModel.gAR.keepHidden = True
+
     else:
         # Encoder network
         encoderNet = fl.getEncoder(args)
@@ -868,12 +896,13 @@ def main(args):
     batchSize = args.nGPU * args.batchSizeGPU
     cpcModel.supervised = args.supervised
 
+    downsampling = cpcModel.cpc.gEncoder.DOWNSAMPLING if isinstance(cpcModel, model.CPCModelNullspace) else cpcModel.gEncoder.DOWNSAMPLING
     # Training criterion
     if args.load is not None and args.loadCriterion:
-        cpcCriterion = loadCriterion(args.load[0], cpcModel.gEncoder.DOWNSAMPLING,
+        cpcCriterion = loadCriterion(args.load[0],  downsampling,
                                      len(speakers), nPhones)
     else:
-        cpcCriterion = getCriterion(args, cpcModel.gEncoder.DOWNSAMPLING,
+        cpcCriterion = getCriterion(args, downsampling,
                                     len(speakers), nPhones)
 
     if loadOptimizer:
@@ -907,10 +936,12 @@ def main(args):
                                  eps=args.epsilon)
 
     # Checkpoint
-    if args.pathCheckpoint is not None:
+    if args.pathCheckpoint is not None and not args.onlyCapture and not args.only_classif_metric:
         if not os.path.isdir(args.pathCheckpoint):
             os.mkdir(args.pathCheckpoint)
         args.pathCheckpoint = os.path.join(args.pathCheckpoint, "checkpoint")
+        with open(args.pathCheckpoint + "_args.json", 'w') as file:
+            json.dump(vars(args), file, indent=2)
 
     scheduler = None
     if args.schedulerStep > 0:
@@ -1188,6 +1219,10 @@ def parseArgs(argv):
     group_db.add_argument('--max_size_loaded', type=int, default=4000000000,
                           help='Maximal amount of data (in byte) a dataset '
                           'can hold in memory at any given time')
+    group_db.add_argument('--gru_level', type=int, default=-1,
+                          help='Hidden level of the LSTM autoregressive model to be taken'
+                          '(default: -1, last layer).')
+
     group_supervised = parser.add_argument_group(
         'Supervised mode (depreciated)')
     group_supervised.add_argument('--supervised', action='store_true',
@@ -1268,17 +1303,19 @@ def parseArgs(argv):
     group_save.add_argument('--save_step', type=int, default=5,
                             help="Frequency (in epochs) at which a checkpoint "
                             "should be saved")
+
     # stuff below for capturing data
     group_save.add_argument('--pathCaptureSave', type=str, default=None, )
     group_save.add_argument('--captureEachEpochs', type=int, default=10, help='how often to save capture data')
-    group_save.add_argument('--captureRepr', action='store_true', help='if to save representations after the encoder')
-    group_save.add_argument('--captureCtx', action='store_true', help='if to save LSTM-based contexts produced in CPC model')
+    group_save.add_argument('--captureConvRepr', action='store_true', help='if to save representations after the encoder')
+    group_save.add_argument('--captureCtxRepr', action='store_true', help='if to save LSTM-based contexts produced in CPC model')
     group_save.add_argument('--captureSpeakerAlign', action='store_true', help='if to save speaker alignments')
     group_save.add_argument('--capturePhoneAlign', action='store_true', help='if to save phone alignments')
+    group_save.add_argument('--captureEverything', action='store_true', help='save everything valid in this config')
     # below ONLY for CPC-CTC
     group_save.add_argument('--capturePred', action='store_true', help='if to save CPC predictions')
     group_save.add_argument('--captureCPCCTCalign', action='store_true', help='if to save CTC alignments with CPC predictions - only for CPC-CTC variant')
-    group_save.add_argument('--captureEverything', action='store_true', help='save everythong valid in this config')
+    group_save.add_argument('--captureCPCCTClogScores', action='store_true', help='if to save alignment log scores')
     # end of capturing data part here
 
     group_load = parser.add_argument_group('Load')
@@ -1295,6 +1332,8 @@ def parseArgs(argv):
                             help="If any checkpoint is found, ignore it and "
                             "restart the training from scratch.")
     group_load.add_argument('--overrideArgsFile', action='store_true', help="override args from config file with passed values")
+    group_load.add_argument('--nullspace', action='store_true',
+                            help="Additionally load nullspace")
 
     group_fcm = parser.add_argument_group("FCM")
     group_fcm.add_argument('--FCMproject', action='store_true')
@@ -1387,6 +1426,11 @@ def parseArgs(argv):
 
 
 if __name__ == "__main__":
+    #import ptvsd
+    #ptvsd.enable_attach(('0.0.0.0', 7310))
+    #print("Attach debugger now")
+    #ptvsd.wait_for_attach()
+
     torch.multiprocessing.set_start_method('spawn')
     args = sys.argv[1:]
     main(args)
