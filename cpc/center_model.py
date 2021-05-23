@@ -117,10 +117,10 @@ class CentroidModule(nn.Module):
                 with torch.no_grad():
                     #self.protos[self.nextExampleNum] = batch[lineNr,lineOffset].detach()
                     if candidateNr in self.chosenCentroidsCandidateNrs:
-                        self.chosenBatchInputs.append((self.last_input_batch.clone(), lineNr, lineOffset))
+                        self.chosenBatchInputs.append((self.last_input_batch.clone().cpu(), lineNr, lineOffset))
                         print(f"--> ADDED BATCH EXAMPLE #{self.nextExampleNum}")
                     if self.chosenKMeansCandidateNrs and candidateNr in self.chosenKMeansCandidateNrs and not addedThisBatch:  # both this and above can happen
-                        self.chosenKMeansBatches.append(self.last_input_batch.clone())
+                        self.chosenKMeansBatches.append(self.last_input_batch.clone().cpu())
                         addedThisBatch = True
                     # TODO ? change this so that batch[...].detach is stored and protos are recomputed after the epoch updates (?)
                     #   ^ could at least check it works
@@ -148,8 +148,8 @@ class CentroidModule(nn.Module):
             batchSums, closestCounts, labelCounts = self.getBatchSums(batch, closest, label=label)
             self.protoSums += batchSums
             self.protoCounts += closestCounts
-            batchToRemember = self.last_input_batch.clone() if self.batchRecompute else None
-            self.lastKmBatches[self.currentGlobalBatch] = (batchSums, closestCounts, batchToRemember)
+            batchToRemember = self.last_input_batch.clone().cpu() if self.batchRecompute else None
+            self.lastKmBatches[self.currentGlobalBatch] = (batchSums.cpu(), closestCounts.cpu(), batchToRemember)  # on batchToRemember .cpu() above if not None
             if self.batchRecompute:
                 self.batchUpdateQ.append(self.currentGlobalBatch)
             if self.keepBatchesLongTerm:
@@ -157,12 +157,14 @@ class CentroidModule(nn.Module):
                 weightedCounts = self.keepBatchesLongTermWeight*closestCounts
                 self.protoSums += weightedSums
                 self.protoCounts += weightedCounts
-                self.longTermKmBatches[self.currentGlobalBatch] = (weightedSums, weightedCounts)
+                self.longTermKmBatches[self.currentGlobalBatch] = (weightedSums.cpu(), weightedCounts.cpu())
 
             # subtract old out-of-the-window batch data
             oldBatch = self.currentGlobalBatch - self.keepBatches
             if oldBatch in self.lastKmBatches:
                 oldBatchSums, oldBatchCounts, _ = self.lastKmBatches[oldBatch]
+                oldBatchSums = oldBatchSums.cuda()
+                oldBatchCounts = oldBatchCounts.cuda()
                 self.protoSums -= oldBatchSums
                 self.protoCounts -= oldBatchCounts
                 del self.lastKmBatches[oldBatch]
@@ -170,6 +172,8 @@ class CentroidModule(nn.Module):
                 oldBatch = self.currentGlobalBatch - self.keepBatchesLongTerm
                 if oldBatch in self.longTermKmBatches:
                     oldBatchSums, oldBatchCounts = self.longTermKmBatches[oldBatch]
+                    oldBatchSums = oldBatchSums.cuda()
+                    oldBatchCounts = oldBatchCounts.cuda()
                     self.protoSums -= oldBatchSums
                     self.protoCounts -= oldBatchCounts
                     del self.longTermKmBatches[oldBatch]
@@ -201,6 +205,9 @@ class CentroidModule(nn.Module):
             if batchNr not in self.lastKmBatches:
                 continue  # old batch out of window, no update
             oldBatchSums, oldBatchCounts, batch = self.lastKmBatches[batchNr]
+            oldBatchSums = oldBatchSums.cuda()
+            oldBatchCounts = oldBatchCounts.cuda()
+            batch = batch.cuda()
             with torch.no_grad():
                 encoded_data = cpcModel(batch, None, None, None, None, epochNrs, False, True)
             if self.centerNorm:
@@ -216,7 +223,7 @@ class CentroidModule(nn.Module):
             self.protoCounts -= oldBatchCounts
             self.protoSums += batchSums
             self.protoCounts += closestCounts
-            self.lastKmBatches[batchNr] = (batchSums, closestCounts, batch)
+            self.lastKmBatches[batchNr] = (batchSums.cpu(), closestCounts.cpu(), batch.cpu())
             self.batchUpdateQ.append(batchNr)
             if self.centerNorm:
                 with torch.no_grad():
@@ -307,6 +314,7 @@ class CentroidModule(nn.Module):
     def initKmeansCenters(self, epochNrs, cpcModel):
         for i, (batchData, lineNr, lineOffset) in enumerate(self.chosenBatchInputs):
             with torch.no_grad():
+                batchData = batchData.cuda()
                 encoded_data = cpcModel(batchData, None, None, None, None, epochNrs, False, True)  # c_feature, encoded_data, label, pushLoss
                 self.protos[i] = encoded_data[lineNr,lineOffset]
                 # [!!!] here it's not normed, it's normed before any distance operation or before giving it outside
@@ -319,6 +327,7 @@ class CentroidModule(nn.Module):
         newCentersCounts = torch.zeros(self.protos.shape[0], dtype=torch.float32).cuda()
         print(f"ACTUAL BATCHES for k-means init epoch: {len(self.chosenKMeansBatches)}")
         for i, batch in enumerate(self.chosenKMeansBatches):
+            batch = batch.cuda()
             encoded_data = cpcModel(batch, None, None, None, None, epochNrs, False, True)
             if self.centerNorm:
                 encoded_data = self.normLen(encoded_data) 
