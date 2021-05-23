@@ -24,7 +24,7 @@ import cpc.eval.linear_separability as linsep
 from cpc.cpc_default_config import set_default_cpc_config
 from cpc.dataset import AudioBatchData, findAllSeqs, filterSeqs, parseSeqLabels
 import cpc.stats.stat_utils as statutil
-from cpc.segm.hier_segm import mergeStats
+from cpc.segm.hier_fast import mergeSlowStats
 
 
 def getCriterion(args, downsampling, nSpeakers, nPhones):
@@ -165,7 +165,7 @@ def trainStep(dataLoader,
         # also, can't just check cpcModel.hasPushLoss as dataParallel makes it harder to access
         if centerModel is not None:
             centerModel.inputsBatchUpdate(batchData, epochNrs, cpcModel)
-        c_feature, encoded_data, pure_enc, label, pushLoss, segmDictTens = cpcModel(batchData, label, None, None, givenCenters, epochNrs, False, False)
+        c_feature, encoded_data, pure_enc, label, pushLoss, segmSetTens = cpcModel(batchData, label, None, None, givenCenters, epochNrs, False, False)
         #print("!!!!", label.shape)
         if centerModel is not None:
             centerUpdateRes = centerModel.encodingsBatchUpdate(encoded_data, epochNrs, cpcModel, label=labelPhone)
@@ -240,7 +240,7 @@ def trainStep(dataLoader,
             logs["centersDM"] = np.zeros((1,1))
         if "pushloss_closest" not in logs and pushLoss is not None:
             logs["pushloss_closest"] = np.zeros(closestCounts.shape[0])
-        if "merge_stats_train" not in logs and segmDictTens is not None:
+        if "merge_stats_train" not in logs and segmSetTens is not None:
             logs["merge_stats_train"] = np.zeros((1,1))
 
         iter += 1
@@ -262,11 +262,11 @@ def trainStep(dataLoader,
             logs["labelCounts"] = centerUpdateRes["labelCounts"].detach().cpu().numpy() + logs["labelCounts"]
         if DM is not None:
             logs["centersDM"] = DM.detach().cpu().numpy() + logs["centersDM"]
-        if segmDictTens is not None:
+        if segmSetTens is not None and epochNr == totalEpochs:  # this stat is super slow, only do at the very end
             numPhones = labelData['phoneNr'][0].item()
             #--print(f"-------->*************** train numPhones: {numPhones}, label shape {labelPhone.shape}")
-            mergesNums, _ = mergeStats(segmDictTens, labelPhone, numPhones)
-            logs["merge_stats_train"] = mergesNums.cpu().numpy() + logs["merge_stats_train"]
+            mergesNums, _ = mergeSlowStats(segmSetTens, labelPhone, numPhones)
+            logs["merge_stats_train"] = mergesNums + logs["merge_stats_train"]
 
         if (step + 1) % loggingStep == 0:
             new_time = time.perf_counter()
@@ -322,23 +322,23 @@ def valStep(dataLoader,
             numGPUs = len(cpcModel.device_ids)
             if givenCenters is not None:
                 givenCenters = givenCenters.repeat(numGPUs,1)
-            c_feature, encoded_data, pure_enc, label, pushLoss, segmDictTens = cpcModel(batchData, label, None, None, givenCenters, epochNrs, False, False)
+            c_feature, encoded_data, pure_enc, label, pushLoss, segmSetTens = cpcModel(batchData, label, None, None, givenCenters, epochNrs, False, False)
             allLosses, allAcc, _ = cpcCriterion(c_feature, encoded_data, label, None)
 
         if "locLoss_val" not in logs:
             logs["locLoss_val"] = np.zeros(allLosses.size(1))
             logs["locAcc_val"] = np.zeros(allLosses.size(1))
-        if "merge_stats_val" not in logs and segmDictTens is not None:
+        if "merge_stats_val" not in logs and segmSetTens is not None:
             logs["merge_stats_val"] = np.zeros((1,1))
 
         iter += 1
         logs["locLoss_val"] += allLosses.mean(dim=0).cpu().numpy()
         logs["locAcc_val"] += allAcc.mean(dim=0).cpu().numpy()
-        if segmDictTens is not None:
+        if segmSetTens is not None and epochNr == totalEpochs:  # this stat is super slow, only do at the very end
             numPhones = labelData['phoneNr'][0].item()
             #print(f"-------->*************** val numPhones: {numPhones}")
-            mergesNums, _ = mergeStats(segmDictTens, labelPhone, numPhones)
-            logs["merge_stats_val"] = mergesNums.cpu().numpy() + logs["merge_stats_val"]
+            mergesNums, _ = mergeSlowStats(segmSetTens, labelPhone, numPhones)
+            logs["merge_stats_val"] = mergesNums + logs["merge_stats_val"]
 
     logs = utils.update_logs(logs, iter)
     logs["iter"] = iter

@@ -97,19 +97,19 @@ def intTensorToSegmDict(tens):
 
 def mergeStats(segmDictTens, label, numPhones):
     with torch.no_grad():
-        #label = label.cpu()
-        #segmDict = intTensorToSegmDict(segmDictTens)
-        #merges = torch.zeros(numPhones, numPhones, dtype=torch.float32).cpu()
-        #counts = torch.zeros(numPhones, dtype=torch.float32).cpu()
-        # for line, idxInLine in segmDict.keys():
-        #     line2, begin, end = segmDict[(line, idxInLine)]
-        #     labelsThere = list(map(lambda x: x.item(), label[line2, begin:(end+1)]))
-        #     for x in labelsThere:
-        #         counts[x] += 1
-        #         for y in labelsThere:
-        #             merges[x,y] += 1
-        #         merges[x,x] -= 1
-        return torch.zeros(1), torch.zeros(1) #merges, counts
+        label = label.cpu()
+        segmDict = intTensorToSegmDict(segmDictTens)
+        merges = torch.zeros(numPhones, numPhones, dtype=torch.float32).cpu()
+        counts = torch.zeros(numPhones, dtype=torch.float32).cpu()
+        for line, idxInLine in segmDict.keys():
+            line2, begin, end = segmDict[(line, idxInLine)]
+            labelsThere = list(map(lambda x: x.item(), label[line2, begin:(end+1)]))
+            for x in labelsThere:
+                counts[x] += 1
+                for y in labelsThere:
+                    merges[x,y] += 1
+                merges[x,x] -= 1
+        return merges, counts
                 
 
 # [!] lines has to be a numpy array, np.sum() crashes if done on tensor

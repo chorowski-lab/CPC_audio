@@ -9,6 +9,26 @@ from cpc.segm.fast_segm_torch_conversions import *
 import numpy as np
 from math import sqrt, ceil
 
+
+def mergeSlowStats(segmSetTens, label, numPhones):
+    with torch.no_grad():
+        label = label.cpu().numpy()
+        segmSet = convertTens3ValueSetBack(segmSetTens)
+        merges = torch.zeros(numPhones, numPhones, dtype=torch.float32).cpu().numpy()
+        counts = torch.zeros(numPhones, dtype=torch.float32).cpu().numpy()
+        for line, idxInLine, l in segmSet:
+            #line2, begin, end = segmDict[(line, idxInLine)]
+            begin = idxInLine - l + 1
+            end = idxInLine
+            labelsThere = list(map(lambda x: x.item(), label[line, begin:(end+1)]))
+            for x in labelsThere:
+                counts[x] += 1
+                for y in labelsThere:
+                    merges[x,y] += 1
+                merges[x,x] -= 1
+        return merges, counts
+
+
 def computeSEcosts(enc, maxSegmLen):
 
     # enc: B x N x D

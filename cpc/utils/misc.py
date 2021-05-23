@@ -204,7 +204,7 @@ def show_logs(text, logs):
         if key.startswith("merge_stats"):
 
             cnt = torch.tensor(logs[key])
-            if cnt.shape[0] < 5 or cnt.shape[1] < 5:  # empty no-stats-yet data
+            if cnt.shape[0] < 2 or cnt.shape[1] < 2:  # empty no-stats-yet data
                 continue
 
             topLen = cnt.shape[0]  # for now just write all
