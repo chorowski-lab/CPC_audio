@@ -25,6 +25,7 @@ from cpc.cpc_default_config import set_default_cpc_config
 from cpc.dataset import AudioBatchData, findAllSeqs, filterSeqs, parseSeqLabels
 import cpc.stats.stat_utils as statutil
 from cpc.segm.hier_fast import mergeSlowStats
+from cpc.segm.segment_cost_model import SegmentCostModel
 
 
 def getCriterion(args, downsampling, nSpeakers, nPhones):
@@ -122,6 +123,7 @@ def loadCriterion(pathCheckpoint, downsampling, nSpeakers, nPhones):
 def trainStep(dataLoader,
               cpcModel,
               centerModel,
+              segmentCostModel,
               cpcCriterion,
               optimizer,
               scheduler,
@@ -137,9 +139,12 @@ def trainStep(dataLoader,
     iter = 0
 
     epochNr, totalEpochs = epochNrs
+    normalBatchSize = 0
 
     for step, fulldata in enumerate(dataLoader):
         batchData, labelData = fulldata
+        normalBatchSize = max(normalBatchSize, batchData.shape[0])
+        #%#print("::", normalBatchSize)
         label = labelData['speaker']
         labelPhone = labelData['phone']
         #print("!!!", labelData.keys())
@@ -165,7 +170,13 @@ def trainStep(dataLoader,
         # also, can't just check cpcModel.hasPushLoss as dataParallel makes it harder to access
         if centerModel is not None:
             centerModel.inputsBatchUpdate(batchData, epochNrs, cpcModel)
-        c_feature, encoded_data, pure_enc, label, pushLoss, segmSetTens = cpcModel(batchData, label, None, None, givenCenters, epochNrs, False, False)
+        if segmentCostModel is not None:
+            maxAllowedSegmCost = segmentCostModel.getCurrentMaxCostEstimator()
+        else:
+            maxAllowedSegmCost = None
+        c_feature, encoded_data, pure_enc, label, labelPhoneByGPU, pushLoss, segmSetTens, batchAimCostSegmTens, batchActualKTens = cpcModel(batchData, label, labelPhone, maxAllowedSegmCost, givenCenters, epochNrs, False, False)
+        if segmentCostModel is not None and batchData.shape[0] == normalBatchSize:  # avoiding updating with smaller batches as would spoil average segm number stats
+            segmentCostModel.batchUpdate(batchAimCostSegmTens, batchActualKTens)
         #print("!!!!", label.shape)
         if centerModel is not None:
             centerUpdateRes = centerModel.encodingsBatchUpdate(encoded_data, epochNrs, cpcModel, label=labelPhone)
@@ -265,8 +276,10 @@ def trainStep(dataLoader,
         if segmSetTens is not None and epochNr == totalEpochs:  # this stat is super slow, only do at the very end
             numPhones = labelData['phoneNr'][0].item()
             #--print(f"-------->*************** train numPhones: {numPhones}, label shape {labelPhone.shape}")
-            mergesNums, _ = mergeSlowStats(segmSetTens, labelPhone, numPhones)
-            logs["merge_stats_train"] = mergesNums + logs["merge_stats_train"]
+            #%#print(f"----> SHAPE [0] OF SET TENSOR train: {segmSetTens.shape[0]}")
+            for i in range(segmSetTens.shape[0]):
+                mergesNums, _ = mergeSlowStats(segmSetTens[i], labelPhoneByGPU[i], numPhones)
+                logs["merge_stats_train"] = mergesNums + logs["merge_stats_train"]
 
         if (step + 1) % loggingStep == 0:
             new_time = time.perf_counter()
@@ -278,6 +291,8 @@ def trainStep(dataLoader,
             locLogs = utils.update_logs(logs, loggingStep, lastlogs)
             lastlogs = deepcopy(logs)
             utils.show_logs("Training loss", locLogs)
+            if segmentCostModel is not None:
+                segmentCostModel.showCurrentStats()
             start_time, n_examples = new_time, 0
 
     if centerModel is not None:
@@ -290,12 +305,15 @@ def trainStep(dataLoader,
     logs = utils.update_logs(logs, iter)
     logs["iter"] = iter
     utils.show_logs("Average training loss on epoch", logs)
+    if segmentCostModel is not None:
+        segmentCostModel.showCurrentStats()
     return logs
 
 
 def valStep(dataLoader,
             cpcModel,
             centerModel,
+            segmentCostModel,
             cpcCriterion,
             epochNrs):
 
@@ -322,7 +340,11 @@ def valStep(dataLoader,
             numGPUs = len(cpcModel.device_ids)
             if givenCenters is not None:
                 givenCenters = givenCenters.repeat(numGPUs,1)
-            c_feature, encoded_data, pure_enc, label, pushLoss, segmSetTens = cpcModel(batchData, label, None, None, givenCenters, epochNrs, False, False)
+            if segmentCostModel is not None:
+                maxAllowedSegmCost = segmentCostModel.getCurrentMaxCostEstimator()
+            else:
+                maxAllowedSegmCost = None
+            c_feature, encoded_data, pure_enc, label, labelPhoneByGPU, pushLoss, segmSetTens, _, _ = cpcModel(batchData, label, labelPhone, maxAllowedSegmCost, givenCenters, epochNrs, False, False)
             allLosses, allAcc, _ = cpcCriterion(c_feature, encoded_data, label, None)
 
         if "locLoss_val" not in logs:
@@ -337,8 +359,10 @@ def valStep(dataLoader,
         if segmSetTens is not None and epochNr == totalEpochs:  # this stat is super slow, only do at the very end
             numPhones = labelData['phoneNr'][0].item()
             #print(f"-------->*************** val numPhones: {numPhones}")
-            mergesNums, _ = mergeSlowStats(segmSetTens, labelPhone, numPhones)
-            logs["merge_stats_val"] = mergesNums + logs["merge_stats_val"]
+            #%#print(f"----> SHAPE [0] OF SET TENSOR val: {segmSetTens.shape[0]}")
+            for i in range(segmSetTens.shape[0]):
+                mergesNums, _ = mergeSlowStats(segmSetTens[i], labelPhoneByGPU[i], numPhones)
+                logs["merge_stats_val"] = mergesNums + logs["merge_stats_val"]
 
     logs = utils.update_logs(logs, iter)
     logs["iter"] = iter
@@ -350,6 +374,7 @@ def captureStep(
             dataLoader,
             cpcModel,
             centerModel,
+            segmentCostModel,
             cpcCriterion,
             captureOptions,
             captureStatsCollector,
@@ -404,7 +429,11 @@ def captureStep(
             numGPUs = len(cpcModel.device_ids)
             if givenCenters is not None:
                 givenCenters = givenCenters.repeat(numGPUs,1)
-            c_feature, encoded_data, pure_enc, labelSpeaker, _, _ = cpcModel(batchData, labelSpeaker, None, None, givenCenters, epochNrs, False, False)
+            if segmentCostModel is not None:
+                maxAllowedSegmCost = segmentCostModel.getCurrentMaxCostEstimator()
+            else:
+                maxAllowedSegmCost = None
+            c_feature, encoded_data, pure_enc, labelSpeaker, _, _, _, _, _ = cpcModel(batchData, labelSpeaker, None, maxAllowedSegmCost, givenCenters, epochNrs, False, False)
             allLosses, allAcc, captured = cpcCriterion(c_feature, encoded_data, labelSpeaker, cpcCaptureOpts)
         
             # saving it with IDs like that assumes deterministic order of elements
@@ -458,6 +487,7 @@ def run(trainDataset,
         samplingMode,
         cpcModel,
         centerModel,
+        segmentCostModel,
         cpcCriterion,
         nEpoch,
         pathCheckpoint,
@@ -520,10 +550,10 @@ def run(trainDataset,
         print("Training dataset %d batches, Validation dataset %d batches, batch size %d" %
             (len(trainLoader), len(valLoader), batchSize))
 
-        locLogsTrain = trainStep(trainLoader, cpcModel, centerModel, cpcCriterion,
+        locLogsTrain = trainStep(trainLoader, cpcModel, centerModel, segmentCostModel, cpcCriterion,
                                 optimizer, scheduler, logs["logging_step"], (epoch, nEpoch-1))
 
-        locLogsVal = valStep(valLoader, cpcModel, centerModel, cpcCriterion, (epoch, nEpoch-1))
+        locLogsVal = valStep(valLoader, cpcModel, centerModel, segmentCostModel, cpcCriterion, (epoch, nEpoch-1))
 
         if captureDataset is not None and epoch % captureEachEpochs == 0:
             print(f"Capturing data for epoch {epoch}")
@@ -537,7 +567,7 @@ def run(trainDataset,
         # this performs linsep task for the best CPC model up to date
         if linsepEpochs is not None and epoch != 0 and epoch in linsepEpochs:
             # capturing for current CPC state after this epoch, relying on CPC internal accuracy is vague
-            locLogsLinsep = linsepFun(epoch, cpcModel, centerModel, (epoch, nEpoch-1))
+            locLogsLinsep = linsepFun(epoch, cpcModel, centerModel, segmentCostModel, (epoch, nEpoch-1))
 
         print(f'Ran {epoch + 1} epochs '
             f'in {time.time() - start_time:.2f} seconds')
@@ -563,7 +593,7 @@ def run(trainDataset,
 
             fl.save_checkpoint(modelStateDict, criterionStateDict,
                             optimizer.state_dict(), bestStateDict,
-                            f"{pathCheckpoint}_{epoch}.pt")
+                            segmentCostModel, f"{pathCheckpoint}_{epoch}.pt")
             utils.save_logs(logs, pathCheckpoint + "_logs.json")
 
 
@@ -572,6 +602,7 @@ def onlyCapture(
         batchSize,
         cpcModel,
         centerModel,
+        segmentCostModel,
         cpcCriterion,
         logs,
         cpcEpochCompleted
@@ -586,7 +617,7 @@ def onlyCapture(
     captureLoader = captureDataset.getDataLoader(batchSize, 'sequential', False,
                                                 numWorkers=0)
     print(f"Capturing data for model checkpoint after epoch: {startEpoch-1}")
-    captureStep(captureLoader, cpcModel, centerModel, cpcCriterion, captureOptions, captureStatsCollector, (startEpoch-1, startEpoch-1))
+    captureStep(captureLoader, cpcModel, centerModel, segmentCostModel, cpcCriterion, captureOptions, captureStatsCollector, (startEpoch-1, startEpoch-1))
 
 
 def main(args):
@@ -805,6 +836,12 @@ def main(args):
             }
         else:
             centerInitSettings = None
+        if args.FCMsegmentCostModule:
+            segmentCostSettings = {
+                "batchesMem": args.FCMsegment_batchesMem
+            }
+        else:
+            segmentCostSettings = None
         if args.FCMleaveProtos is not None and args.FCMleaveProtos > 0:
             assert args.FCMleaveProtos <= args.FCMprotos
             args.FCMprotosForCriterion = args.FCMleaveProtos
@@ -813,6 +850,7 @@ def main(args):
     else:
         fcmSettings = None
         centerInitSettings = None
+        segmentCostSettings = None
 
     #print(f'REPRCONCAT {fcmSettings["reprsConcat"]}')
     if fcmSettings is not None:  
@@ -852,6 +890,7 @@ def main(args):
     # here args are ready, can dump
     json.dump(vars(args), open(os.path.join(args.pathCheckpoint, 'checkpoint_args.json'), 'wt'))
 
+    segmentCostModel = None  # will be loaded or created if it is used
     if args.load is not None:
         if args.gru_level is not None and args.gru_level > 0:
             updateConfig = argparse.Namespace(nLevelsGRU=args.gru_level)
@@ -867,8 +906,12 @@ def main(args):
         #     so if best is in epoch 100 and training is paused and resumed from checkpoint
         #     in epoch 150, checkpoint from epoch 200 has "best from epoch 150" saved as globally best
         #     (but this is internal-CPC-score best anyway, which is quite vague)
-        cpcModel, args.hiddenGar, args.hiddenEncoder = \
-            fl.loadModel(args.load, fcmSettings=fcmSettings, load_nullspace=args.nullspace, updateConfig=updateConfig)
+        loadedData = \
+            fl.loadModel(args.load, fcmSettings=fcmSettings, load_nullspace=args.nullspace, updateConfig=updateConfig, loadSCM=(segmentCostSettings is not None))
+        if segmentCostSettings is not None:
+            cpcModel, args.hiddenGar, args.hiddenEncoder, segmentCostModel = loadedData
+        else:
+            cpcModel, args.hiddenGar, args.hiddenEncoder = loadedData
         CPChiddenGar, CPChiddenEncoder = args.hiddenGar, args.hiddenEncoder            
 
         if args.gru_level is not None and args.gru_level > 0:
@@ -887,11 +930,15 @@ def main(args):
         cpcModel = model.CPCModel(encoderNet, arNet, fcmSettings=fcmSettings)
 
         CPChiddenGar, CPChiddenEncoder = cpcModel.gAR.getDimOutput(), cpcModel.gEncoder.getDimOutput()
-    # TODO saving, loading, stuff
+    # TODO saving, loading, stuff for centerModel
     if centerInitSettings is not None:
         centerModel = center_model.CentroidModule(centerInitSettings)
     else:
         centerModel = None
+
+    if segmentCostSettings is not None and segmentCostModel is None:
+        segmentCostModel = SegmentCostModel(segmentCostSettings)
+    # else already set to None, no need to change
 
     batchSize = args.nGPU * args.batchSizeGPU
     cpcModel.supervised = args.supervised
@@ -1069,7 +1116,7 @@ def main(args):
 
         print("linsep_val_loader ready")
 
-        def runLinsepClassificationTraining(numOfEpoch, cpcMdl, centerModel, cpcStateEpochs):
+        def runLinsepClassificationTraining(numOfEpoch, cpcMdl, centerModel, segmentCostModel, cpcStateEpochs):
             locLogsPhone = {}
             locLogsSpeaker = {}
             for linsepNr in range(args.linsep_times):
@@ -1097,6 +1144,7 @@ def main(args):
                     locLogsPhone = linsep.trainLinsepClassification(
                         cpcMdl,
                         centerModel,
+                        segmentCostModel,
                         phone_criterion,  # combined with classification model before
                         linsep_train_loader,
                         linsep_val_loader,
@@ -1114,6 +1162,7 @@ def main(args):
                     locLogsSpeaker = linsep.trainLinsepClassification(
                         cpcMdl,
                         centerModel,
+                        segmentCostModel,
                         speaker_criterion,  # combined with classification model before
                         linsep_train_loader,
                         linsep_val_loader,
@@ -1148,6 +1197,7 @@ def main(args):
             args.samplingType,
             cpcModel,
             centerModel,
+            segmentCostModel,
             cpcCriterion,
             args.nEpoch,
             args.pathCheckpoint,
@@ -1164,6 +1214,7 @@ def main(args):
             batchSize,
             cpcModel,
             centerModel,
+            segmentCostModel,
             cpcCriterion,
             logs,
             cpcEpochCompleted)
@@ -1173,7 +1224,7 @@ def main(args):
     #               will use "last state" and not "best in internal CPC accuracy" anyway
         trainedEpoch = cpcEpochCompleted  #len(logs["epoch"]) - 1
         # runPhonemeClassificationTraining created above if args.supervised_classif_metric
-        runLinsepClassificationTraining(trainedEpoch, cpcModel, centerModel, (trainedEpoch, args.nEpoch))
+        runLinsepClassificationTraining(trainedEpoch, cpcModel, centerModel, segmentCostModel, (trainedEpoch, args.nEpoch))
 
 
 def parseArgs(argv):
@@ -1383,6 +1434,9 @@ def parseArgs(argv):
     group_fcm.add_argument('--FCMcenter_norm', action='store_true')
     group_fcm.add_argument('--FCMcenter_batchRecompute', type=int, default=None)
     #FCMcenterInitAfterEpoch
+
+    group_fcm.add_argument('--FCMsegmentCostModule', action='store_true')
+    group_fcm.add_argument('--FCMsegment_batchesMem', type=int, default=None)
     
 
     group_gpu = parser.add_argument_group('GPUs')

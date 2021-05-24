@@ -2,6 +2,11 @@
 # because why allow for a prefix of returned values to be tensors and allow dicts, lists etc in suffix and just don't add them to graph
 # when you can make everyone have to convert things to and from tensors without real reason
 
+# also in DataParallel ofc it's better to demand every GPU has to return exact same shape and not only on dim=0
+# to make it even harder to encode and return a dict
+# people who think there is only one simplest usecase and make things only work in this case 
+# (when there is no reason not to work in other ones and rather not much work to do (or even literally none) for that), shouldn't write libraries
+
 import torch
 
 def convertNumToTens(num):
@@ -20,10 +25,21 @@ def convert3ValueIntSetToInt32Tens(s):
         i += 3
     return tens
 
+def padTens3ValueSetToLength(t, l):  # l is number of 3-num entries
+    #print(t.shape[0], l)
+    assert t.shape[0] <= l*3
+    tens = torch.zeros((3*l,), dtype=torch.int32).cuda()
+    tens[:t.shape[0]] = t.cuda()
+    tens[t.shape[0]:] = -1
+    return tens.cpu()
+
+# this assumes valid values are > 0
 def convertTens3ValueSetBack(setTens):
     s = set()
     i = 0
     while i < setTens.shape[0]:
+        if setTens[i].item() < 0:  # needed to make encoded dicts on every GPU same length because torch is as user unfriendly as it can
+            break
         s.add((setTens[i].item(), setTens[i+1].item(), setTens[i+2].item()))
         i += 3
     return s
@@ -62,7 +78,10 @@ if __name__ == "__main__":
     s = set([(1,2,3), (7,8,3), (0,0,2)])
     sconv = convert3ValueIntSetToInt32Tens(s)
     sback = convertTens3ValueSetBack(sconv)
+    sconv2 = padTens3ValueSetToLength(sconv, 5)
+    sback2 = convertTens3ValueSetBack(sconv2)
     print(s, sback, sconv)
+    print(s, sback2, sconv2)
 
     l = [[3,5,8], [2,10], [1,3,5,4]]
     lconv = convert2DimListsToInt32TensorAndMask(l)

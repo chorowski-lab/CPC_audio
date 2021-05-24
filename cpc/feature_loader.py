@@ -7,6 +7,7 @@ import torchaudio
 import os
 import json
 import argparse
+from copy import deepcopy
 from .cpc_default_config import get_default_cpc_config
 from .dataset import parseSeqLabels
 from .model import CPCModel, CPCModelNullspace, ConcatenatedModel
@@ -191,7 +192,7 @@ def getAR(args):
 
 
 
-def loadModel(pathCheckpoints, loadStateDict=True, fcmSettings=None, load_nullspace=False, updateConfig=None, loadBestNotLast=False):
+def loadModel(pathCheckpoints, loadStateDict=True, fcmSettings=None, load_nullspace=False, updateConfig=None, loadBestNotLast=False, loadSCM=False):
 
     models = []
     hiddenGar, hiddenEncoder = 0, 0
@@ -209,20 +210,31 @@ def loadModel(pathCheckpoints, loadStateDict=True, fcmSettings=None, load_nullsp
             loadArgs(locArgs, updateConfig)
 
         if doLoad:
-            m_, hg, he = loadModel(locArgs.load, loadStateDict=False, loadBestNotLast=loadBestNotLast, fcmSettings=fcmSettings, updateConfig=updateConfig)
+            loaded = loadModel(locArgs.load, loadStateDict=False, loadBestNotLast=loadBestNotLast, fcmSettings=fcmSettings, updateConfig=updateConfig, loadSCM=loadSCM)
+            if loadSCM:
+                m_, hg, he, _ = loaded  # here ignore scm, want to load one from "main" checkpoint
+            else:
+                m_, hg, he = loaded
             hiddenGar += hg
             hiddenEncoder += he
+            scm = None
         else:
             print('LocArgs:', locArgs)
             encoderNet = getEncoder(locArgs)
             
             arNet = getAR(locArgs)
             m_ = CPCModel(encoderNet, arNet, fcmSettings=fcmSettings)
+            scm = None
 
         if loadStateDict:
             print(f"Loading the state dict at {path}")
             state_dict = torch.load(path, 'cpu')
-
+            if loadSCM:
+                if "segmentCostModel" in state_dict:
+                    print("-----> LOADED segmentCostModel")
+                    scm = state_dict["segmentCostModel"]  # [!] will not work that well with concatenatedModel thingy and several-checkpoint-loading
+                else:
+                    print("-----> WARNING: SPECIFIED CONFIG WITH segmentCostModel WHICH IS NOT PRESENT IN THE CHECKPOINT")
             # CPCModelNullspace
             if load_nullspace:
                 dim_features = hiddenGar
@@ -244,9 +256,16 @@ def loadModel(pathCheckpoints, loadStateDict=True, fcmSettings=None, load_nullsp
         models.append(m_)
 
     if len(models) == 1:
-        return models[0], hiddenGar, hiddenEncoder
+        print("LOADED REGULAR NON-CONCATENATED MODEL")
+        if loadSCM:
+            return models[0], hiddenGar, hiddenEncoder, scm
+        else:
+            return models[0], hiddenGar, hiddenEncoder
 
-    return ConcatenatedModel(models), hiddenGar, hiddenEncoder
+    if loadSCM:
+        return ConcatenatedModel(models), hiddenGar, hiddenEncoder, scm
+    else:
+        return ConcatenatedModel(models), hiddenGar, hiddenEncoder
 
 
 def get_module(i_module):
@@ -257,13 +276,14 @@ def get_module(i_module):
     return i_module
 
 
-def save_checkpoint(model_state, criterion_state, optimizer_state, best_state,
+def save_checkpoint(model_state, criterion_state, optimizer_state, best_state, segmentCostModel,
                     path_checkpoint):
 
     state_dict = {"gEncoder": model_state,
                   "cpcCriterion": criterion_state,
                   "optimizer": optimizer_state,
-                  "best": best_state}
+                  "best": best_state,
+                  "segmentCostModel": segmentCostModel}
 
     torch.save(state_dict, path_checkpoint)
 

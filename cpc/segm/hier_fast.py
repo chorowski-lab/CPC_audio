@@ -8,12 +8,15 @@ from cpc.segm.shrink_reshrink import *
 from cpc.segm.fast_segm_torch_conversions import *
 import numpy as np
 from math import sqrt, ceil
+from copy import deepcopy
 
 
 def mergeSlowStats(segmSetTens, label, numPhones):
     with torch.no_grad():
         label = label.cpu().numpy()
         segmSet = convertTens3ValueSetBack(segmSetTens)
+        #%#print("!mergeStats", segmSetTens.shape, label.shape, len(segmSet))
+        
         merges = torch.zeros(numPhones, numPhones, dtype=torch.float32).cpu().numpy()
         counts = torch.zeros(numPhones, dtype=torch.float32).cpu().numpy()
         for line, idxInLine, l in segmSet:
@@ -64,8 +67,10 @@ def computeSEcosts(enc, maxSegmLen):
     return costs
 
 
-
-def costSegm(costs, shape, k, minSegmsInLine):
+# maxCost has priority, but need to merge until later one from maxCost, k
+# as need to report segmSet after maxCost and cost when k
+# maxCost can be none and k can't
+def costSegm(costs, shape, maxCost, k, minSegmsInLine):
     costs = costs.cpu().numpy()
     maxSegmLen = costs.shape[0]
     #print(f"maxsegmlen: {maxSegmLen}")
@@ -75,27 +80,45 @@ def costSegm(costs, shape, k, minSegmsInLine):
     segms = set()  #{}
     lenOnRight = {}
     lenOnLeft = {}
-    for i in range(h):
-        for j in range(w):
+    for iii in range(h):
+        for jjj in range(w):
             #print(i,j)
-            segms.add((i,j,1)) #= costs[0,i,j]
-            lenOnRight[(i,j)] = 1
-            lenOnLeft[(i,j)] = 1
+            segms.add((iii,jjj,1)) #= costs[0,i,j]
+            lenOnRight[(iii,jjj)] = 1
+            lenOnLeft[(iii,jjj)] = 1
     pq = []
-    for i in range(h):
-        for j in range(w-1):
-            heappush(pq, (costs[1,i,j+1].item(),i,j,1,i,j+1,1))
+    for iii in range(h):
+        for jjj in range(w-1):
+            heappush(pq, (costs[1,iii,jjj+1].item(),iii,jjj,1,iii,jjj+1,1))
     linesSegms = [w for _ in range(h)]
     #numSegms = len(segms)
     loopIters = 0
     #print("--", len(pq))
-    while len(pq) > 0 and len(segms) > k:  #numSegms > k:
+    costNow = 0
+    segmsWhenCost = None
+    segmsWhenK = None
+    costPresent = True
+    if maxCost is None:
+        maxCost = -1
+        costPresent = False
+    while len(pq) > 0 and (len(segms) > k or costNow <= maxCost):  #numSegms > k:
         loopIters += 1
         cost, i1, j1, l1, i2, j2, l2 = heappop(pq)
         if (i1,j1,l1) not in segms or (i2,j2,l2) not in segms or linesSegms[i1] <= minSegmsInLine:
             continue
         #print(":", i1, j1, l1, i2, j2, l2)
         
+        ###print(";", cost)
+
+        # before the merge that could have too big cost
+        if costPresent and cost > maxCost and segmsWhenCost is None:
+            ###print("A")
+            segmsWhenCost = deepcopy(segms)
+            costWhenCost = costNow
+            kWhenCost = len(segms)
+
+        costNow = cost
+
         segms.remove((i1,j1,l1))
         segms.remove((i2,j2,l2))
         newLen = l1+l2
@@ -104,25 +127,51 @@ def costSegm(costs, shape, k, minSegmsInLine):
         lenOnRight[(i1,j1-l1+1)] = newLen
         lenOnLeft[(i1,j2)] = newLen
         #numSegms -= 1
-        #print("@", newLen, i1, j2-newLen+1, j2, "|", j1-l1+1, j2)
+        ###print("@", newLen, i1, j2-newLen+1, j2, "|", j1-l1+1, j2, "&", i1, j1, l1, i2, j2, l2)
         if j1-l1 >= 0:
             ll = lenOnLeft[(i1,j1-l1)]
-            #print("ll", ll)
+            ###print("ll", ll)
             if newLen+ll <= maxSegmLen:
-                heappush(pq, (costs[newLen+ll-1,i,j2].item(),i1,j1-l1,ll,i1,j2,newLen))
+                heappush(pq, (costs[newLen+ll-1,i1,j2].item(),i1,j1-l1,ll,i1,j2,newLen))
+                ###print("ADD", newLen+ll-1, i1, j2, "|", (costs[newLen+ll-1,i1,j2].item(),i1,j1-l1,ll,i1,j2,newLen))
                 #print((i1,j1-l1,ll) in segms, (i1,j2,newLen) in segms)
         if j2+1 < w:
             lr = lenOnRight[(i1, j2+1)]
-            #print("lr", lr)
+            ###print("lr", lr)
             if newLen+lr <= maxSegmLen:
-                heappush(pq, (costs[newLen+lr-1,i,j2+lr].item(),i1,j2,newLen,i1,j2+lr,lr))
+                heappush(pq, (costs[newLen+lr-1,i1,j2+lr].item(),i1,j2,newLen,i1,j2+lr,lr))
+                ###print("ADD", newLen+lr-1,i1,j2+lr, "|", (costs[newLen+lr-1,i1,j2+lr].item(),i1,j2,newLen,i1,j2+lr,lr))
                 #print((i1,j2,newLen) in segms, (i1,j2+lr,lr) in segms)
         #print(len(pq), len(segms))
         #print(segms)
+
+        if len(segms) == k:
+            ###print("B")
+            segmsWhenK = deepcopy(segms)
+            costWhenK = costNow
+            kWhenK = k
+        
+
+    if costPresent and segmsWhenCost is None:
+        ###print("C")
+        segmsWhenCost = deepcopy(segms)
+        costWhenCost = costNow
+        kWhenCost = len(segms)
+
+    # minsegmsinline reached
+    if segmsWhenK is None:
+        ###print("D")
+        segmsWhenK = deepcopy(segms)
+        costWhenK = costNow
+        kWhenK = len(segms)
+
     #print(len(pq), len(segms))
 
     #print(f"Loop iters: {loopIters}")
-    return segms
+    if costPresent:
+        return (segmsWhenCost, costWhenCost, kWhenCost), (segmsWhenK, costWhenK, kWhenK)  #segms
+    else:
+        return None, (segmsWhenK, costWhenK, kWhenK)
 
 
 class FastHierarchicalSegmentationLayer(Function):
@@ -130,17 +179,27 @@ class FastHierarchicalSegmentationLayer(Function):
     @staticmethod
     def getKforGivenShorteningAndShape(shape, shortening):
         numReprs = float(np.prod(shape[:-1]))
-        return max(int(round(numReprs / float(shortening))), 1)
+        return max(int(round(numReprs / float(shortening))), 1), int(numReprs)
 
     @staticmethod
-    def forward(ctx, inputGPU, k, maxSegmLen, minSegmsPerLine=None): 
+    def forward(ctx, inputGPU, maxSegmentCost, k, maxSegmLen, minSegmsPerLine=None): 
         #print(f"input shape: {inputGPU.shape}")
+        #%#print(f"FASTSEGM invoked, maxCost: {maxSegmentCost}, k : {k}")
         with torch.no_grad():
             #t0 = time.time()
             minSegmsPerLine = 5 if minSegmsPerLine is None else minSegmsPerLine
             seCosts = computeSEcosts(inputGPU, maxSegmLen)
             #t1 = time.time()
-            segms = costSegm(seCosts.cpu(), inputGPU.shape, k, minSegmsPerLine)
+            segmDataCost, segmDataK = costSegm(seCosts.cpu(), inputGPU.shape, maxSegmentCost, k, minSegmsPerLine)
+            segms, costForWantedK, _ = segmDataK
+            costForWantedKTens = torch.tensor([costForWantedK]).cpu()
+            ctx.mark_non_differentiable(costForWantedKTens)    
+            if segmDataCost is None:
+                actualK = k
+            else:
+                segms, _, actualK = segmDataCost
+            actualKTens = torch.tensor([actualK]).cpu()
+            ctx.mark_non_differentiable(actualKTens)
             #t2 = time.time()
             indices, lengths, numsInLines, maxInLine = segmSetLengthChangeThings(segms, (inputGPU.shape[0],inputGPU.shape[1]), inputGPU.shape[2])
             #t3 = time.time()
@@ -162,20 +221,21 @@ class FastHierarchicalSegmentationLayer(Function):
             ctx.mark_non_differentiable(maxNumConverted)
             shapeTens = torch.tensor(inputGPU.shape).cpu()
             ctx.mark_non_differentiable(shapeTens)
+            
             #print(f"shape tens: {shapeTens}")
             #t5 = time.time()
             #print(f"actual time: {t1-t0}, {t2-t1}, {t3-t2}, {t4-t3}, nonsense conversion times: {t5-t4}")
             return shrinked, segmsConverted, indices, lengths, \
-                numInLinesConverted[0], numInLinesConverted[1], maxNumConverted, shapeTens
+                numInLinesConverted[0], numInLinesConverted[1], maxNumConverted, shapeTens, costForWantedKTens, actualKTens
 
     @staticmethod
-    def backward(ctx, dxThrough, segm=None, ind=None, lens=None, nums0=None, nums1=None, maxl=None, shapet=None):  #, finalSegments=None, segmentNumsInLines=None):
+    def backward(ctx, dxThrough, segm=None, ind=None, lens=None, nums0=None, nums1=None, maxl=None, shapet=None, costt=None, actualkt=None):  #, finalSegments=None, segmentNumsInLines=None):
 
         with torch.no_grad():
             #print("!!!", dxThrough, ctx.numsInLines, ctx.lengths)
             backprop = expandSegms(dxThrough, ctx.numsInLines, ctx.inputShape, ctx.lengths)
             #print("***", backprop)
-            return backprop, None, None, None, None
+            return backprop, None, None, None, None, None
 
 
 class FastSegmentationLengthRestoreLayer(Function):
@@ -208,9 +268,53 @@ if __name__ == "__main__":
 
     enc1 = torch.tensor([[[1.],[1.],[2.],[3.]], [[4.],[5.],[6.],[7.]]]).cuda()
     costs1 = computeSEcosts(enc1, 4)
-    segms1 = costSegm(costs1, enc1.shape, 5, 2)
+    segmsCost1, segmsK1 = costSegm(costs1, enc1.shape, None, 5, 2)
+    segms1, _, _ = segmsK1
     print(costs1)
     print(segms1)
+    print("*")
+    print(segmsCost1)
+    print(segmsK1)
+    print("----")
+    segmsCost2, segmsK2 = costSegm(costs1, enc1.shape, 0.3, 5, 2)
+    segms2, _, _ = segmsK2
+    #print(costs1)
+    print(segms2)
+    print("*")
+    print(segmsCost2)
+    print(segmsK2)
+    print("----")
+    segmsCost3, segmsK3 = costSegm(costs1, enc1.shape, 0.6, 3, 2)  # here can't merge because of minSegmsPerLine
+    segms3, _, _ = segmsK3
+    #print(costs1)
+    print(segms3)
+    print("*")
+    print(segmsCost3)
+    print(segmsK3)
+    print("----")
+    segmsCost4, segmsK4 = costSegm(costs1, enc1.shape, 0.6, 3, 1)
+    segms4, _, _ = segmsK4
+    #print(costs1)
+    print(segms4)
+    print("*")
+    print(segmsCost4)
+    print(segmsK4)
+    print("----")
+    segmsCost5, segmsK5 = costSegm(costs1, enc1.shape, 5, 3, 1)
+    segms5, _, _ = segmsK5
+    #print(costs1)
+    print(segms5)
+    print("*")
+    print(segmsCost5)
+    print(segmsK5)
+    print("----")
+    segmsCost6, segmsK6 = costSegm(costs1, enc1.shape, 5, 2, 1)
+    segms6, _, _ = segmsK6
+    #print(costs1)
+    print(segms6)
+    print("*")
+    print(segmsCost6)
+    print(segmsK6)
     print("----------")
     enc2 = torch.tensor([[[1.,1.],[1.,1.],[2.,2.],[3.,3.]], [[4.,4.],[5.,5.],[6.,6.],[7.,7.]]]).cuda()
     print(computeSEcosts(enc2, 4))
@@ -223,7 +327,8 @@ if __name__ == "__main__":
     t1 = time.time()
     costs=costs.cpu()
     t2 = time.time()
-    segms = costSegm(costs, enc3.shape, 2000, 2)
+    segmsCost, segmsK = costSegm(costs, enc3.shape, None, 2000, 2)
+    segms, _, _ = segmsK
     t3 = time.time()
     print(len(segms))
     t4_0 = time.time()
@@ -275,8 +380,9 @@ if __name__ == "__main__":
     tensor = torch.tensor([[[1,2],[1,2],[3,4],[3,4],[3,4],[8,9],[8,9]], [[1,2],[1,2],[3,4],[3,4],[3,4],[8,9],[8,9]]], dtype=torch.float32)\
         .cuda().requires_grad_(True)
     
-    resOutput, segms, shrinkIndices, lengths, numsInLinesC0, numsInLinesC1, maxInLine, inShapeTens = FastHierarchicalSegmentationLayer.apply(
+    resOutput, segms, shrinkIndices, lengths, numsInLinesC0, numsInLinesC1, maxInLine, inShapeTens, costForKth, actualK = FastHierarchicalSegmentationLayer.apply(
         tensor, 
+        None,
         5, 
         10,
         2)
@@ -286,6 +392,8 @@ if __name__ == "__main__":
     print(lengths)
     print(convert2DimListTensBack((numsInLinesC0, numsInLinesC1)))
     print(convertNumTensBack(maxInLine))
+    print(convertNumTensBack(costForKth))
+    print(actualK)
     print("--")
     resOutput.sum().backward()  # .backward() needs loss to be a number (tensor of size (1,))
     print(tensor.grad)
@@ -296,11 +404,99 @@ if __name__ == "__main__":
     resOutRestored.sum().backward()
     print(tensor.grad)  # 1s everywhere are correct, as sum is taken and stuff is copied length times after shortening
 
+    print("-------------------------- torch with shorten and restore 2 ---------------------------")
+    # (tensor, padMask, k, kSumRange)
+    tensor = torch.tensor([[[1,2],[1,2],[3,4],[3,4],[3,4],[8,9],[8,9]], [[1,2],[1,2],[3,4],[3,4],[3,4],[8,9],[8,9]]], dtype=torch.float32)\
+        .cuda().requires_grad_(True)
+    
+    resOutput, segms, shrinkIndices, lengths, numsInLinesC0, numsInLinesC1, maxInLine, inShapeTens, costForKth, actualK = FastHierarchicalSegmentationLayer.apply(
+        tensor, 
+        None,
+        3, 
+        10,
+        1)
+    print(resOutput)
+    print(convertTens3ValueSetBack(segms))
+    print(shrinkIndices)
+    print(lengths)
+    print(convert2DimListTensBack((numsInLinesC0, numsInLinesC1)))
+    print(convertNumTensBack(maxInLine))
+    print(convertNumTensBack(costForKth))
+    print(actualK)
+    print("--")
+    resOutput.sum().backward()  # .backward() needs loss to be a number (tensor of size (1,))
+    print(tensor.grad)
+    tensor.grad.data.zero_()
+    print("---")
+    resOutRestored = FastSegmentationLengthRestoreLayer.apply(resOutput, numsInLinesC0, numsInLinesC1, shrinkIndices, maxInLine, torch.Size(inShapeTens))
+    print(resOutRestored)
+    resOutRestored.sum().backward()
+    print(tensor.grad)  # 1s everywhere are correct, as sum is taken and stuff is copied length times after shortening
+
+    print("-------------------------- torch with shorten and restore 3 ---------------------------")
+    # (tensor, padMask, k, kSumRange)
+    tensor = torch.tensor([[[1,2],[1,2],[3,4],[3,4],[3,4],[8,9],[8,9]], [[1,2],[1,2],[3,4],[3,4],[3,4],[8,9],[8,9]]], dtype=torch.float32)\
+        .cuda().requires_grad_(True)
+    
+    resOutput, segms, shrinkIndices, lengths, numsInLinesC0, numsInLinesC1, maxInLine, inShapeTens, costForKth, actualK = FastHierarchicalSegmentationLayer.apply(
+        tensor, 
+        20,
+        3, 
+        10,
+        1)
+    print(resOutput)
+    print(convertTens3ValueSetBack(segms))
+    print(shrinkIndices)
+    print(lengths)
+    print(convert2DimListTensBack((numsInLinesC0, numsInLinesC1)))
+    print(convertNumTensBack(maxInLine))
+    print(convertNumTensBack(costForKth))
+    print(actualK)
+    print("--")
+    resOutput.sum().backward()  # .backward() needs loss to be a number (tensor of size (1,))
+    print(tensor.grad)
+    tensor.grad.data.zero_()
+    print("---")
+    resOutRestored = FastSegmentationLengthRestoreLayer.apply(resOutput, numsInLinesC0, numsInLinesC1, shrinkIndices, maxInLine, torch.Size(inShapeTens))
+    print(resOutRestored)
+    resOutRestored.sum().backward()
+    print(tensor.grad)  # 1s everywhere are correct, as sum is taken and stuff is copied length times after shortening
+
+    print("-------------------------- torch with shorten and restore 4 ---------------------------")
+    # (tensor, padMask, k, kSumRange)
+    tensor = torch.tensor([[[1,2],[1,2],[3,4],[3,4],[3,4],[8,9],[8,9]], [[1,2],[1,2],[3,4],[3,4],[3,4],[8,9],[8,9]]], dtype=torch.float32)\
+        .cuda().requires_grad_(True)
+    
+    resOutput, segms, shrinkIndices, lengths, numsInLinesC0, numsInLinesC1, maxInLine, inShapeTens, costForKth, actualK = FastHierarchicalSegmentationLayer.apply(
+        tensor, 
+        200,
+        3, 
+        10,
+        1)  # this should only leave 2 segments as cost has priority over k
+    print(resOutput)
+    print(convertTens3ValueSetBack(segms))
+    print(shrinkIndices)
+    print(lengths)
+    print(convert2DimListTensBack((numsInLinesC0, numsInLinesC1)))
+    print(convertNumTensBack(maxInLine))
+    print(convertNumTensBack(costForKth))
+    print(actualK)
+    print("--")
+    resOutput.sum().backward()  # .backward() needs loss to be a number (tensor of size (1,))
+    print(tensor.grad)
+    tensor.grad.data.zero_()
+    print("---")
+    resOutRestored = FastSegmentationLengthRestoreLayer.apply(resOutput, numsInLinesC0, numsInLinesC1, shrinkIndices, maxInLine, torch.Size(inShapeTens))
+    print(resOutRestored)
+    resOutRestored.sum().backward()
+    print(tensor.grad)  # 1s everywhere are correct, as sum is taken and stuff is copied length times after shortening
+    
     print("------------------measure batch time")
     encAllTimed = torch.rand(64, 128, 256, dtype=torch.float32).cuda().requires_grad_(True)
     ta0 = time.time()
-    resOutput, segms, shrinkIndices, lengths, numsInLinesC0, numsInLinesC1, maxInLine, inShapeEncAllTimedTens = FastHierarchicalSegmentationLayer.apply(
+    resOutput, segms, shrinkIndices, lengths, numsInLinesC0, numsInLinesC1, maxInLine, inShapeEncAllTimedTens, _, _ = FastHierarchicalSegmentationLayer.apply(
         encAllTimed, 
+        None,
         2000, 
         10,
         2)
@@ -314,8 +510,9 @@ if __name__ == "__main__":
 
     encAllTimed = torch.rand(32, 128, 256, dtype=torch.float32).cuda().requires_grad_(True)
     ta0 = time.time()
-    resOutput, segms, shrinkIndices, lengths, numsInLinesC0, numsInLinesC1, maxInLine, inShapeEncAllTimedTens = FastHierarchicalSegmentationLayer.apply(
+    resOutput, segms, shrinkIndices, lengths, numsInLinesC0, numsInLinesC1, maxInLine, inShapeEncAllTimedTens, _, _= FastHierarchicalSegmentationLayer.apply(
         encAllTimed, 
+        None,
         1365, 
         10,
         2)

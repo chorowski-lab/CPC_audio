@@ -13,6 +13,7 @@ import math
 import time
 
 from cpc.segm.hier_fast import FastHierarchicalSegmentationLayer, FastSegmentationLengthRestoreLayer
+from cpc.segm.fast_segm_torch_conversions import padTens3ValueSetToLength
 
 ###########################################
 # Networks
@@ -440,7 +441,7 @@ class CPCModel(nn.Module):
         #print("::", arg1.shape, arg2.shape, calcPushLoss)
         epochNow_, epochAll_ = map(float,epochNrs)
         if not calcPushLoss:
-            batchData, label = arg1, arg2
+            batchData, label, labelPhonePerGPU, maxSegmentCost = arg1, arg2, arg3, arg4
             
             encodedData = self.gEncoder(batchData).permute(0, 2, 1)
             pureEncoded = encodedData.clone()
@@ -519,16 +520,18 @@ class CPCModel(nn.Module):
                 #     None,
                 #     None
                 # )
-                lengthSumToObtain = FastHierarchicalSegmentationLayer\
+                lengthSumToObtain, allBatchLength_ = FastHierarchicalSegmentationLayer\
                     .getKforGivenShorteningAndShape(encodedData.shape, self.hierARshorten)
-                encForCfeature, segmDictTens, shrinkIndices_, lengths_, numsInLinesC0_, numsInLinesC1_, maxInLine_, encShapeTens_ = \
-                    FastHierarchicalSegmentationLayer.apply(encodedData, lengthSumToObtain, 10, 5)
+                encForCfeature, segmDictTens, shrinkIndices_, lengths_, numsInLinesC0_, numsInLinesC1_, maxInLine_, encShapeTens_, segmCostForWantedLengthTens_, actualSegmK_ = \
+                    FastHierarchicalSegmentationLayer.apply(encodedData, maxSegmentCost, lengthSumToObtain, 10, 5)
                 #print("!!!", encShapeTens_)
                 #--t1 = time.time()
                 #--print(f"hier 1 time: {t1 - t0}; lengthSumToObtain {lengthSumToObtain}")
                 #--print(f"shape segmented: {encForCfeature.shape}")
             else:
                 segmDictTens = None
+                segmCostForWantedLengthTens_ = None
+                actualSegmK_ = None
             if givenCenters is not None and self.VQpushEncCenterWeightOnlyAR and (self.VQgradualStart is None or epochNow_ >= self.VQgradualStart):
                 coeffOnlyAR = self.VQpushEncCenterWeightOnlyAR if self.VQgradualStart is None \
                     else self.VQpushEncCenterWeightOnlyAR*(max(epochNow_-self.VQgradualStart, 0.)/max(epochAll_-self.VQgradualStart,1.))
@@ -541,7 +544,7 @@ class CPCModel(nn.Module):
                     cFeature, numsInLinesC0_, numsInLinesC1_, shrinkIndices_, maxInLine_, torch.Size(encShapeTens_))
                 #--t1 = time.time()
                 #--print(f"hier 2 time: {t1 - t0}")
-                segmDictTens = segmDictTens.cuda()  # for return
+                #segmDictTens = segmDictTens.cuda()  # for return  TODO check if all returned tensors need to be on the same device, if so, move also segmCostForWantedLengthTens_ and actualSegmK_
             
             if self.fcmDebug:
                 print(f'ctx data shape just after AR: {cFeature.shape}')
@@ -714,8 +717,23 @@ class CPCModel(nn.Module):
                 print(f'enc shape returned {encodedData.shape}')
 
             pushLoss = torch.full((1,), baseEncDim, dtype=int).cuda() if self.doing_push_loss_or_push_after else None
+
+            if segmDictTens is not None:
+                segmDictTens = padTens3ValueSetToLength(segmDictTens, allBatchLength_)  
+                # ^ needed because of torch being extremely indiscriminate, making things unnecessary user unfriendly
+                #   (with dataParallel whole shape needs to be the same and not only dim=0)
+                segmDictTens = segmDictTens.view(1,-1).cuda()
+
+            if segmCostForWantedLengthTens_ is not None:
+                segmCostForWantedLengthTens_ = segmCostForWantedLengthTens_.view(1,-1).cuda()
+
+            if actualSegmK_ is not None:
+                actualSegmK_ = actualSegmK_.view(1,-1).cuda()
+
+            if labelPhonePerGPU is not None:
+                labelPhonePerGPU = labelPhonePerGPU.view(1,*(labelPhonePerGPU.shape))
             
-            return cFeature, encodedData, pureEncoded, label, pushLoss, segmDictTens
+            return cFeature, encodedData, pureEncoded, label, labelPhonePerGPU, pushLoss, segmDictTens, segmCostForWantedLengthTens_, actualSegmK_
 
         else:
 

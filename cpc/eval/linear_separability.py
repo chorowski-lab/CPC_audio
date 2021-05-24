@@ -19,7 +19,7 @@ from cpc.dataset import AudioBatchData, findAllSeqs, filterSeqs, parseSeqLabels
 from cpc.model import CPCModelNullspace
 
 
-def train_step(feature_maker, centerModel, criterion, data_loader, optimizer, label_key, cpc_epochs):
+def train_step(feature_maker, centerModel, segmentCostModel, criterion, data_loader, optimizer, label_key, cpc_epochs):
 
     if feature_maker.optimize:
         feature_maker.train()
@@ -38,9 +38,14 @@ def train_step(feature_maker, centerModel, criterion, data_loader, optimizer, la
         numGPUs = len(feature_maker.device_ids)
         if givenCenters is not None:
             givenCenters = givenCenters.repeat(numGPUs,1)
-        c_feature, encoded_data, _, _, _, _ = feature_maker(batch_data, None, None, None, givenCenters, cpc_epochs, False, False)
+        if segmentCostModel is not None:
+            maxAllowedSegmCost = segmentCostModel.getCurrentMaxCostEstimator()
+        else:
+            maxAllowedSegmCost = None
+        c_feature, encoded_data, _, _, _, _, _, _, _ = feature_maker(batch_data, None, None, maxAllowedSegmCost, givenCenters, cpc_epochs, False, False)
         if not feature_maker.optimize:
             c_feature, encoded_data = c_feature.detach(), encoded_data.detach()
+            # ("TODO") center model not updated in this case and it should but it's unused
 
         all_losses, all_acc = criterion(c_feature, encoded_data, label)
 
@@ -57,7 +62,7 @@ def train_step(feature_maker, centerModel, criterion, data_loader, optimizer, la
     return logs
 
 
-def val_step(feature_maker, centerModel, criterion, data_loader, label_key, cpc_epochs):
+def val_step(feature_maker, centerModel, segmentCostModel, criterion, data_loader, label_key, cpc_epochs):
 
     feature_maker.eval()
     criterion.eval()
@@ -74,7 +79,11 @@ def val_step(feature_maker, centerModel, criterion, data_loader, label_key, cpc_
             numGPUs = len(feature_maker.device_ids)
             if givenCenters is not None:
                 givenCenters = givenCenters.repeat(numGPUs,1)
-            c_feature, encoded_data, _, _, _, _ = feature_maker(batch_data, None, None, None, givenCenters, cpc_epochs, False, False)
+            if segmentCostModel is not None:
+                maxAllowedSegmCost = segmentCostModel.getCurrentMaxCostEstimator()
+            else:
+                maxAllowedSegmCost = None
+            c_feature, encoded_data, _, _, _, _, _, _, _ = feature_maker(batch_data, None, None, maxAllowedSegmCost, givenCenters, cpc_epochs, False, False)
             all_losses, all_acc = criterion(c_feature, encoded_data, label)
 
             logs["locLoss_val"] += np.asarray([all_losses.mean().item()])
@@ -84,7 +93,7 @@ def val_step(feature_maker, centerModel, criterion, data_loader, label_key, cpc_
 
     return logs
 
-# TODO centerModel update
+# TODO centerModel & segmentCostModel update
 def run(feature_maker,
         criterion,
         train_loader,
@@ -136,7 +145,7 @@ def run(feature_maker,
             criterion_state_dict = fl.get_module(criterion).state_dict()
 
             fl.save_checkpoint(model_state_dict, criterion_state_dict,
-                               optimizer.state_dict(), best_state,
+                               optimizer.state_dict(), best_state, None,
                                f"{path_checkpoint}_{epoch}.pt")
             utils.save_logs(logs, f"{path_checkpoint}_logs.json")
 
@@ -153,6 +162,7 @@ def save_linsep_best_checkpoint(cpc_model_state, classif_net_criterion_state, op
 def trainLinsepClassification(
         feature_maker,
         centerModel,
+        segmentCostModel,
         criterion,  # combined with classification model before
         train_loader,
         val_loader,
@@ -182,9 +192,9 @@ def trainLinsepClassification(
 
         sys.stdout.flush()
 
-        logs_train = train_step(feature_maker, centerModel, criterion, train_loader,
+        logs_train = train_step(feature_maker, centerModel, segmentCostModel, criterion, train_loader,
                                 optimizer, label_key, cpc_epochs)
-        logs_val = val_step(feature_maker, centerModel, criterion, val_loader, label_key, cpc_epochs)
+        logs_val = val_step(feature_maker, centerModel, segmentCostModel, criterion, val_loader, label_key, cpc_epochs)
 
         print('')
         print('_'*50)
