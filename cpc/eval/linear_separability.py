@@ -353,7 +353,7 @@ def main(argv):
                 updateConfig = None
 
             # Load CPC model
-            model, nHiddenGar, nHiddenEncoder = fl.loadModel(pathCheckpoint, updateConfig=updateConfig)
+            model, nHiddenGar, nHiddenEncoder = fl.loadModel(pathCheckpoint, args.batchSizeGPU, updateConfig=updateConfig)
             
             # Keep hidden units at LSTM layers on sequential batches
             model.gAR.keepHidden = keep_hidden
@@ -367,7 +367,7 @@ def main(argv):
         if args.gru_level is not None and args.gru_level > 0:
             model, hidden_gar, hidden_encoder = loadCPCFeatureMaker(args.load, gru_level=args.gru_level)
         else:
-            model, hidden_gar, hidden_encoder = fl.loadModel(args.load,
+            model, hidden_gar, hidden_encoder = fl.loadModel(args.load, args.batchSizeGPU,
                                                      loadStateDict=not args.no_pretraining)
 
         dim_features = hidden_encoder if args.get_encoded else hidden_gar

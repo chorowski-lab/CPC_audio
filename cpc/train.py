@@ -143,7 +143,7 @@ def trainStep(dataLoader,
 
     for step, fulldata in enumerate(dataLoader):
         batchData, labelData = fulldata
-        normalBatchSize = max(normalBatchSize, batchData.shape[0])
+        normalBatchSize = max(normalBatchSize, batchData.shape[0])  # if weird small one goes first, some stats can get a bit spoiled but not much
         #%#print("::", normalBatchSize)
         label = labelData['speaker']
         labelPhone = labelData['phone']
@@ -907,7 +907,7 @@ def main(args):
         #     in epoch 150, checkpoint from epoch 200 has "best from epoch 150" saved as globally best
         #     (but this is internal-CPC-score best anyway, which is quite vague)
         loadedData = \
-            fl.loadModel(args.load, fcmSettings=fcmSettings, load_nullspace=args.nullspace, updateConfig=updateConfig, loadSCM=(segmentCostSettings is not None))
+            fl.loadModel(args.load, args.batchSizeGPU, fcmSettings=fcmSettings, load_nullspace=args.nullspace, updateConfig=updateConfig, loadSCM=(segmentCostSettings is not None))
         if segmentCostSettings is not None:
             cpcModel, args.hiddenGar, args.hiddenEncoder, segmentCostModel = loadedData
         else:
@@ -927,7 +927,7 @@ def main(args):
         # AR Network
         arNet = fl.getAR(args)
 
-        cpcModel = model.CPCModel(encoderNet, arNet, fcmSettings=fcmSettings)
+        cpcModel = model.CPCModel(encoderNet, arNet, args.batchSizeGPU, fcmSettings=fcmSettings)
 
         CPChiddenGar, CPChiddenEncoder = cpcModel.gAR.getDimOutput(), cpcModel.gEncoder.getDimOutput()
     # TODO saving, loading, stuff for centerModel

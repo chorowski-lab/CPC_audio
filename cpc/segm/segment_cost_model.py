@@ -24,7 +24,8 @@ class SegmentCostModel:
         #newCostAvg = batchDataCostSegmForKTens.mean().item()
         #newKAvg = batchDataActualKTens.mean().item()
         assert batchDataCostSegmForKTens.shape[0] == batchDataActualKTens.shape[0]
-        self.multMem = batchDataCostSegmForKTens.shape[0]
+        if batchDataCostSegmForKTens.shape[0] != 0:
+            self.multMem = batchDataCostSegmForKTens.shape[0]
         for i in range(batchDataCostSegmForKTens.shape[0]):
             newCost = batchDataCostSegmForKTens[i][0].item()
             newK = batchDataActualKTens[i][0].item()

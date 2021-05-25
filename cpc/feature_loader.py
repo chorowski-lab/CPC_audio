@@ -192,7 +192,7 @@ def getAR(args):
 
 
 
-def loadModel(pathCheckpoints, loadStateDict=True, fcmSettings=None, load_nullspace=False, updateConfig=None, loadBestNotLast=False, loadSCM=False):
+def loadModel(pathCheckpoints, perGPUbatchSize, loadStateDict=True, fcmSettings=None, load_nullspace=False, updateConfig=None, loadBestNotLast=False, loadSCM=False):
 
     models = []
     hiddenGar, hiddenEncoder = 0, 0
@@ -223,7 +223,7 @@ def loadModel(pathCheckpoints, loadStateDict=True, fcmSettings=None, load_nullsp
             encoderNet = getEncoder(locArgs)
             
             arNet = getAR(locArgs)
-            m_ = CPCModel(encoderNet, arNet, fcmSettings=fcmSettings)
+            m_ = CPCModel(encoderNet, arNet, perGPUbatchSize, fcmSettings=fcmSettings)
             scm = None
 
         if loadStateDict:

@@ -320,9 +320,11 @@ class CPCModel(nn.Module):
     def __init__(self,
                  encoder,
                  AR, 
+                 perGPUbatchSize,
                  fcmSettings=None):
 
         super(CPCModel, self).__init__()
+        self.normalBatchSize = perGPUbatchSize  # needed in some cases because DataParallel enforces absurd constraints on returned dim
         self.gEncoder = encoder
         self.gAR = AR
         self.fcm = fcmSettings is not None
@@ -520,7 +522,7 @@ class CPCModel(nn.Module):
                 #     None,
                 #     None
                 # )
-                lengthSumToObtain, allBatchLength_ = FastHierarchicalSegmentationLayer\
+                lengthSumToObtain, _ = FastHierarchicalSegmentationLayer\
                     .getKforGivenShorteningAndShape(encodedData.shape, self.hierARshorten)
                 encForCfeature, segmDictTens, shrinkIndices_, lengths_, numsInLinesC0_, numsInLinesC1_, maxInLine_, encShapeTens_, segmCostForWantedLengthTens_, actualSegmK_ = \
                     FastHierarchicalSegmentationLayer.apply(encodedData, maxSegmentCost, lengthSumToObtain, 10, 5)
@@ -718,10 +720,12 @@ class CPCModel(nn.Module):
 
             pushLoss = torch.full((1,), baseEncDim, dtype=int).cuda() if self.doing_push_loss_or_push_after else None
 
+            #print(f"normalBatchSize: {self.normalBatchSize} x {encodedData.shape[1]}")
             if segmDictTens is not None:
-                segmDictTens = padTens3ValueSetToLength(segmDictTens, allBatchLength_)  
+                segmDictTens = padTens3ValueSetToLength(segmDictTens, self.normalBatchSize*encodedData.shape[1])  
                 # ^ needed because of torch being extremely indiscriminate, making things unnecessary user unfriendly
-                #   (with dataParallel whole shape needs to be the same and not only dim=0)
+                #   (with dataParallel whole shape needs to be the same and not only dim0); also, need to pad to max possible size
+                #   as it can happen that GPU0 batch has different dim0 than GPU0 one and dataParallel will be even more annoying
                 segmDictTens = segmDictTens.view(1,-1).cuda()
 
             if segmCostForWantedLengthTens_ is not None:
@@ -731,6 +735,10 @@ class CPCModel(nn.Module):
                 actualSegmK_ = actualSegmK_.view(1,-1).cuda()
 
             if labelPhonePerGPU is not None:
+                # ugly things below needed because dataParallel is hopeless as described several lines above
+                labelPhonePerGPU2 = torch.zeros(self.normalBatchSize, encodedData.shape[1], dtype=labelPhonePerGPU.dtype).cuda()
+                labelPhonePerGPU2[:labelPhonePerGPU.shape[0], :labelPhonePerGPU.shape[1]] = labelPhonePerGPU
+                labelPhonePerGPU = labelPhonePerGPU2
                 labelPhonePerGPU = labelPhonePerGPU.view(1,*(labelPhonePerGPU.shape))
             
             return cFeature, encodedData, pureEncoded, label, labelPhonePerGPU, pushLoss, segmDictTens, segmCostForWantedLengthTens_, actualSegmK_
