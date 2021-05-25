@@ -338,10 +338,12 @@ class CPCModel(nn.Module):
         self.VQpushEncCenterWeightOnlyCriterion = None
         self.VQpushCtxCenterWeight = None
         self.VQgradualStart = None
+        self.hierARgradualStart = None
         if self.fcm:
             self.fcmDebug = False   #True
             self.fcmReal = fcmSettings["FCMproject"]
             self.hierARshorten = fcmSettings["hierARshorten"]
+            self.hierARgradualStart = fcmSettings["hierARgradualStart"]
             self.hierARmergePrior = fcmSettings["hierARmergePrior"]
             self.VQpushEncCenterWeightOnTopConv = fcmSettings["VQpushEncCenterWeightOnTopConv"]
             self.VQpushEncCenterWeightOnlyAR = fcmSettings["VQpushEncCenterWeightOnlyAR"]
@@ -522,8 +524,15 @@ class CPCModel(nn.Module):
                 #     None,
                 #     None
                 # )
+                if self.hierARgradualStart is None:
+                    shortening = self.hierARshorten
+                else:
+                    shortening = 1. + ((self.hierARshorten - 1.) * (max(epochNow_-self.hierARgradualStart, 0.)/max(epochAll_-self.hierARgradualStart,1.)))
+                    # before chosen start epoch will just not shorten (will give 1 as shortening)
+                    shortening = max(1., shortening)
+                #print(f"SHORTENING: {shortening}; epoch data: {epochNow_} / {epochAll_}, start {self.hierARgradualStart}")
                 lengthSumToObtain, _ = FastHierarchicalSegmentationLayer\
-                    .getKforGivenShorteningAndShape(encodedData.shape, self.hierARshorten)
+                    .getKforGivenShorteningAndShape(encodedData.shape, shortening)
                 encForCfeature, segmDictTens, shrinkIndices_, lengths_, numsInLinesC0_, numsInLinesC1_, maxInLine_, encShapeTens_, segmCostForWantedLengthTens_, actualSegmK_ = \
                     FastHierarchicalSegmentationLayer.apply(encodedData, maxSegmentCost, lengthSumToObtain, 10, 5)
                 #print("!!!", encShapeTens_)

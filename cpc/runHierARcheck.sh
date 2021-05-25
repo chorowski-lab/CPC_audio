@@ -19,7 +19,7 @@ python train.py --pathDB /pio/scratch/1/i283340/MGR/zs/ds2 \
 --linsep_logs_dir /pio/gluster/i283340/cpcfcmtries/spam003/linsep/logs2-001 \
 --linsep_checkpoint_dir /pio/gluster/i283340/cpcfcmtries/spam003/linsep/checkp2-001 \
 --linsep_classif_each_epochs 7 \
---overrideArgsFile
+--overrideArgsFile #--FCMhierARgradualStart 1
 
 
 # python train.py --pathDB /pio/scratch/1/i283340/MGR/zs/ds2 \
@@ -38,7 +38,7 @@ python train.py --pathDB /pio/scratch/1/i283340/MGR/zs/ds2 \
 # --linsep_logs_dir /pio/gluster/i283340/cpcfcmtries/spam003/linsep/logs2-001 \
 # --linsep_checkpoint_dir /pio/gluster/i283340/cpcfcmtries/spam003/linsep/checkp2-001 \
 # --linsep_classif_each_epochs 7 \
-# --overrideArgsFile
+# --overrideArgsFile #--FCMhierARgradualStart 1
 
 
 # python train.py --pathDB /pio/scratch/1/i283340/MGR/zs/ds2 \

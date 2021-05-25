@@ -812,6 +812,7 @@ def main(args):
             "pushLossPointNorm": args.FCMpushLossPointNorm,
             "pushLossNormReweight": args.FCMpushLossNormReweight,
             "hierARshorten": args.FCMhierARshorten,
+            "hierARgradualStart": args.FCMhierARgradualStart,
             "hierARmergePrior": args.FCMhierARmergePrior
             #"reprsConcatDontIncreaseARdim": args.FCMreprsConcatIncreaseARdim
         }
@@ -1418,6 +1419,7 @@ def parseArgs(argv):
     group_fcm.add_argument('--FCMpushLossPointNorm', action='store_true')
     group_fcm.add_argument('--FCMpushLossNormReweight', action='store_true')
     group_fcm.add_argument('--FCMhierARshorten', type=float, default=None)  # how big length reduction to make
+    group_fcm.add_argument('--FCMhierARgradualStart', type=int, default=None)
     group_fcm.add_argument('--FCMhierARmergePrior', type=str, default="se")  # how big length reduction to make
 
     group_fcm.add_argument('--FCMcentermodule', action='store_true')
