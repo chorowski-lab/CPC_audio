@@ -3,6 +3,7 @@
 import torch
 from copy import deepcopy
 import sys
+import time
 
 def segmSetLengthChangeThings(segmSet, shape, D):
     # 2 things needed: indices to sum with _scatter_add, and numbers of things in rows
@@ -36,19 +37,20 @@ def segmSetLengthChangeThings(segmSet, shape, D):
     maxInLine = max(map(len, numsInLines))
     #print("D")
     #sys.stdout.flush()
-    return torch.tensor(scatterIndices).view(-1,1).repeat(1,D).cuda(), torch.tensor(scatterLengths).cuda(), numsInLines, maxInLine
+    return torch.tensor(scatterIndices).view(-1,1).cuda().repeat(1,D), torch.tensor(scatterLengths).cuda(), numsInLines, maxInLine
 
 
 def shrinkSegms(batchLong, scatterIndices, maxInLine, lengths=None):
 
     # this is (lengths != None) for segmentation when segmSet and segmSetLengthChangeThings computed,
     # and also (lengths == None) for after-AR-length-restoring-layer's backward
-
+    #%#t0 = time.time()
     B = batchLong.shape[0]
     N = batchLong.shape[1]
     D = batchLong.shape[2]
     scatterLen = B*N  
 
+    #%#t1 = time.time()
     # batchLong already on cuda
     # actually those below also
     batchLong = batchLong.cuda()
@@ -56,7 +58,9 @@ def shrinkSegms(batchLong, scatterIndices, maxInLine, lengths=None):
     if lengths is not None:
         lengths = lengths.cuda()
     
-    scatterTens = torch.zeros((scatterLen,D), dtype=torch.float32).cuda()
+    #%#t2 = time.time()
+    scatterTens = torch.zeros((scatterLen,1), dtype=torch.float32).cuda().repeat(1,D)
+    #%#t3 = time.time()
     #print("!", scatterTens.shape, scatterIndices.shape, batchLong.view(B*N, D).shape)
     #print(scatterIndices)
     #print("@", batchLong.shape, lengths.view(*(lengths.shape), -1).shape)
@@ -65,12 +69,16 @@ def shrinkSegms(batchLong, scatterIndices, maxInLine, lengths=None):
     else:  # restore-length-layer backward, need to sum gradients as shrinked things impact on all length
         batchDivByLens = batchLong
     #print("@@", scatterTens.shape, scatterIndices.shape, batchDivByLens.shape, B, N, D)
+    #%#t4 = time.time()
     scattered = scatterTens.scatter_add_(0, scatterIndices, batchDivByLens.contiguous().view(B*N, D))
+    #%#t5 = time.time()
+    #%#print(f"shrink time: {t1-t0}, {t2-t1}, {t3-t2}, {t4-t3}, {t5-t4}")
     return scattered.view(B,N,-1)[:, :maxInLine]
 
 
 def expandSegms(batchShrinked, numsInLinesOrig, fullShape, lengthsForAveraging=None):
 
+    #%#t01 = time.time()
     B = batchShrinked.shape[0]
     Nshrinked = batchShrinked.shape[1]
 
@@ -79,22 +87,27 @@ def expandSegms(batchShrinked, numsInLinesOrig, fullShape, lengthsForAveraging=N
     if lengthsForAveraging is not None:
         lengthsForAveraging = lengthsForAveraging.cuda()
 
-    restored = torch.zeros(fullShape, dtype=torch.float32).cuda()
+    restored = torch.zeros((*(fullShape[:-1]),1), dtype=torch.float32).cuda().repeat(1,1,fullShape[-1])
     numsInLines = deepcopy(numsInLinesOrig)
     #print(numsInLines)
+    #%#t0 = time.time()
     for line in range(len(numsInLines)):
         zerosToAdd = Nshrinked - len(numsInLines[line])
         numsInLines[line] = numsInLines[line] + [0 for _ in range(zerosToAdd)]  # concat
+    #%#t1 = time.time()
+    for line in range(len(numsInLines)):
         #print(":", batchShrinked[line], torch.tensor(numsInLines[line]))
         restored[line] = torch.repeat_interleave(batchShrinked[line], torch.tensor(numsInLines[line]).cuda(), dim=0)
-
+    #%#t2 = time.time()
+    
     # this is the case when backward segmentation - want to pump each segm to length before segmentation,
     # but operating on dx, so need to make each place contirbution sum up to what was there
     # so need an average and not a copy
     # ; when this is None, the case is forward after AR to restore lengths
     if lengthsForAveraging is not None:
         restored = restored / torch.clamp(lengthsForAveraging.view(*(lengthsForAveraging.shape), -1), min=1.)
-
+    #%#t02 = time.time()
+    #%#print(f"expand part times: {t0-t01}, {t1-t0}, {t2-t1}, {t02-t2}")
     return restored
         
 if __name__ == "__main__":

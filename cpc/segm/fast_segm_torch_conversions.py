@@ -15,15 +15,15 @@ def convertNumToTens(num):
 def convertNumTensBack(numTens):
     return numTens[0].item()
 
-def convert3ValueIntSetToInt32Tens(s):
-    tens = torch.zeros((3*len(s),), dtype=torch.int32).cpu()
+def convert3ValueIntSetToInt32Tens(s):  # TODO try with cython
+    tens = torch.zeros((3*len(s),), dtype=torch.int32).cpu().numpy()
     i = 0
     for a, b, c in s:
         tens[i] = a
         tens[i+1] = b
         tens[i+2] = c
         i += 3
-    return tens
+    return torch.tensor(tens)
 
 def padTens3ValueSetToLength(t, l):  # l is number of 3-num entries
     #print(t.shape[0], l)
@@ -34,8 +34,9 @@ def padTens3ValueSetToLength(t, l):  # l is number of 3-num entries
     return tens.cpu()
 
 # this assumes valid values are > 0
-def convertTens3ValueSetBack(setTens):
+def convertTens3ValueSetBack(setTens):  # this is only for slow metric, can leave it as it is
     s = set()
+    setTens = setTens.cpu().numpy()
     i = 0
     while i < setTens.shape[0]:
         if setTens[i].item() < 0:  # needed to make encoded dicts on every GPU same length because torch is as user unfriendly as it can
@@ -56,6 +57,8 @@ def convert2DimListsToInt32TensorAndMask(l):
 
 def convert2DimListTensBack(tup):
     tens, padMask = tup
+    tens = tens.cpu().numpy()
+    padMask = padMask.cpu().numpy()
     l = []
     assert tens.shape == padMask.shape
     for i in range(tens.shape[0]):

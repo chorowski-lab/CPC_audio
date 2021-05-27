@@ -534,7 +534,7 @@ class CPCModel(nn.Module):
                 lengthSumToObtain, _ = FastHierarchicalSegmentationLayer\
                     .getKforGivenShorteningAndShape(encodedData.shape, shortening)
                 encForCfeature, segmDictTens, shrinkIndices_, lengths_, numsInLinesC0_, numsInLinesC1_, maxInLine_, encShapeTens_, segmCostForWantedLengthTens_, actualSegmK_ = \
-                    FastHierarchicalSegmentationLayer.apply(encodedData, maxSegmentCost, lengthSumToObtain, 10, 5)
+                    FastHierarchicalSegmentationLayer.apply(encodedData, maxSegmentCost, lengthSumToObtain, 20, 5)
                 #print("!!!", encShapeTens_)
                 #--t1 = time.time()
                 #--print(f"hier 1 time: {t1 - t0}; lengthSumToObtain {lengthSumToObtain}")
@@ -729,6 +729,7 @@ class CPCModel(nn.Module):
 
             pushLoss = torch.full((1,), baseEncDim, dtype=int).cuda() if self.doing_push_loss_or_push_after else None
 
+            #--t01 = time.time()
             #print(f"normalBatchSize: {self.normalBatchSize} x {encodedData.shape[1]}")
             if segmDictTens is not None:
                 segmDictTens = padTens3ValueSetToLength(segmDictTens, self.normalBatchSize*encodedData.shape[1])  
@@ -749,7 +750,9 @@ class CPCModel(nn.Module):
                 labelPhonePerGPU2[:labelPhonePerGPU.shape[0], :labelPhonePerGPU.shape[1]] = labelPhonePerGPU
                 labelPhonePerGPU = labelPhonePerGPU2
                 labelPhonePerGPU = labelPhonePerGPU.view(1,*(labelPhonePerGPU.shape))
-            
+            #--t02 = time.time()
+            #--print(f"part of additional time lost because of DataParallel: {t02-t01}")
+
             return cFeature, encodedData, pureEncoded, label, labelPhonePerGPU, pushLoss, segmDictTens, segmCostForWantedLengthTens_, actualSegmK_
 
         else:
