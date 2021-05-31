@@ -3,7 +3,7 @@
 #include <queue>
 #include <utility>
 
-# https://stackoverflow.com/questions/59463921/a-priority-queue-with-a-custom-comparator-in-cython
+// https://stackoverflow.com/questions/59463921/a-priority-queue-with-a-custom-comparator-in-cython
 
 typedef struct tuple7 {
     float x1;

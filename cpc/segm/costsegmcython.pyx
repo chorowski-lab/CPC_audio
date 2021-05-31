@@ -1,7 +1,7 @@
 # distutils: language = c++
 
 
-# cythonize -a -i costsegmcython.pyx
+# cythonize -a -i costsegmcython.pyx   # better run on cymes
 
 from cython cimport floating
 import numpy as np
