@@ -213,7 +213,7 @@ class TimeAlignedPredictionNetwork(nn.Module):
         #weights[0,w2<0] = 1  # in places not between two predictors (<0.5 on borders), assign all weight to closest one
         #weights = torch.clamp(weights, min=0)
         #^#print("lengthsDists", lengthsDists)
-        weights = torch.exp(-lengthsDists)   
+        weights = torch.exp(-2.*lengthsDists)
         weightsNorms = weights.sum(-1)
         #^#print("weightsUnnormed", weights)
         #^#print("weightNorms", weightsNorms)
@@ -223,9 +223,10 @@ class TimeAlignedPredictionNetwork(nn.Module):
         #^#print("shapes:", c.shape, predictedLengthsSum.shape, predictedLengths.shape)
         #c = c.view(1,*(c.shape)).repeat(len(candidates),1,1,1)
         c = c.clone()  # because of not-inplace view things
-        c[:,:,-1] = predictedLengthsSum[:,:-len(candidates)]  #  [:,:,:,-1]  moreLengths
+        ###c[:,:,-2] = predictedLengthsSum[:,:-len(candidates)]  #  [:,:,:,-1]  moreLengths
+        # ^ this seems like a very bad idea after some rethinking - teaches all previous lengths in the batch from local predictions (idea was for it to make diffs, but well, it can do sth else)
         # frame lengths are now at -2, they are given as part of input c, but can also put there again to be sure
-        c[:,:,-2] = predictedLengths[:,:-len(candidates)]
+        c[:,:,-1] = predictedLengths[:,:-len(candidates)]
         #^#print("c:", c)
 
         
@@ -501,7 +502,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         windowSize = seqSize - self.nPredicts
 
         if self.modelLengthInAR:
-            predictedFrameLengths = cFeature[:,:,-2]
+            predictedFrameLengths = cFeature[:,:,-1]
 
         cFeature = cFeature[:, :windowSize]  # ^ need to extract pred lengths for future before that step
         # TODO ^ is a bad idea anyway, this should be cut after predictions (e.g. for transformer)
