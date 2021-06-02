@@ -80,7 +80,7 @@ class PredictionNetwork(nn.Module):
                 self.predictors.append(
                     ShiftedConv(dimOutputAR, dimOutputEncoder, 12))
             elif rnnMode == 'transformer':
-                from transformers import buildTransformerAR
+                from cpc.transformers import buildTransformerAR
                 self.predictors.append(
                     buildTransformerAR(dimOutputEncoder,
                                        1,
@@ -132,7 +132,7 @@ class TimeAlignedPredictionNetwork(nn.Module):
         self.predictors = nn.ModuleList()
         self.RESIDUAL_STD = 0.01
         self.dimOutputAR = dimOutputAR
-
+        print("LOADING TIME ALIGNED PRED")
         self.dropout = nn.Dropout(p=0.5) if dropout else None
         for i in range(nPredicts):
             if rnnMode == 'RNN':
@@ -157,7 +157,7 @@ class TimeAlignedPredictionNetwork(nn.Module):
             #     self.predictors.append(
             #         ShiftedConv(dimOutputAR, dimOutputEncoder, 12))
             elif rnnMode == 'transformer':
-                from transformers import buildTransformerAR
+                from cpc.transformers import buildTransformerAR
                 self.predictors.append(
                     buildTransformerAR(dimOutputEncoder,
                                        1,
@@ -226,7 +226,8 @@ class TimeAlignedPredictionNetwork(nn.Module):
         ###c[:,:,-2] = predictedLengthsSum[:,:-len(candidates)]  #  [:,:,:,-1]  moreLengths
         # ^ this seems like a very bad idea after some rethinking - teaches all previous lengths in the batch from local predictions (idea was for it to make diffs, but well, it can do sth else)
         # frame lengths are now at -2, they are given as part of input c, but can also put there again to be sure
-        c[:,:,-1] = predictedLengths[:,:-len(candidates)]
+        c[:,:,-1] = predictedLengths[:,:-len(candidates)].detach()  #.requires_grad_()
+        c[:,:,-2] = predictedLengthsSum[:,:-len(candidates)].detach()
         #^#print("c:", c)
 
         
