@@ -132,7 +132,7 @@ class TimeAlignedPredictionNetwork(nn.Module):
         self.predictors = nn.ModuleList()
         self.RESIDUAL_STD = 0.01
         self.dimOutputAR = dimOutputAR
-        print("LOADING TIME ALIGNED PRED")
+        print("LOADING TIME ALIGNED PRED simple")
         self.dropout = nn.Dropout(p=0.5) if dropout else None
         for i in range(nPredicts):
             if rnnMode == 'RNN':
@@ -412,7 +412,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
                  speakerEmbedding=0,
                  nSpeakers=0,
                  sizeInputSeq=128,
-                 modelLengthInAR=False):
+                 lengthInARsettings=None):
 
         super(CPCUnsupersivedCriterion, self).__init__()
         if speakerEmbedding > 0:
@@ -423,9 +423,9 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         else:
             self.speakerEmb = None
 
-        self.modelLengthInAR = modelLengthInAR
+        self.modelLengthInARsimple = lengthInARsettings["modelLengthInARsimple"]
 
-        if not self.modelLengthInAR:
+        if not self.modelLengthInARsimple:
             self.wPrediction = PredictionNetwork(
                 nPredicts, dimOutputAR, dimOutputEncoder, rnnMode=rnnMode,
                 dropout=dropout, sizeInputSeq=sizeInputSeq - nPredicts)
@@ -502,7 +502,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         batchSize, seqSize, dimAR = cFeature.size()
         windowSize = seqSize - self.nPredicts
 
-        if self.modelLengthInAR:
+        if self.modelLengthInARsimple:
             predictedFrameLengths = cFeature[:,:,-1]
 
         cFeature = cFeature[:, :windowSize]  # ^ need to extract pred lengths for future before that step
@@ -515,7 +515,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
             embeddedSpeaker = self.speakerEmb(l_)
             cFeature = torch.cat([cFeature, embeddedSpeaker], dim=2)
 
-        if self.modelLengthInAR:
+        if self.modelLengthInARsimple:
             predictions = self.wPrediction(cFeature, sampledData, predictedFrameLengths)
         else:
             predictions = self.wPrediction(cFeature, sampledData)

@@ -63,6 +63,10 @@ def getCriterion(args, downsampling, nSpeakers, nPhones):
                 encoderOutDimForCriterion = args.hiddenEncoder
                 ARoutDimForCriterion = args.hiddenGar
                 
+            lengthInARsettings = {
+                "modelLengthInARsimple": args.modelLengthInARsimple
+            }
+
             if args.CPCCTC:
                 cpcCriterion = sa.CPCUnsupersivedCriterion(args.nPredicts,
                                                         args.CPCCTCNumMatched,
@@ -84,7 +88,8 @@ def getCriterion(args, downsampling, nSpeakers, nPhones):
                                                         dropout=args.dropout,
                                                         nSpeakers=nSpeakers,
                                                         speakerEmbedding=args.speakerEmbedding,
-                                                        sizeInputSeq=sizeInputSeq)
+                                                        sizeInputSeq=sizeInputSeq,
+                                                        lengthInARsettings=lengthInARsettings)
 
             else:
                 cpcCriterion = cr.CPCUnsupersivedCriterion(args.nPredicts,
@@ -97,7 +102,7 @@ def getCriterion(args, downsampling, nSpeakers, nPhones):
                                                         nSpeakers=nSpeakers,
                                                         speakerEmbedding=args.speakerEmbedding,
                                                         sizeInputSeq=sizeInputSeq, 
-                                                        modelLengthInAR=args.modelLengthInAR)
+                                                        lengthInARsettings=lengthInARsettings)
     elif args.pathPhone is not None:
         if not args.CTC:
             cpcCriterion = cr.PhoneCriterion(dimFeatures,
@@ -815,7 +820,7 @@ def main(args):
             "hierARshorten": args.FCMhierARshorten,
             "hierARgradualStart": args.FCMhierARgradualStart,
             "hierARmergePrior": args.FCMhierARmergePrior,
-            "modelLengthInAR": args.modelLengthInAR
+            "modelLengthInARsimple": args.modelLengthInARsimple,
             #"reprsConcatDontIncreaseARdim": args.FCMreprsConcatIncreaseARdim
         }
         # TODO: maybe better settings? or maybe ok
@@ -1442,7 +1447,7 @@ def parseArgs(argv):
     group_fcm.add_argument('--FCMsegmentCostModule', action='store_true')
     group_fcm.add_argument('--FCMsegment_batchesMem', type=int, default=None)
 
-    group_fcm.add_argument('--modelLengthInAR', action='store_true')
+    group_fcm.add_argument('--modelLengthInARsimple', action='store_true')
     
 
     group_gpu = parser.add_argument_group('GPUs')

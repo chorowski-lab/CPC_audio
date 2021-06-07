@@ -339,11 +339,11 @@ class CPCModel(nn.Module):
         self.VQpushCtxCenterWeight = None
         self.VQgradualStart = None
         self.hierARgradualStart = None
-        self.modelLengthInAR = False
+        self.modelLengthInARsimple = False
         if self.fcm:
             self.fcmDebug = False   #True
             self.fcmReal = fcmSettings["FCMproject"]
-            self.modelLengthInAR = fcmSettings["modelLengthInAR"]
+            self.modelLengthInARsimple = fcmSettings["modelLengthInARsimple"]
             self.hierARshorten = fcmSettings["hierARshorten"]
             self.hierARgradualStart = fcmSettings["hierARgradualStart"]
             self.hierARmergePrior = fcmSettings["hierARmergePrior"]
@@ -451,7 +451,7 @@ class CPCModel(nn.Module):
             
             encodedData = self.gEncoder(batchData).permute(0, 2, 1)
 
-            if self.modelLengthInAR:
+            if self.modelLengthInARsimple:
                 encodedData = encodedData[:,:,:-2]
             
             pureEncoded = encodedData.clone()
@@ -553,7 +553,7 @@ class CPCModel(nn.Module):
                 coeffOnlyAR = self.VQpushEncCenterWeightOnlyAR if self.VQgradualStart is None \
                     else self.VQpushEncCenterWeightOnlyAR*(max(epochNow_-self.VQgradualStart, 0.)/max(epochAll_-self.VQgradualStart,1.))
                 encForCfeature = self._FCMlikeBelong(encForCfeature, givenCenters, None, None, None, coeffOnlyAR)
-            if self.modelLengthInAR:
+            if self.modelLengthInARsimple:
                 encForCfeature = torch.cat([encForCfeature, torch.zeros(1,1,1).cuda().repeat(encForCfeature.shape[0], encForCfeature.shape[1], 2)], dim=-1)  # append 0s at the end to make dim ok
             cFeature = self.gAR(encForCfeature)
             if self.hierARshorten is not None:  # TODO here or at the end, unsure
