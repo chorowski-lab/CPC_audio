@@ -157,14 +157,16 @@ class TimeAlignedPredictionNetwork(nn.Module):
                  rnnMode=None,
                  dropout=False,
                  sizeInputSeq=116,
-                 mode="simple"):
+                 mode="simple",
+                 teachOnlyLastFrameLength=False):
 
         super(TimeAlignedPredictionNetwork, self).__init__()
         self.predictors = nn.ModuleList()
         self.RESIDUAL_STD = 0.01
         self.dimOutputAR = dimOutputAR
         self.mode = mode
-        print(f"LOADING TIME ALIGNED PRED {mode} softalign")
+        self.teachOnlyLastFrameLength = teachOnlyLastFrameLength
+        print(f"LOADING TIME ALIGNED PRED {mode} softalign; teachOnlyLastFrameLength: {teachOnlyLastFrameLength}")
         self.dropout = nn.Dropout(p=0.5) if dropout else None
         for i in range(nPredicts):
             if rnnMode == 'RNN':
@@ -224,19 +226,33 @@ class TimeAlignedPredictionNetwork(nn.Module):
         # ---> WELL, MAYBE ADD BIG LOSS TELLING THAT THIS MUST BE <= THAN 1 , AND CLAMP
         #      also, can teach all predictors but those further with much smaller weight? BUT THIS WOULD COST PERHAPS? WELL, RATHER ONLY A BIT
         if self.mode == "simple":
-            # predictedLengths: B x N
-            predictedLengthsSum = predictedLengths.cumsum(dim=1)
-            #^#print("pl", predictedLengths)
-            #^#print("predLenSum", predictedLengthsSum)
-            moreLengths = predictedLengthsSum.view(1,predictedLengthsSum.shape[0],predictedLengthsSum.shape[1]).cuda().repeat(len(self.predictors),1,1)
-            #^#print(moreLengths.shape)
-            for i in range(1,len(self.predictors)+1):
-                #^#print(moreLengths[i-1].shape)
-                #^#print("*", i, moreLengths[i-1], torch.roll(moreLengths[i-1], shifts=(0,-i), dims=(0,1)))
-                moreLengths[i-1] = torch.roll(moreLengths[i-1], shifts=(0,-i), dims=(0,1)) - predictedLengthsSum
-            moreLengths = moreLengths[:,:,:c.shape[1]]  # cut rubbish at the end which is not being predicted
-            #^#print("moreLen", moreLengths)
-            # moreLengths: preds x B x (N - preds)
+            if not self.teachOnlyLastFrameLength:
+                # predictedLengths: B x N
+                predictedLengthsSum = predictedLengths.cumsum(dim=1)
+                #^#print("pl", predictedLengths)
+                #^#print("predLenSum", predictedLengthsSum)
+                moreLengths = predictedLengthsSum.view(1,predictedLengthsSum.shape[0],predictedLengthsSum.shape[1]).cuda().repeat(len(self.predictors),1,1)
+                #^#print(moreLengths.shape)
+                for i in range(1,len(self.predictors)+1):
+                    #^#print(moreLengths[i-1].shape)
+                    #^#print("*", i, moreLengths[i-1], torch.roll(moreLengths[i-1], shifts=(0,-i), dims=(0,1)))
+                    moreLengths[i-1] = torch.roll(moreLengths[i-1], shifts=(0,-i), dims=(0,1)) - predictedLengthsSum
+                moreLengths = moreLengths[:,:,:c.shape[1]]  # cut rubbish at the end which is not being predicted
+                #^#print("ml", moreLengths.shape, moreLengths)
+                # moreLengths: preds x B x (N - preds)
+            else:
+                predictedLengthsSum = predictedLengths.detach().cumsum(dim=1)
+                #^#print("pl", predictedLengths)
+                #^#print("predLenSum", predictedLengthsSum)
+                moreLengths = torch.zeros_like(predictedLengths).view(1,predictedLengths.shape[0],predictedLengths.shape[1]).cuda().repeat(len(self.predictors),1,1)
+                #^#print(moreLengths.shape)
+                for i in range(1,len(self.predictors)+1):
+                    #^#print(moreLengths[i-1].shape)
+                    #^#print("*", i, moreLengths[i-1], torch.roll(moreLengths[i-1], shifts=(0,-i), dims=(0,1)))
+                    moreLengths[i-1] = torch.roll(predictedLengthsSum, shifts=(0,-(i-1)), dims=(0,1)) - predictedLengthsSum \
+                        + torch.roll(predictedLengths, shifts=(0,-i), dims=(0,1))
+                moreLengths = moreLengths[:,:,:c.shape[1]]  # cut rubbish at the end which is not being predicted
+                #^#print("ml", moreLengths.shape, moreLengths)
 
 
             #^#print("shapes:", c.shape, predictedLengthsSum.shape, predictedLengths.shape)
@@ -261,7 +277,10 @@ class TimeAlignedPredictionNetwork(nn.Module):
                 moreLengths[i,:,:-(i+1)] = predictedLengths[i,:,(i+1):]  
                 # predictedLengths[:, k] is "what length does frame k appear : frames before"
                 # predictedLengths[j,k] is "what length does frame k appear when predicted from frame k-j-1"
-            moreLengths = moreLengths.cumsum(dim=0)
+            if not self.teachOnlyLastFrameLength:
+                moreLengths = moreLengths.cumsum(dim=0)
+            else:
+                moreLengths = moreLengths.detach().cumsum(dim=0) - moreLengths.detach() + moreLengths
             #^#print("ml0", moreLengths.shape, moreLengths)
             moreLengths = moreLengths[:,:,:c.shape[1]]
             # moreLengths: preds x B x (N-preds)
@@ -419,6 +438,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         self.no_negs_in_match_window = no_negs_in_match_window
         self.modelLengthInARsimple = lengthInARsettings["modelLengthInARsimple"]
         self.modelLengthInARpredStartDep = lengthInARsettings["modelLengthInARpredStartDep"]
+        self.teachOnlyLastFrameLength = lengthInARsettings["teachOnlyLastFrameLength"]
 
         if not self.modelLengthInARsimple and self.modelLengthInARpredStartDep is None:
             self.wPrediction = PredictionNetwork(
@@ -427,12 +447,12 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         elif self.modelLengthInARsimple:
             self.wPrediction = TimeAlignedPredictionNetwork(
                 nPredicts, dimOutputAR, dimOutputEncoder, rnnMode=rnnMode,
-                dropout=dropout, sizeInputSeq=sizeInputSeq - nPredicts, mode="simple")
+                dropout=dropout, sizeInputSeq=sizeInputSeq - nPredicts, mode="simple", teachOnlyLastFrameLength=self.teachOnlyLastFrameLength)
         elif self.modelLengthInARpredStartDep is not None:
             assert nPredicts == self.modelLengthInARpredStartDep
             self.wPrediction = TimeAlignedPredictionNetwork(
                 nPredicts, dimOutputAR, dimOutputEncoder, rnnMode=rnnMode,
-                dropout=dropout, sizeInputSeq=sizeInputSeq - nPredicts, mode="predStartDep")
+                dropout=dropout, sizeInputSeq=sizeInputSeq - nPredicts, mode="predStartDep", teachOnlyLastFrameLength=self.teachOnlyLastFrameLength)
         else:
             assert False
         

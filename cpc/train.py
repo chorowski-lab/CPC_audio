@@ -65,7 +65,8 @@ def getCriterion(args, downsampling, nSpeakers, nPhones):
                 
             lengthInARsettings = {
                 "modelLengthInARsimple": args.modelLengthInARsimple,
-                "modelLengthInARpredStartDep": args.nPredicts if args.modelLengthInARpredStartDep else None
+                "modelLengthInARpredStartDep": args.nPredicts if args.modelLengthInARpredStartDep else None,
+                "teachOnlyLastFrameLength": args.ARteachOnlyLastFrameLength
             }
 
             if args.CPCCTC:
@@ -1452,7 +1453,8 @@ def parseArgs(argv):
 
     group_fcm.add_argument('--modelLengthInARsimple', action='store_true')
     group_fcm.add_argument('--modelLengthInARpredStartDep', action='store_true')
-    
+    group_fcm.add_argument('--ARteachOnlyLastFrameLength', action='store_true')
+
 
     group_gpu = parser.add_argument_group('GPUs')
     group_gpu.add_argument('--nGPU', type=int, default=-1,
