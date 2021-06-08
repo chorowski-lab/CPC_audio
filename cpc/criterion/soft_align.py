@@ -168,7 +168,8 @@ class TimeAlignedPredictionNetwork(nn.Module):
         self.teachOnlyLastFrameLength = teachOnlyLastFrameLength
         print(f"LOADING TIME ALIGNED PRED {mode} softalign; teachOnlyLastFrameLength: {teachOnlyLastFrameLength}")
         self.dropout = nn.Dropout(p=0.5) if dropout else None
-        for i in range(nPredicts):
+        for i in range(nPredicts+1):  # frame len is 0-1 so for up to nPredicts frames for nPredicts need nPred+1 predictors from 0 to nPred
+                                      # TODO? (or could just assume pred #0 is just the current frame, hm)
             if rnnMode == 'RNN':
                 self.predictors.append(
                     nn.RNN(dimOutputAR, dimOutputEncoder))
@@ -231,9 +232,9 @@ class TimeAlignedPredictionNetwork(nn.Module):
                 predictedLengthsSum = predictedLengths.cumsum(dim=1)
                 #^#print("pl", predictedLengths)
                 #^#print("predLenSum", predictedLengthsSum)
-                moreLengths = predictedLengthsSum.view(1,predictedLengthsSum.shape[0],predictedLengthsSum.shape[1]).cuda().repeat(len(self.predictors),1,1)
+                moreLengths = predictedLengthsSum.view(1,predictedLengthsSum.shape[0],predictedLengthsSum.shape[1]).cuda().repeat(len(self.predictors)-1,1,1)
                 #^#print(moreLengths.shape)
-                for i in range(1,len(self.predictors)+1):
+                for i in range(1,len(self.predictors)):  # +1 is in longer Predictors
                     #^#print(moreLengths[i-1].shape)
                     #^#print("*", i, moreLengths[i-1], torch.roll(moreLengths[i-1], shifts=(0,-i), dims=(0,1)))
                     moreLengths[i-1] = torch.roll(moreLengths[i-1], shifts=(0,-i), dims=(0,1)) - predictedLengthsSum
@@ -244,9 +245,9 @@ class TimeAlignedPredictionNetwork(nn.Module):
                 predictedLengthsSum = predictedLengths.detach().cumsum(dim=1)
                 #^#print("pl", predictedLengths)
                 #^#print("predLenSum", predictedLengthsSum)
-                moreLengths = torch.zeros_like(predictedLengths).view(1,predictedLengths.shape[0],predictedLengths.shape[1]).cuda().repeat(len(self.predictors),1,1)
+                moreLengths = torch.zeros_like(predictedLengths).view(1,predictedLengths.shape[0],predictedLengths.shape[1]).cuda().repeat(len(self.predictors)-1,1,1)
                 #^#print(moreLengths.shape)
-                for i in range(1,len(self.predictors)+1):
+                for i in range(1,len(self.predictors)):  # +1 is in longer Predictors
                     #^#print(moreLengths[i-1].shape)
                     #^#print("*", i, moreLengths[i-1], torch.roll(moreLengths[i-1], shifts=(0,-i), dims=(0,1)))
                     moreLengths[i-1] = torch.roll(predictedLengthsSum, shifts=(0,-(i-1)), dims=(0,1)) - predictedLengthsSum \
@@ -261,8 +262,8 @@ class TimeAlignedPredictionNetwork(nn.Module):
             ###c[:,:,-2] = predictedLengthsSum[:,:-len(candidates)]  #  [:,:,:,-1]  moreLengths
             # ^ this seems like a very bad idea after some rethinking - teaches all previous lengths in the batch from local predictions (idea was for it to make diffs, but well, it can do sth else)
             # frame lengths are now at -2, they are given as part of input c, but can also put there again to be sure
-            c[:,:,-1] = predictedLengths[:,:-len(self.predictors)].detach()  #.requires_grad_()
-            c[:,:,-2] = predictedLengthsSum[:,:-len(self.predictors)].detach()
+            c[:,:,-1] = predictedLengths[:,:-(len(self.predictors)-1)].detach()  #.requires_grad_()
+            c[:,:,-2] = predictedLengthsSum[:,:-(len(self.predictors)-1)].detach()
             #^#print("c:", c)
             locCdimToCut = 2
         elif self.mode == "predStartDep":
@@ -288,12 +289,14 @@ class TimeAlignedPredictionNetwork(nn.Module):
 
             c = c.clone()
             #print("!", predictedLengths.shape[0])
-            c[:,:,-predictedLengths.shape[0]:] = predictedLengthsOrg[:,:-len(self.predictors)].detach()
+            c[:,:,-predictedLengths.shape[0]:] = predictedLengthsOrg[:,:-(len(self.predictors)-1)].detach()
             #^#print("c", c.shape, c)
             # TODO can make some cumsum, but should only see past - there can be some empty spaces - would perhaps need to also cut begin for predicting and not only end
             locCdimToCut = predictedLengths.shape[0]
         else:
             assert False
+        #^#print("ml", moreLengths.shape, moreLengths)
+        ## moreLengths: predictions x B x (N-preds)
         
         # for each nr of frames in future separately,
         # calc and switch last elements in c as lengths, and also get predictor choices
@@ -306,12 +309,25 @@ class TimeAlignedPredictionNetwork(nn.Module):
         #weights[0,w2<0] = 1  # in places not between two predictors (<0.5 on borders), assign all weight to closest one
         #weights = torch.clamp(weights, min=0)
         #^#print("lengthsDists", lengthsDists)
-        weights = torch.exp(-2.*lengthsDists)
-        weightsNorms = weights.sum(-1)
-        #^#print("weightsUnnormed", weights)
-        #^#print("weightNorms", weightsNorms)
-        weights = weights / weightsNorms.view(*(weightsNorms.shape),1)
+        if not False:
+            weights = torch.exp(-2.*lengthsDists)
+            weightsNorms = weights.sum(-1)
+            #^#print("weightsUnnormed", weights)
+            #^#print("weightNorms", weightsNorms)
+            weights = weights / weightsNorms.view(*(weightsNorms.shape),1)
+        elif False:  # bilinear
+            weights = torch.clamp(1. - weights, min=0)  # here no normalization needed, sums up to 1
+        elif False:  # "trilinear"
+            weights = torch.clamp(1.5 - weights, min=0)
+            weightsNorms = weights.sum(-1)
+            #^#print("weightsUnnormed", weights)
+            #^#print("weightNorms", weightsNorms)
+            weights = weights / weightsNorms.view(*(weightsNorms.shape),1)
+        else:
+            assert False
         #^#print("weights", weights)
+
+        ## weights: predictions x B x (N-preds) x predictors
         
         # UGLY   ; not sure if will work
         # if isinstance(self.predictors[0], EqualizedConv1d):
@@ -340,6 +356,7 @@ class TimeAlignedPredictionNetwork(nn.Module):
         #       as this would be cheating - it would see info from the future and would perhaps try to encode sth else than duration there
 
         predictsPerPredictor = torch.zeros(1,*(c.shape)).cuda().repeat(len(self.predictors),1,1,1)  #.view(c.shape[0],c.shape[1],c.shape[2],c.shape[3])  #.repeat(1,1,1,2,1)
+        ## predictsPerPredictor: predictors x B x (N-preds) x Dim
         
         #^#print("devices:", c.device, predictsPerPredictor.device, weights.device, predictedLengths.device, predictedLengthsSum.device)
 
@@ -353,7 +370,25 @@ class TimeAlignedPredictionNetwork(nn.Module):
 
         #^#print("ppp", predictsPerPredictor.shape)
 
-        predsWeighted = predictsPerPredictor.view(predictsPerPredictor.shape[0], predictsPerPredictor.shape[1], predictsPerPredictor.shape[2], 1, predictsPerPredictor.shape[3])
+        ##predsWeighted = predictsPerPredictor.view(predictsPerPredictor.shape[0], predictsPerPredictor.shape[1], predictsPerPredictor.shape[2], 1, predictsPerPredictor.shape[3])
+        # TODO is it actually correct? 1st dim is predictors and NOT predicted frames; it was rather incorrect but unsure with dimensions equal
+        # TODO rather fixed, but check more thoroughly
+        ## predsWeighted was: predictors x B x (N-preds) x 1 x Dim , weights after view was: predictions x B x (N-preds) x predictors x 1,
+        ## result was (mixed predictors/predictions) x B x (N-preds) x predictors x Dim - for one prediction, outputs of same predictor with different weights were summed (?)
+        ##predsWeighted = predsWeighted * weights.view(weights.shape[0], weights.shape[1], weights.shape[2], weights.shape[3], 1)
+        ## weights: predictions x B x (N-preds) x predictors
+        ## predictsPerPredictor: predictors x B x (N-preds) x Dim
+        predictors_ = predictsPerPredictor.shape[0]
+        B_ = predictsPerPredictor.shape[1]
+        N_minus_preds_ = predictsPerPredictor.shape[2]
+        Dim_ = predictsPerPredictor.shape[3]
+        
+        predsWeighted = predictsPerPredictor.permute(1,2,0,3)
+        ## predsWeighted after permute: B x (N-preds) x predictors x Dim
+        predsWeighted = predsWeighted.view(1, B_, N_minus_preds_, predictors_, Dim_)
+        ## predsWeighted after view: 1 x B x (N-preds) x predictors x Dim
+        predsWeighted = predsWeighted.repeat(len(self.predictors)-1,1,1,1,1)
+        ## predsWeighted repeated: predictions x B x (N-preds) x predictors x Dim ; weights after view: predictions x B x (N-preds) x predictors x 1
         predsWeighted = predsWeighted * weights.view(weights.shape[0], weights.shape[1], weights.shape[2], weights.shape[3], 1)
         
         #^#print("predsWeightedNoSum", predsWeighted.shape)
@@ -376,7 +411,7 @@ class TimeAlignedPredictionNetwork(nn.Module):
         #^#print("predsWeighted", predsWeighted.shape)
         # now predictions numPred x B x N x Dim
 
-        for k in range(len(self.predictors)):  #(len(self.predictors)):  # same, but clearer
+        for k in range(len(self.predictors)-1):  #(len(self.predictors)):  # same, but clearer
             # if isinstance(locC, tuple):
             #     locC = locC[0]
             # if isinstance(self.predictors[k], EqualizedConv1d):
