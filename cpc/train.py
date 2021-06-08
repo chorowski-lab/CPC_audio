@@ -64,7 +64,8 @@ def getCriterion(args, downsampling, nSpeakers, nPhones):
                 ARoutDimForCriterion = args.hiddenGar
                 
             lengthInARsettings = {
-                "modelLengthInARsimple": args.modelLengthInARsimple
+                "modelLengthInARsimple": args.modelLengthInARsimple,
+                "modelLengthInARpredStartDep": args.nPredicts if args.modelLengthInARpredStartDep else None
             }
 
             if args.CPCCTC:
@@ -792,6 +793,7 @@ def main(args):
         captureDataset = None
         captureSetStatsCollector = None
 
+    assert not args.modelLengthInARsimple or not args.modelLengthInARpredStartDep
     if args.FCMsettings:
         fcmSettings = {
             "FCMproject": args.FCMproject,
@@ -821,6 +823,7 @@ def main(args):
             "hierARgradualStart": args.FCMhierARgradualStart,
             "hierARmergePrior": args.FCMhierARmergePrior,
             "modelLengthInARsimple": args.modelLengthInARsimple,
+            "modelLengthInARpredStartDep": args.nPredicts if args.modelLengthInARpredStartDep else None
             #"reprsConcatDontIncreaseARdim": args.FCMreprsConcatIncreaseARdim
         }
         # TODO: maybe better settings? or maybe ok
@@ -1448,6 +1451,7 @@ def parseArgs(argv):
     group_fcm.add_argument('--FCMsegment_batchesMem', type=int, default=None)
 
     group_fcm.add_argument('--modelLengthInARsimple', action='store_true')
+    group_fcm.add_argument('--modelLengthInARpredStartDep', action='store_true')
     
 
     group_gpu = parser.add_argument_group('GPUs')
