@@ -158,7 +158,8 @@ class TimeAlignedPredictionNetwork(nn.Module):
                  dropout=False,
                  sizeInputSeq=116,
                  mode="simple",
-                 teachOnlyLastFrameLength=False):
+                 teachOnlyLastFrameLength=False,
+                 weightMode=("exp",2.)):
 
         super(TimeAlignedPredictionNetwork, self).__init__()
         self.predictors = nn.ModuleList()
@@ -166,7 +167,8 @@ class TimeAlignedPredictionNetwork(nn.Module):
         self.dimOutputAR = dimOutputAR
         self.mode = mode
         self.teachOnlyLastFrameLength = teachOnlyLastFrameLength
-        print(f"LOADING TIME ALIGNED PRED {mode} softalign; teachOnlyLastFrameLength: {teachOnlyLastFrameLength}")
+        self.weightMode = weightMode
+        print(f"LOADING TIME ALIGNED PRED {mode} softalign; teachOnlyLastFrameLength: {teachOnlyLastFrameLength}; weightMode: {weightMode}")
         self.dropout = nn.Dropout(p=0.5) if dropout else None
         for i in range(nPredicts+1):  # frame len is 0-1 so for up to nPredicts frames for nPredicts need nPred+1 predictors from 0 to nPred
                                       # TODO? (or could just assume pred #0 is just the current frame, hm)
@@ -309,16 +311,18 @@ class TimeAlignedPredictionNetwork(nn.Module):
         #weights[0,w2<0] = 1  # in places not between two predictors (<0.5 on borders), assign all weight to closest one
         #weights = torch.clamp(weights, min=0)
         #^#print("lengthsDists", lengthsDists)
-        if not False:
-            weights = torch.exp(-2.*lengthsDists)
+        weightType, w = self.weightMode
+        if weightType == "exp":
+            weights = torch.exp(-w*lengthsDists)
             weightsNorms = weights.sum(-1)
             #^#print("weightsUnnormed", weights)
             #^#print("weightNorms", weightsNorms)
             weights = weights / weightsNorms.view(*(weightsNorms.shape),1)
-        elif False:  # bilinear
-            weights = torch.clamp(1. - weights, min=0)  # here no normalization needed, sums up to 1
-        elif False:  # "trilinear"
-            weights = torch.clamp(1.5 - weights, min=0)
+        elif weightType == "bilin":  # bilinear
+            weights = torch.clamp(1. - lengthsDists, min=0)  # here no normalization needed, sums up to 1
+            # won't teach dists on dostant predictors, exp would teach strongly because to inc weight a bit needs to move a lot
+        elif weightType == "trilin":  # "trilinear"
+            weights = torch.clamp(1.5 - lengthsDists, min=0)
             weightsNorms = weights.sum(-1)
             #^#print("weightsUnnormed", weights)
             #^#print("weightNorms", weightsNorms)
@@ -474,20 +478,30 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         self.modelLengthInARsimple = lengthInARsettings["modelLengthInARsimple"]
         self.modelLengthInARpredStartDep = lengthInARsettings["modelLengthInARpredStartDep"]
         self.teachOnlyLastFrameLength = lengthInARsettings["teachOnlyLastFrameLength"]
+        self.modelLengthInARweightsMode = lengthInARsettings["modelLengthInARweightsMode"]
+        self.modelLengthInARweightsCoeff = lengthInARsettings["modelLengthInARweightsCoeff"]
 
         if not self.modelLengthInARsimple and self.modelLengthInARpredStartDep is None:
             self.wPrediction = PredictionNetwork(
                 nPredicts, dimOutputAR, dimOutputEncoder, rnnMode=rnnMode,
                 dropout=dropout, sizeInputSeq=sizeInputSeq - nPredicts)
-        elif self.modelLengthInARsimple:
+        elif self.modelLengthInARsimple or self.modelLengthInARpredStartDep is not None:
+            if self.modelLengthInARsimple:
+                lengthMode = "simple"
+            elif self.modelLengthInARpredStartDep is not None:
+                lengthMode = "predStartDep"
+            else:
+                assert false
+            assert self.modelLengthInARweightsMode in ("exp", "bilin", "trilin")
             self.wPrediction = TimeAlignedPredictionNetwork(
                 nPredicts, dimOutputAR, dimOutputEncoder, rnnMode=rnnMode,
-                dropout=dropout, sizeInputSeq=sizeInputSeq - nPredicts, mode="simple", teachOnlyLastFrameLength=self.teachOnlyLastFrameLength)
-        elif self.modelLengthInARpredStartDep is not None:
-            assert nPredicts == self.modelLengthInARpredStartDep
-            self.wPrediction = TimeAlignedPredictionNetwork(
-                nPredicts, dimOutputAR, dimOutputEncoder, rnnMode=rnnMode,
-                dropout=dropout, sizeInputSeq=sizeInputSeq - nPredicts, mode="predStartDep", teachOnlyLastFrameLength=self.teachOnlyLastFrameLength)
+                dropout=dropout, sizeInputSeq=sizeInputSeq - nPredicts, mode=lengthMode, teachOnlyLastFrameLength=self.teachOnlyLastFrameLength,
+                weightMode=(self.modelLengthInARweightsMode, self.modelLengthInARweightsCoeff))
+        # elif self.modelLengthInARpredStartDep is not None:
+        #     assert nPredicts == self.modelLengthInARpredStartDep
+        #     self.wPrediction = TimeAlignedPredictionNetwork(
+        #         nPredicts, dimOutputAR, dimOutputEncoder, rnnMode=rnnMode,
+        #         dropout=dropout, sizeInputSeq=sizeInputSeq - nPredicts, mode="predStartDep", teachOnlyLastFrameLength=self.teachOnlyLastFrameLength)
         else:
             assert False
         

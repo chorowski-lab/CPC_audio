@@ -66,8 +66,11 @@ def getCriterion(args, downsampling, nSpeakers, nPhones):
             lengthInARsettings = {
                 "modelLengthInARsimple": args.modelLengthInARsimple,
                 "modelLengthInARpredStartDep": args.nPredicts if args.modelLengthInARpredStartDep else None,
-                "teachOnlyLastFrameLength": args.ARteachOnlyLastFrameLength
+                "teachOnlyLastFrameLength": args.ARteachOnlyLastFrameLength,
+                "modelLengthInARweightsMode": args.modelLengthInARweightsMode,
+                "modelLengthInARweightsCoeff": args.modelLengthInARweightsCoeff
             }
+            print("lengthInARsettings:", lengthInARsettings)
 
             if args.CPCCTC:
                 cpcCriterion = sa.CPCUnsupersivedCriterion(args.nPredicts,
@@ -1454,6 +1457,8 @@ def parseArgs(argv):
     group_fcm.add_argument('--modelLengthInARsimple', action='store_true')
     group_fcm.add_argument('--modelLengthInARpredStartDep', action='store_true')
     group_fcm.add_argument('--ARteachOnlyLastFrameLength', action='store_true')
+    group_fcm.add_argument('--modelLengthInARweightsMode',  type=str, default="exp")
+    group_fcm.add_argument('--modelLengthInARweightsCoeff',  type=float, default=2.)
 
 
     group_gpu = parser.add_argument_group('GPUs')
