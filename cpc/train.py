@@ -66,7 +66,9 @@ def getCriterion(args, downsampling, nSpeakers, nPhones):
             lengthInARsettings = {
                 "modelLengthInARsimple": args.modelLengthInARsimple,
                 "modelLengthInARpredStartDep": args.nPredicts if args.modelLengthInARpredStartDep else None,
+                "modelLengthInARpredEndDep": args.nPredicts if args.modelLengthInARpredEndDep else None,
                 "teachOnlyLastFrameLength": args.ARteachOnlyLastFrameLength,
+                "teachLongPredsUniformlyLess": args.ARteachLongPredsUniformlyLess,
                 "modelLengthInARweightsMode": args.modelLengthInARweightsMode,
                 "modelLengthInARweightsCoeff": args.modelLengthInARweightsCoeff,
                 "firstPredID": args.ARlengthFirstPredID,
@@ -801,6 +803,10 @@ def main(args):
 
     assert not args.modelLengthInARsimple or not args.modelLengthInARpredStartDep
     if args.FCMsettings:
+        if args.modelLengthInARpredStartDep or args.modelLengthInARpredEndDep:
+            modelLengthInARpredDep = args.nPredicts
+        else:
+            modelLengthInARpredDep = None
         fcmSettings = {
             "FCMproject": args.FCMproject,
             "numProtos": args.FCMprotos, 
@@ -829,7 +835,7 @@ def main(args):
             "hierARgradualStart": args.FCMhierARgradualStart,
             "hierARmergePrior": args.FCMhierARmergePrior,
             "modelLengthInARsimple": args.modelLengthInARsimple,
-            "modelLengthInARpredStartDep": args.nPredicts if args.modelLengthInARpredStartDep else None
+            "modelLengthInARpredDep": modelLengthInARpredDep
             #"reprsConcatDontIncreaseARdim": args.FCMreprsConcatIncreaseARdim
         }
         # TODO: maybe better settings? or maybe ok
@@ -1458,7 +1464,9 @@ def parseArgs(argv):
 
     group_fcm.add_argument('--modelLengthInARsimple', action='store_true')
     group_fcm.add_argument('--modelLengthInARpredStartDep', action='store_true')
+    group_fcm.add_argument('--modelLengthInARpredEndDep', action='store_true')
     group_fcm.add_argument('--ARteachOnlyLastFrameLength', action='store_true')
+    group_fcm.add_argument('--ARteachLongPredsUniformlyLess', action='store_true')
     group_fcm.add_argument('--modelLengthInARweightsMode',  type=str, default="exp")
     group_fcm.add_argument('--modelLengthInARweightsCoeff',  type=float, default=2.)
     group_fcm.add_argument('--ARlengthFirstPredID', action='store_true')

@@ -340,12 +340,12 @@ class CPCModel(nn.Module):
         self.VQgradualStart = None
         self.hierARgradualStart = None
         self.modelLengthInARsimple = False
-        self.modelLengthInARpredStartDep = None  # num preds if do
+        self.modelLengthInARpredDep = None  # num preds if do
         if self.fcm:
             self.fcmDebug = False   #True
             self.fcmReal = fcmSettings["FCMproject"]
             self.modelLengthInARsimple = fcmSettings["modelLengthInARsimple"]
-            self.modelLengthInARpredStartDep = fcmSettings["modelLengthInARpredStartDep"]  # num preds if do
+            self.modelLengthInARpredDep = fcmSettings["modelLengthInARpredDep"]  # num preds if do
             self.hierARshorten = fcmSettings["hierARshorten"]
             self.hierARgradualStart = fcmSettings["hierARgradualStart"]
             self.hierARmergePrior = fcmSettings["hierARmergePrior"]
@@ -455,8 +455,8 @@ class CPCModel(nn.Module):
 
             if self.modelLengthInARsimple:
                 encodedData = encodedData[:,:,:-2]
-            elif self.modelLengthInARpredStartDep is not None:
-                encodedData = encodedData[:,:,:-self.modelLengthInARpredStartDep]
+            elif self.modelLengthInARpredDep is not None:
+                encodedData = encodedData[:,:,:-self.modelLengthInARpredDep]
             
             pureEncoded = encodedData.clone()
             encodedData = encodedData.clone()
@@ -559,8 +559,8 @@ class CPCModel(nn.Module):
                 encForCfeature = self._FCMlikeBelong(encForCfeature, givenCenters, None, None, None, coeffOnlyAR)
             if self.modelLengthInARsimple:
                 encForCfeature = torch.cat([encForCfeature, torch.zeros(1,1,1).cuda().repeat(encForCfeature.shape[0], encForCfeature.shape[1], 2)], dim=-1)  # append 0s at the end to make dim ok
-            elif self.modelLengthInARpredStartDep is not None:
-                encForCfeature = torch.cat([encForCfeature, torch.zeros(1,1,1).cuda().repeat(encForCfeature.shape[0], encForCfeature.shape[1], self.modelLengthInARpredStartDep)], dim=-1)  # append 0s at the end to make dim ok
+            elif self.modelLengthInARpredDep is not None:
+                encForCfeature = torch.cat([encForCfeature, torch.zeros(1,1,1).cuda().repeat(encForCfeature.shape[0], encForCfeature.shape[1], self.modelLengthInARpredDep)], dim=-1)  # append 0s at the end to make dim ok
             cFeature = self.gAR(encForCfeature)
             if self.hierARshorten is not None:  # TODO here or at the end, unsure
                 #--t0 = time.time()
