@@ -159,7 +159,8 @@ class TimeAlignedPredictionNetwork(nn.Module):
                  sizeInputSeq=116,
                  mode="simple",
                  teachOnlyLastFrameLength=False,
-                 weightMode=("exp",2.)):
+                 weightMode=("exp",2.),
+                 firstPredID=False):
 
         super(TimeAlignedPredictionNetwork, self).__init__()
         self.predictors = nn.ModuleList()
@@ -168,10 +169,14 @@ class TimeAlignedPredictionNetwork(nn.Module):
         self.mode = mode
         self.teachOnlyLastFrameLength = teachOnlyLastFrameLength
         self.weightMode = weightMode
-        print(f"LOADING TIME ALIGNED PRED {mode} softalign; teachOnlyLastFrameLength: {teachOnlyLastFrameLength}; weightMode: {weightMode}")
+        self.firstPredID = firstPredID
+        print(f"LOADING TIME ALIGNED PRED {mode} softalign; teachOnlyLastFrameLength: {teachOnlyLastFrameLength}; weightMode: {weightMode}; firstPredID {firstPredID}")
         self.dropout = nn.Dropout(p=0.5) if dropout else None
         for i in range(nPredicts+1):  # frame len is 0-1 so for up to nPredicts frames for nPredicts need nPred+1 predictors from 0 to nPred
                                       # TODO? (or could just assume pred #0 is just the current frame, hm)
+            if i == 0 and self.firstPredID:
+                self.predictors.append(nn.Identity())  # length dims are cut later
+                continue
             if rnnMode == 'RNN':
                 self.predictors.append(
                     nn.RNN(dimOutputAR, dimOutputEncoder))
@@ -264,8 +269,8 @@ class TimeAlignedPredictionNetwork(nn.Module):
             ###c[:,:,-2] = predictedLengthsSum[:,:-len(candidates)]  #  [:,:,:,-1]  moreLengths
             # ^ this seems like a very bad idea after some rethinking - teaches all previous lengths in the batch from local predictions (idea was for it to make diffs, but well, it can do sth else)
             # frame lengths are now at -2, they are given as part of input c, but can also put there again to be sure
-            c[:,:,-1] = predictedLengths[:,:-(len(self.predictors)-1)].detach()  #.requires_grad_()
-            c[:,:,-2] = predictedLengthsSum[:,:-(len(self.predictors)-1)].detach()
+            c[:,:,-1] = predictedLengths[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()  #.requires_grad_()
+            c[:,:,-2] = predictedLengthsSum[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()
             #^#print("c:", c)
             locCdimToCut = 2
         elif self.mode == "predStartDep":
@@ -291,7 +296,7 @@ class TimeAlignedPredictionNetwork(nn.Module):
 
             c = c.clone()
             #print("!", predictedLengths.shape[0])
-            c[:,:,-predictedLengths.shape[0]:] = predictedLengthsOrg[:,:-(len(self.predictors)-1)].detach()
+            c[:,:,-predictedLengths.shape[0]:] = predictedLengthsOrg[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()
             #^#print("c", c.shape, c)
             # TODO can make some cumsum, but should only see past - there can be some empty spaces - would perhaps need to also cut begin for predicting and not only end
             locCdimToCut = predictedLengths.shape[0]
@@ -364,7 +369,7 @@ class TimeAlignedPredictionNetwork(nn.Module):
         
         #^#print("devices:", c.device, predictsPerPredictor.device, weights.device, predictedLengths.device, predictedLengthsSum.device)
 
-        
+        #print("shapes0:", c.shape, predictsPerPredictor.shape)
         for k in range(len(self.predictors)):
 
             locC = self.predictors[k](c)
@@ -412,7 +417,7 @@ class TimeAlignedPredictionNetwork(nn.Module):
 
         #predictions = predictions.sum(dim=-2)  # sum weighted stuff
         predsWeighted = predsWeighted.sum(dim=-2)
-        #^#print("predsWeighted", predsWeighted.shape)
+        #print("shapes1:", c.shape, predsWeighted.shape) #^#print("predsWeighted", predsWeighted.shape)
         # now predictions numPred x B x N x Dim
 
         for k in range(len(self.predictors)-1):  #(len(self.predictors)):  # same, but clearer
@@ -475,16 +480,28 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         self.loss_temp = loss_temp
         self.nMatched = nMatched
         self.no_negs_in_match_window = no_negs_in_match_window
-        self.modelLengthInARsimple = lengthInARsettings["modelLengthInARsimple"]
-        self.modelLengthInARpredStartDep = lengthInARsettings["modelLengthInARpredStartDep"]
-        self.teachOnlyLastFrameLength = lengthInARsettings["teachOnlyLastFrameLength"]
-        self.modelLengthInARweightsMode = lengthInARsettings["modelLengthInARweightsMode"]
-        self.modelLengthInARweightsCoeff = lengthInARsettings["modelLengthInARweightsCoeff"]
+        if lengthInARsettings is not None:
+            self.modelLengthInARsimple = lengthInARsettings["modelLengthInARsimple"]
+            self.modelLengthInARpredStartDep = lengthInARsettings["modelLengthInARpredStartDep"]
+            self.teachOnlyLastFrameLength = lengthInARsettings["teachOnlyLastFrameLength"]
+            self.modelLengthInARweightsMode = lengthInARsettings["modelLengthInARweightsMode"]
+            self.modelLengthInARweightsCoeff = lengthInARsettings["modelLengthInARweightsCoeff"]
+            self.firstPredID = lengthInARsettings["firstPredID"]
+            self.lengthNoise = lengthInARsettings["lengthNoise"]  # normal with this stdev
+        else:
+            self.modelLengthInARsimple = False
+            self.modelLengthInARpredStartDep = None
+            self.teachOnlyLastFrameLength = False
+            self.modelLengthInARweightsMode = None
+            self.modelLengthInARweightsCoeff = None
+            self.firstPredID = False
+            self.lengthNoise = None
+        print(f"lengthNoise stdev: {self.lengthNoise}")
 
         if not self.modelLengthInARsimple and self.modelLengthInARpredStartDep is None:
             self.wPrediction = PredictionNetwork(
                 nPredicts, dimOutputAR, dimOutputEncoder, rnnMode=rnnMode,
-                dropout=dropout, sizeInputSeq=sizeInputSeq - nPredicts)
+                dropout=dropout, sizeInputSeq=sizeInputSeq - nMatched)  #nPredicts)
         elif self.modelLengthInARsimple or self.modelLengthInARpredStartDep is not None:
             if self.modelLengthInARsimple:
                 lengthMode = "simple"
@@ -495,8 +512,8 @@ class CPCUnsupersivedCriterion(BaseCriterion):
             assert self.modelLengthInARweightsMode in ("exp", "bilin", "trilin")
             self.wPrediction = TimeAlignedPredictionNetwork(
                 nPredicts, dimOutputAR, dimOutputEncoder, rnnMode=rnnMode,
-                dropout=dropout, sizeInputSeq=sizeInputSeq - nPredicts, mode=lengthMode, teachOnlyLastFrameLength=self.teachOnlyLastFrameLength,
-                weightMode=(self.modelLengthInARweightsMode, self.modelLengthInARweightsCoeff))
+                dropout=dropout, sizeInputSeq=sizeInputSeq - nMatched, mode=lengthMode, teachOnlyLastFrameLength=self.teachOnlyLastFrameLength,
+                weightMode=(self.modelLengthInARweightsMode, self.modelLengthInARweightsCoeff), firstPredID=self.firstPredID)
         # elif self.modelLengthInARpredStartDep is not None:
         #     assert nPredicts == self.modelLengthInARpredStartDep
         #     self.wPrediction = TimeAlignedPredictionNetwork(
@@ -617,6 +634,11 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         elif self.modelLengthInARpredStartDep is not None:
             predictedFrameLengths = cFeature[:,:,-self.modelLengthInARpredStartDep:]
 
+        if self.lengthNoise:
+            normalNoise = torch.zeros_like(predictedFrameLengths, device=predictedFrameLengths.device)
+            torch.normal(0., self.lengthNoise, normalNoise.shape, out=normalNoise)  #predictedFrameLengths.shape)
+            predictedFrameLengths = predictedFrameLengths + normalNoise  #torch.normal(0., self.lengthNoise, predictedFrameLengths.shape)
+
         cFeature = cFeature[:, :windowSize]
 
         if self.normalize_enc:
@@ -636,7 +658,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
             predictions = self.wPrediction(cFeature, predictedFrameLengths)
         else:
             predictions = self.wPrediction(cFeature)
-        #predictions = self.wPrediction(cFeature)
+        #print("predShape", predictions.shape, sampledNegs.shape)  #predictions = self.wPrediction(cFeature)
         nPredicts = self.nPredicts
 
         extra_preds = []
@@ -667,7 +689,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
 
         # Positive examples in the window, BS x Len x W x D
         positives = encodedData[:,1:].unfold(1, self.nMatched, 1).permute(0,1,3,2)
-        # gt_and_neg = torch.cat((pred_windows, sampledData.permute(0, 2, 3, 1)), 3)
+        #print("pos shape", positives.shape)  # gt_and_neg = torch.cat((pred_windows, sampledData.permute(0, 2, 3, 1)), 3)
 
         # BS x L x NumNegs x NumPreds
         neg_log_scores = sampledNegs @ predictions / sampledNegs.size(-1)

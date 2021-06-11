@@ -68,7 +68,9 @@ def getCriterion(args, downsampling, nSpeakers, nPhones):
                 "modelLengthInARpredStartDep": args.nPredicts if args.modelLengthInARpredStartDep else None,
                 "teachOnlyLastFrameLength": args.ARteachOnlyLastFrameLength,
                 "modelLengthInARweightsMode": args.modelLengthInARweightsMode,
-                "modelLengthInARweightsCoeff": args.modelLengthInARweightsCoeff
+                "modelLengthInARweightsCoeff": args.modelLengthInARweightsCoeff,
+                "firstPredID": args.ARlengthFirstPredID,
+                "lengthNoise": args.ARlengthPredNoise
             }
             print("lengthInARsettings:", lengthInARsettings)
 
@@ -1459,6 +1461,8 @@ def parseArgs(argv):
     group_fcm.add_argument('--ARteachOnlyLastFrameLength', action='store_true')
     group_fcm.add_argument('--modelLengthInARweightsMode',  type=str, default="exp")
     group_fcm.add_argument('--modelLengthInARweightsCoeff',  type=float, default=2.)
+    group_fcm.add_argument('--ARlengthFirstPredID', action='store_true')
+    group_fcm.add_argument('--ARlengthPredNoise',  type=float, default=None)
 
 
     group_gpu = parser.add_argument_group('GPUs')
