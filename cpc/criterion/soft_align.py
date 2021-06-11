@@ -173,7 +173,8 @@ class TimeAlignedPredictionNetwork(nn.Module):
         self.weightMode = weightMode
         self.firstPredID = firstPredID
         self.teachLongPredsUniformlyLess = teachLongPredsUniformlyLess
-        print(f"LOADING TIME ALIGNED PRED {mode} softalign; teachOnlyLastFrameLength: {teachOnlyLastFrameLength}; weightMode: {weightMode}; firstPredID {firstPredID}")
+        print(f"LOADING TIME ALIGNED PRED {mode} softalign; teachOnlyLastFrameLength: {teachOnlyLastFrameLength}; weightMode: {weightMode}; firstPredID {firstPredID};"
+            f"teachLongPredsUniformlyLess: {teachLongPredsUniformlyLess}")
         self.dropout = nn.Dropout(p=0.5) if dropout else None
         for i in range(nPredicts+1):  # frame len is 0-1 so for up to nPredicts frames for nPredicts need nPred+1 predictors from 0 to nPred
                                       # TODO? (or could just assume pred #0 is just the current frame, hm)
@@ -340,8 +341,8 @@ class TimeAlignedPredictionNetwork(nn.Module):
         #^#print("ml", moreLengths.shape, moreLengths)
         ## moreLengths: predictions x B x (N-preds)
         if self.teachLongPredsUniformlyLess:
-            predFrameLengths = torch.arange(1,moreLengths.shape[0]+1)
-            gradLengthsTeachWeights = 1. / predFrameLengths
+            predFrameLengths = torch.arange(1,moreLengths.shape[0]+1).to(moreLengths.device)
+            gradLengthsTeachWeights = (1. / predFrameLengths).view(-1,1,1)
             moreLengths = gradLengthsTeachWeights*moreLengths + (1.-gradLengthsTeachWeights)*moreLengths.detach()
             # with grad like that, frame length will be teached with same weight for all prediction lengths:
             # 1 time with 1 for 1 len1 pred it is used for, 2 times with weight 1/2 for 2 len2 preds it's used for, ...
