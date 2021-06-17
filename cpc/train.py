@@ -69,10 +69,16 @@ def getCriterion(args, downsampling, nSpeakers, nPhones):
                 "modelLengthInARpredEndDep": args.nPredicts if args.modelLengthInARpredEndDep else None,
                 "teachOnlyLastFrameLength": args.ARteachOnlyLastFrameLength,
                 "teachLongPredsUniformlyLess": args.ARteachLongPredsUniformlyLess,
+                "teachLongPredsSqrtLess": args.ARteachLongPredsSqrtLess,
+                "lengthsGradReweight": args.ARlengthsGradReweight,
                 "modelLengthInARweightsMode": args.modelLengthInARweightsMode,
                 "modelLengthInARweightsCoeff": args.modelLengthInARweightsCoeff,
                 "firstPredID": args.ARlengthFirstPredID,
-                "lengthNoise": args.ARlengthPredNoise
+                "lengthNoise": args.ARlengthPredNoise,
+                "modelFrameNormalsSigma": args.ARmodelFrameNormalsSigma,
+                "modelFrameNormalsDistMult": args.ARmodelFrameNormalsDistMult,
+                "showDetachedLengths": args.predShowDetachedLengths,
+                "showDetachedLengthsCumsum": args.predShowDetachedLengthsCumsum
             }
             print("lengthInARsettings:", lengthInARsettings)
 
@@ -1467,10 +1473,16 @@ def parseArgs(argv):
     group_fcm.add_argument('--modelLengthInARpredEndDep', action='store_true')
     group_fcm.add_argument('--ARteachOnlyLastFrameLength', action='store_true')
     group_fcm.add_argument('--ARteachLongPredsUniformlyLess', action='store_true')
+    group_fcm.add_argument('--ARteachLongPredsSqrtLess', action='store_true')
+    group_fcm.add_argument('--ARlengthsGradReweight',  type=float, default=None)
     group_fcm.add_argument('--modelLengthInARweightsMode',  type=str, default="exp")
     group_fcm.add_argument('--modelLengthInARweightsCoeff',  type=float, default=2.)
     group_fcm.add_argument('--ARlengthFirstPredID', action='store_true')
     group_fcm.add_argument('--ARlengthPredNoise',  type=float, default=None)
+    group_fcm.add_argument('--ARmodelFrameNormalsSigma',  type=float, default=None)
+    group_fcm.add_argument('--ARmodelFrameNormalsDistMult',  type=float, default=None)
+    group_fcm.add_argument('--predShowDetachedLengths', action='store_true')
+    group_fcm.add_argument('--predShowDetachedLengthsCumsum', action='store_true')
 
 
     group_gpu = parser.add_argument_group('GPUs')

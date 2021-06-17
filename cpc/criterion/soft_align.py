@@ -1,6 +1,7 @@
 import torch
 from torch import autograd, nn
 import torch.nn.functional as F
+from torch.distributions import Normal
 import math
 
 from .criterion import BaseCriterion, EqualizedConv1d  # , # PredictionNetwork
@@ -162,7 +163,12 @@ class TimeAlignedPredictionNetwork(nn.Module):
                  teachOnlyLastFrameLength=False,
                  weightMode=("exp",2.),
                  firstPredID=False,
-                 teachLongPredsUniformlyLess=False):
+                 teachLongPredsUniformlyLess=False,
+                 modelNormalsSettings=(None,None),
+                 teachLongPredsSqrtLess=False,
+                 lengthsGradReweight=None,
+                 showDetachedLengths=False,
+                 showDetachedLengthsCumsum=False):
 
         super(TimeAlignedPredictionNetwork, self).__init__()
         self.predictors = nn.ModuleList()
@@ -173,8 +179,14 @@ class TimeAlignedPredictionNetwork(nn.Module):
         self.weightMode = weightMode
         self.firstPredID = firstPredID
         self.teachLongPredsUniformlyLess = teachLongPredsUniformlyLess
+        self.modelFrameNormalsSigma, self.seenDistMult = modelNormalsSettings
+        self.teachLongPredsSqrtLess = teachLongPredsSqrtLess
+        self.lengthsGradReweight = lengthsGradReweight
+        self.showDetachedLengths = showDetachedLengths
+        self.showDetachedLengthsCumsum = showDetachedLengthsCumsum
         print(f"LOADING TIME ALIGNED PRED {mode} softalign; teachOnlyLastFrameLength: {teachOnlyLastFrameLength}; weightMode: {weightMode}; firstPredID {firstPredID};"
-            f"teachLongPredsUniformlyLess: {teachLongPredsUniformlyLess}")
+            f" teachLongPredsUniformlyLess: {teachLongPredsUniformlyLess}; modelNormalsSettings: {modelNormalsSettings}; teachLongPredsSqrtLess: {teachLongPredsSqrtLess}"
+            f" lengthsGradReweight: {lengthsGradReweight}; showDetachedLengths: {showDetachedLengths}; showDetachedLengthsCumsum: {showDetachedLengthsCumsum}")
         self.dropout = nn.Dropout(p=0.5) if dropout else None
         for i in range(nPredicts+1):  # frame len is 0-1 so for up to nPredicts frames for nPredicts need nPred+1 predictors from 0 to nPred
                                       # TODO? (or could just assume pred #0 is just the current frame, hm)
@@ -273,8 +285,14 @@ class TimeAlignedPredictionNetwork(nn.Module):
             ###c[:,:,-2] = predictedLengthsSum[:,:-len(candidates)]  #  [:,:,:,-1]  moreLengths
             # ^ this seems like a very bad idea after some rethinking - teaches all previous lengths in the batch from local predictions (idea was for it to make diffs, but well, it can do sth else)
             # frame lengths are now at -2, they are given as part of input c, but can also put there again to be sure
-            c[:,:,-1] = predictedLengths[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()  #.requires_grad_()
-            c[:,:,-2] = predictedLengthsSum[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()
+            if self.showDetachedLengths:
+                c[:,:,-1] = predictedLengths[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()  #.requires_grad_()
+            else:
+                c[:,:,-1] = 0.
+            if self.showDetachedLengthsCumsum:
+                c[:,:,-2] = predictedLengthsSum[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()
+            else:
+                c[:,:,-2] = 0.  #predictedLengthsSum[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()
             #^#print("c:", c)
             locCdimToCut = 2
         elif self.mode == "predStartDep":
@@ -300,7 +318,10 @@ class TimeAlignedPredictionNetwork(nn.Module):
 
             c = c.clone()
             #print("!", predictedLengths.shape[0])
-            c[:,:,-predictedLengths.shape[0]:] = predictedLengthsOrg[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()
+            if self.showDetachedLengths:
+                c[:,:,-predictedLengths.shape[0]:] = predictedLengthsOrg[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()
+            else:
+                c[:,:,-predictedLengths.shape[0]:] = 0
             #^#print("c", c.shape, c)
             # TODO can make some cumsum, but should only see past - there can be some empty spaces - would perhaps need to also cut begin for predicting and not only end
             locCdimToCut = predictedLengths.shape[0]
@@ -332,7 +353,10 @@ class TimeAlignedPredictionNetwork(nn.Module):
 
             c = c.clone()
             #print("!", predictedLengths.shape[0])
-            c[:,:,-predictedLengths.shape[0]:] = predictedLengthsOrg[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()
+            if self.showDetachedLengths:
+                c[:,:,-predictedLengths.shape[0]:] = predictedLengthsOrg[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()
+            else:
+                c[:,:,-predictedLengths.shape[0]:] = 0.
             #^#print("c", c.shape, c)
             # TODO can make some cumsum, but should only see past - there can be some empty spaces - would perhaps need to also cut begin for predicting and not only end
             locCdimToCut = predictedLengths.shape[0]
@@ -348,7 +372,17 @@ class TimeAlignedPredictionNetwork(nn.Module):
             # 1 time with 1 for 1 len1 pred it is used for, 2 times with weight 1/2 for 2 len2 preds it's used for, ...
             # at least it's like that with simple length prediction way; but more sophisticated ways 
             # look similar if you think about different "visible from" lengths as lengths of same thing and sum that up
-        
+        elif self.teachLongPredsSqrtLess:
+            predFrameLengths = torch.arange(1,moreLengths.shape[0]+1).to(moreLengths.device)
+            gradLengthsTeachWeights = (1. / torch.sqrt(predFrameLengths)).view(-1,1,1)
+            moreLengths = gradLengthsTeachWeights*moreLengths + (1.-gradLengthsTeachWeights)*moreLengths.detach()
+
+        if self.lengthsGradReweight is not None:
+            moreLengths = self.lengthsGradReweight * moreLengths - (self.lengthsGradReweight - 1.) * moreLengths.detach()
+
+        if self.modelFrameNormalsSigma is not None:
+            normalsStdevs = torch.sqrt(torch.arange(1,moreLengths.shape[0]+1).to(moreLengths.device) * (self.modelFrameNormalsSigma)**2)
+
         # for each nr of frames in future separately,
         # calc and switch last elements in c as lengths, and also get predictor choices
         toPredCenters = (torch.arange(len(self.predictors)).cuda()).view(1,1,1,-1)
@@ -360,28 +394,54 @@ class TimeAlignedPredictionNetwork(nn.Module):
         #weights[0,w2<0] = 1  # in places not between two predictors (<0.5 on borders), assign all weight to closest one
         #weights = torch.clamp(weights, min=0)
         #^#print("lengthsDists", lengthsDists)
+        ## lengthsDists: predictions x B x (N-preds) x predictors
         weightType, w = self.weightMode
         if weightType == "exp":
+            if self.modelFrameNormalsSigma is not None:
+                lengthsDists = lengthsDists * (1./normalsStdevs.view(-1,1,1,1))  # decreases exponent for long predictions
             weights = torch.exp(-w*lengthsDists)
             weightsNorms = weights.sum(-1)
             #^#print("weightsUnnormed", weights)
             #^#print("weightNorms", weightsNorms)
             weights = weights / weightsNorms.view(*(weightsNorms.shape),1)
         elif weightType == "doubleExp":
+            if self.modelFrameNormalsSigma is not None:
+                lengthsDists = lengthsDists * (1./normalsStdevs.view(-1,1,1,1))  # decreases exponent for long predictions
             weights = torch.exp(1.-torch.exp(w*lengthsDists))
             weightsNorms = weights.sum(-1)
             #^#print("weightsUnnormed", weights)
             #^#print("weightNorms", weightsNorms)
             weights = weights / weightsNorms.view(*(weightsNorms.shape),1)
         elif weightType == "bilin":  # bilinear
+            if self.modelFrameNormalsSigma is not None:
+                assert False  # caution: use "trilin" for this case as it's like "generalized bilin"
             weights = torch.clamp(1. - lengthsDists, min=0)  # here no normalization needed, sums up to 1
             # won't teach dists on dostant predictors, exp would teach strongly because to inc weight a bit needs to move a lot
         elif weightType == "trilin":  # "trilinear"
-            weights = torch.clamp(1.5 - lengthsDists, min=0)
+            maxSeenDist = torch.tensor(1.5).to(lengthsDists.device).repeat(lengthsDists.shape[0]).view(-1,1,1,1)
+            if self.modelFrameNormalsSigma is not None:
+                maxSeenDist = (self.seenDistMult*normalsStdevs).view(-1,1,1,1)  # seenDistMult * sigma needs to be at least 0.5001 (maybe better 1) for 1-long preds
+                # ^ this param is actually not needed, increasing sigma has same effect in this case 
+            weights = torch.clamp(maxSeenDist - lengthsDists, min=0)
             weightsNorms = weights.sum(-1)
             #^#print("weightsUnnormed", weights)
             #^#print("weightNorms", weightsNorms)
             weights = weights / weightsNorms.view(*(weightsNorms.shape),1)
+        elif weightType == "normals":
+            assert self.modelFrameNormalsSigma is not None
+            lengthsDists = toPredCenters - moreLengths.view(moreLengths.shape[0],moreLengths.shape[1],moreLengths.shape[2],1)
+            # here don't want abs
+            weights = torch.zeros_like(lengthsDists)
+            stripeEnds = lengthsDists + 0.5
+            stripeBegins = lengthsDists - 0.5
+            for i in range(moreLengths.shape[0]):
+                thisFrameNormal = Normal(0., normalsStdevs[i].item())
+                weights[i] = thisFrameNormal.cdf(stripeEnds[i]) - thisFrameNormal.cdf(stripeBegins[i])
+            weightsNorms = weights.sum(-1)
+            #^#print("weightsUnnormed", weights)
+            #^#print("weightNorms", weightsNorms)
+            weights = weights / weightsNorms.view(*(weightsNorms.shape),1)  # need to normalize as not summing whole distribution; 
+            # sometimes taking impossible things with <0 len, but ok
         else:
             assert False
         #^#print("weights", weights)
@@ -536,20 +596,32 @@ class CPCUnsupersivedCriterion(BaseCriterion):
             self.modelLengthInARpredEndDep = lengthInARsettings["modelLengthInARpredEndDep"]
             self.teachOnlyLastFrameLength = lengthInARsettings["teachOnlyLastFrameLength"]
             self.teachLongPredsUniformlyLess = lengthInARsettings["teachLongPredsUniformlyLess"]
+            self.teachLongPredsSqrtLess = lengthInARsettings["teachLongPredsSqrtLess"]
+            self.lengthsGradReweight = lengthInARsettings["lengthsGradReweight"]
             self.modelLengthInARweightsMode = lengthInARsettings["modelLengthInARweightsMode"]
             self.modelLengthInARweightsCoeff = lengthInARsettings["modelLengthInARweightsCoeff"]
             self.firstPredID = lengthInARsettings["firstPredID"]
             self.lengthNoise = lengthInARsettings["lengthNoise"]  # normal with this stdev
+            self.modelFrameNormalsSigma = lengthInARsettings["modelFrameNormalsSigma"]
+            self.modelFrameNormalsDistMult = lengthInARsettings["modelFrameNormalsDistMult"]
+            self.showDetachedLengths = lengthInARsettings["showDetachedLengths"]
+            self.showDetachedLengthsCumsum = lengthInARsettings["showDetachedLengthsCumsum"]
         else:
             self.modelLengthInARsimple = False
             self.modelLengthInARpredStartDep = None
             self.modelLengthInARpredEndDep = None
             self.teachOnlyLastFrameLength = False
             self.teachLongPredsUniformlyLess = False
+            self.teachLongPredsSqrtLess = False
+            self.lengthsGradReweight = None
             self.modelLengthInARweightsMode = None
             self.modelLengthInARweightsCoeff = None
             self.firstPredID = False
             self.lengthNoise = None
+            self.modelFrameNormalsSigma = None
+            self.modelFrameNormalsDistMult = None
+            self.showDetachedLengths = False
+            self.showDetachedLengthsCumsum = False
         print(f"lengthNoise stdev: {self.lengthNoise}")
 
         if not self.modelLengthInARsimple and self.modelLengthInARpredStartDep is None and self.modelLengthInARpredEndDep is None:
@@ -565,12 +637,17 @@ class CPCUnsupersivedCriterion(BaseCriterion):
                 lengthMode = "predEndDep"
             else:
                 assert False
-            assert self.modelLengthInARweightsMode in ("exp", "doubleExp", "bilin", "trilin")
+            assert self.modelLengthInARweightsMode in ("exp", "doubleExp", "bilin", "trilin", "normals")
             self.wPrediction = TimeAlignedPredictionNetwork(
                 nPredicts, dimOutputAR, dimOutputEncoder, rnnMode=rnnMode,
                 dropout=dropout, sizeInputSeq=sizeInputSeq - nMatched, mode=lengthMode, teachOnlyLastFrameLength=self.teachOnlyLastFrameLength,
                 weightMode=(self.modelLengthInARweightsMode, self.modelLengthInARweightsCoeff), firstPredID=self.firstPredID,
-                teachLongPredsUniformlyLess=self.teachLongPredsUniformlyLess)
+                teachLongPredsUniformlyLess=self.teachLongPredsUniformlyLess,
+                modelNormalsSettings=(self.modelFrameNormalsSigma,self.modelFrameNormalsDistMult),
+                teachLongPredsSqrtLess=self.teachLongPredsSqrtLess,
+                lengthsGradReweight=self.lengthsGradReweight,
+                showDetachedLengths=self.showDetachedLengths,
+                showDetachedLengthsCumsum=self.showDetachedLengthsCumsum)
         # elif self.modelLengthInARpredStartDep is not None:
         #     assert nPredicts == self.modelLengthInARpredStartDep
         #     self.wPrediction = TimeAlignedPredictionNetwork(
