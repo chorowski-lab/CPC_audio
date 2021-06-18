@@ -42,12 +42,12 @@ def train_step(feature_maker, centerModel, segmentCostModel, criterion, data_loa
             maxAllowedSegmCost = segmentCostModel.getCurrentMaxCostEstimator()
         else:
             maxAllowedSegmCost = None
-        c_feature, encoded_data, _, _, _, _, _, _, _ = feature_maker(batch_data, None, None, maxAllowedSegmCost, givenCenters, cpc_epochs, False, False)
+        c_feature, predLen, encoded_data, _, _, _, _, _, _, _ = feature_maker(batch_data, None, None, maxAllowedSegmCost, givenCenters, cpc_epochs, False, False)
         if not feature_maker.optimize:
             c_feature, encoded_data = c_feature.detach(), encoded_data.detach()
             # ("TODO") center model not updated in this case and it should but it's unused
 
-        all_losses, all_acc = criterion(c_feature, encoded_data, label)
+        all_losses, all_acc = criterion(c_feature, predLen, encoded_data, label)
 
         totLoss = all_losses.sum()
         totLoss.backward()
@@ -83,8 +83,8 @@ def val_step(feature_maker, centerModel, segmentCostModel, criterion, data_loade
                 maxAllowedSegmCost = segmentCostModel.getCurrentMaxCostEstimator()
             else:
                 maxAllowedSegmCost = None
-            c_feature, encoded_data, _, _, _, _, _, _, _ = feature_maker(batch_data, None, None, maxAllowedSegmCost, givenCenters, cpc_epochs, False, False)
-            all_losses, all_acc = criterion(c_feature, encoded_data, label)
+            c_feature, predLen, encoded_data, _, _, _, _, _, _, _ = feature_maker(batch_data, None, None, maxAllowedSegmCost, givenCenters, cpc_epochs, False, False)
+            all_losses, all_acc = criterion(c_feature, predLen, encoded_data, label)
 
             logs["locLoss_val"] += np.asarray([all_losses.mean().item()])
             logs["locAcc_val"] += np.asarray([all_acc.mean().item()])

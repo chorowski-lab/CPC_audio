@@ -341,9 +341,13 @@ class CPCModel(nn.Module):
         self.hierARgradualStart = None
         self.modelLengthInARsimple = False
         self.modelLengthInARpredDep = None  # num preds if do
+        self.shrinkEncodingsLengthDims = False
+        self.showLengthsInCtx = False
         if self.fcm:
             self.fcmDebug = False   #True
             self.fcmReal = fcmSettings["FCMproject"]
+            self.shrinkEncodingsLengthDims = fcmSettings["shrinkEncodingsLengthDims"]
+            self.showLengthsInCtx = fcmSettings["showLengthsInCtx"]
             self.modelLengthInARsimple = fcmSettings["modelLengthInARsimple"]
             self.modelLengthInARpredDep = fcmSettings["modelLengthInARpredDep"]  # num preds if do
             self.hierARshorten = fcmSettings["hierARshorten"]
@@ -453,10 +457,11 @@ class CPCModel(nn.Module):
             
             encodedData = self.gEncoder(batchData).permute(0, 2, 1)
 
-            if self.modelLengthInARsimple:
-                encodedData = encodedData[:,:,:-2]
-            elif self.modelLengthInARpredDep is not None:
-                encodedData = encodedData[:,:,:-self.modelLengthInARpredDep]
+            if self.shrinkEncodingsLengthDims:
+                if self.modelLengthInARsimple:
+                    encodedData = encodedData[:,:,:-2]
+                elif self.modelLengthInARpredDep is not None:
+                    encodedData = encodedData[:,:,:-self.modelLengthInARpredDep]
             
             pureEncoded = encodedData.clone()
             encodedData = encodedData.clone()
@@ -557,11 +562,36 @@ class CPCModel(nn.Module):
                 coeffOnlyAR = self.VQpushEncCenterWeightOnlyAR if self.VQgradualStart is None \
                     else self.VQpushEncCenterWeightOnlyAR*(max(epochNow_-self.VQgradualStart, 0.)/max(epochAll_-self.VQgradualStart,1.))
                 encForCfeature = self._FCMlikeBelong(encForCfeature, givenCenters, None, None, None, coeffOnlyAR)
-            if self.modelLengthInARsimple:
-                encForCfeature = torch.cat([encForCfeature, torch.zeros(1,1,1).cuda().repeat(encForCfeature.shape[0], encForCfeature.shape[1], 2)], dim=-1)  # append 0s at the end to make dim ok
-            elif self.modelLengthInARpredDep is not None:
-                encForCfeature = torch.cat([encForCfeature, torch.zeros(1,1,1).cuda().repeat(encForCfeature.shape[0], encForCfeature.shape[1], self.modelLengthInARpredDep)], dim=-1)  # append 0s at the end to make dim ok
+            if self.shrinkEncodingsLengthDims:
+                if self.modelLengthInARsimple:
+                    encForCfeature = torch.cat([encForCfeature, torch.zeros(1,1,1).cuda().repeat(encForCfeature.shape[0], encForCfeature.shape[1], 2)], dim=-1)  # append 0s at the end to make dim ok
+                    #at the end encodedData = torch.cat([encodedData, torch.zeros(1,1,1).cuda().repeat(encodedData.shape[0], encodedData.shape[1], 2)], dim=-1)  # append 0s at the end to make dim ok
+                elif self.modelLengthInARpredDep is not None:
+                    encForCfeature = torch.cat([encForCfeature, torch.zeros(1,1,1).cuda().repeat(encForCfeature.shape[0], encForCfeature.shape[1], self.modelLengthInARpredDep)], dim=-1)  # append 0s at the end to make dim ok
+                    #at the end encodedData = torch.cat([encodedData, torch.zeros(1,1,1).cuda().repeat(encodedData.shape[0], encodedData.shape[1], self.modelLengthInARpredDep)], dim=-1)  # append 0s at the end to make dim ok
             cFeature = self.gAR(encForCfeature)
+            #cFeature = cFeature.clone()  # so that inplace modifications below are ok
+            predictedLengths = None
+            #with torch.no_grad():
+            if self.modelLengthInARsimple:
+                predictedLengths = cFeature[:,:,-1]
+                if self.showLengthsInCtx:
+                    #cFeature[:,:,-2] = 0.  # only zero -2, in -1 there are lengths already
+                    cFeature = torch.cat([
+                            cFeature[:,:,:-2], 
+                            torch.zeros_like(cFeature[:,:,-2]).view(cFeature.shape[0], cFeature.shape[1], 1), 
+                            predictedLengths.view(cFeature.shape[0], cFeature.shape[1], 1)],
+                        dim=-1)
+                else:
+                    #cFeature[:,:,-2:] = 0.
+                    cFeature = torch.cat([cFeature[:,:,:-2], torch.zeros_like(cFeature[:,:,-2:])], dim=-1)
+            elif self.modelLengthInARpredDep is not None:
+                predictedLengths = cFeature[:,:,-self.modelLengthInARpredDep:]
+                if self.showLengthsInCtx:
+                    pass  # length already in ctx
+                else:
+                    #cFeature[:,:,-self.modelLengthInARpredDep:] = 0.
+                    cFeature = torch.cat([cFeature[:,:,:-self.modelLengthInARpredDep], predictedLengths], dim=-1)
             if self.hierARshorten is not None:  # TODO here or at the end, unsure
                 #--t0 = time.time()
                 #cFeature = HierarchicalSegmentationRestoreLengthLayer.apply(cFeature, segmDictTens)
@@ -767,7 +797,13 @@ class CPCModel(nn.Module):
             #--t02 = time.time()
             #--print(f"part of additional time lost because of DataParallel: {t02-t01}")
 
-            return cFeature, encodedData, pureEncoded, label, labelPhonePerGPU, pushLoss, segmDictTens, segmCostForWantedLengthTens_, actualSegmK_
+            if self.shrinkEncodingsLengthDims:
+                if self.modelLengthInARsimple:
+                    encodedData = torch.cat([encodedData, torch.zeros(1,1,1).cuda().repeat(encodedData.shape[0], encodedData.shape[1], 2)], dim=-1)  # append 0s at the end to make dim ok
+                elif self.modelLengthInARpredDep is not None:
+                    encodedData = torch.cat([encodedData, torch.zeros(1,1,1).cuda().repeat(encodedData.shape[0], encodedData.shape[1], self.modelLengthInARpredDep)], dim=-1)  # append 0s at the end to make dim ok
+
+            return cFeature, predictedLengths, encodedData, pureEncoded, label, labelPhonePerGPU, pushLoss, segmDictTens, segmCostForWantedLengthTens_, actualSegmK_
 
         else:
 
@@ -825,6 +861,7 @@ class CPCModel(nn.Module):
                 #print(x.shape)
                 #print(":::::", givenCenters.shape, protoUsedCounts1.shape, protoUsedCounts1)
 
+            # now, VQ push will not be used for linsep, would need to add that (TODO?)
             if self.VQpushEncCenterWeightOnlyCriterion is not None and (self.VQgradualStart is None or epochNow_ >= self.VQgradualStart):
                 encodedDataPushPart = encodedData[:, :, :baseEncDim]  #.clone()
                 coeffOnlyCritEnc = self.VQpushEncCenterWeightOnlyCriterion if self.VQgradualStart is None \

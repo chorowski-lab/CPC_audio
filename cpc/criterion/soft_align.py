@@ -168,7 +168,8 @@ class TimeAlignedPredictionNetwork(nn.Module):
                  teachLongPredsSqrtLess=False,
                  lengthsGradReweight=None,
                  showDetachedLengths=False,
-                 showDetachedLengthsCumsum=False):
+                 showDetachedLengthsCumsum=False,
+                 shrinkEncodingsLengthDims=False):
 
         super(TimeAlignedPredictionNetwork, self).__init__()
         self.predictors = nn.ModuleList()
@@ -184,9 +185,11 @@ class TimeAlignedPredictionNetwork(nn.Module):
         self.lengthsGradReweight = lengthsGradReweight
         self.showDetachedLengths = showDetachedLengths
         self.showDetachedLengthsCumsum = showDetachedLengthsCumsum
+        self.shrinkEncodingsLengthDims = shrinkEncodingsLengthDims
         print(f"LOADING TIME ALIGNED PRED {mode} softalign; teachOnlyLastFrameLength: {teachOnlyLastFrameLength}; weightMode: {weightMode}; firstPredID {firstPredID};"
-            f" teachLongPredsUniformlyLess: {teachLongPredsUniformlyLess}; modelNormalsSettings: {modelNormalsSettings}; teachLongPredsSqrtLess: {teachLongPredsSqrtLess}"
-            f" lengthsGradReweight: {lengthsGradReweight}; showDetachedLengths: {showDetachedLengths}; showDetachedLengthsCumsum: {showDetachedLengthsCumsum}")
+            f" teachLongPredsUniformlyLess: {teachLongPredsUniformlyLess}; modelNormalsSettings: {modelNormalsSettings}; teachLongPredsSqrtLess: {teachLongPredsSqrtLess};"
+            f" lengthsGradReweight: {lengthsGradReweight}; showDetachedLengths: {showDetachedLengths}; showDetachedLengthsCumsum: {showDetachedLengthsCumsum};"
+            f" shrinkEncodingsLengthDims: {shrinkEncodingsLengthDims}")
         self.dropout = nn.Dropout(p=0.5) if dropout else None
         for i in range(nPredicts+1):  # frame len is 0-1 so for up to nPredicts frames for nPredicts need nPred+1 predictors from 0 to nPred
                                       # TODO? (or could just assume pred #0 is just the current frame, hm)
@@ -281,18 +284,25 @@ class TimeAlignedPredictionNetwork(nn.Module):
 
             #^#print("shapes:", c.shape, predictedLengthsSum.shape, predictedLengths.shape)
             #c = c.view(1,*(c.shape)).repeat(len(candidates),1,1,1)
-            c = c.clone()  # because of not-inplace view things
+            #c = c.clone()  # because of not-inplace view things
             ###c[:,:,-2] = predictedLengthsSum[:,:-len(candidates)]  #  [:,:,:,-1]  moreLengths
             # ^ this seems like a very bad idea after some rethinking - teaches all previous lengths in the batch from local predictions (idea was for it to make diffs, but well, it can do sth else)
             # frame lengths are now at -2, they are given as part of input c, but can also put there again to be sure
+            if self.showDetachedLengthsCumsum:  # [!] needs to be before non-sum on last dim as it would spoil it
+                #c[:,:,-2] = predictedLengthsSum[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()
+                toPut = predictedLengthsSum[:,:c.shape[1]].detach()
+                c = torch.cat([c[:,:,:-2], toPut.view(toPut.shape[0], toPut.shape[1], 1).repeat(1,1,2)], dim=-1)
+            else:
+                #c[:,:,-2] = 0.  #predictedLengthsSum[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()
+                c = torch.cat([c[:,:,:-2], torch.zeros_like(c[:,:,-2:])], dim=-1)
             if self.showDetachedLengths:
-                c[:,:,-1] = predictedLengths[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()  #.requires_grad_()
+                #c[:,:,-1] = predictedLengths[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()  #.requires_grad_()
+                toPut = predictedLengths[:,:c.shape[1]].detach()
+                c = torch.cat([c[:,:,:-1], toPut.view(toPut.shape[0], toPut.shape[1], 1)], dim=-1)
             else:
-                c[:,:,-1] = 0.
-            if self.showDetachedLengthsCumsum:
-                c[:,:,-2] = predictedLengthsSum[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()
-            else:
-                c[:,:,-2] = 0.  #predictedLengthsSum[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()
+                #c[:,:,-1] = 0.
+                c = torch.cat([c[:,:,:-1], torch.zeros_like(c[:,:,-1:]).view(c.shape[0], c.shape[1], 1)], dim=-1)
+            
             #^#print("c:", c)
             locCdimToCut = 2
         elif self.mode == "predStartDep":
@@ -316,12 +326,14 @@ class TimeAlignedPredictionNetwork(nn.Module):
             # moreLengths: preds x B x (N-preds)
             #^#print("ml", moreLengths.shape, moreLengths)
 
-            c = c.clone()
+            #c = c.clone()
             #print("!", predictedLengths.shape[0])
             if self.showDetachedLengths:
-                c[:,:,-predictedLengths.shape[0]:] = predictedLengthsOrg[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()
+                #c[:,:,-predictedLengths.shape[0]:] = predictedLengthsOrg[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()
+                c = torch.cat([c[:,:,:-predictedLengths.shape[0]], predictedLengthsOrg[:,:c.shape[1]].detach()], dim=-1)
             else:
-                c[:,:,-predictedLengths.shape[0]:] = 0
+                #c[:,:,-predictedLengths.shape[0]:] = 0
+                c = torch.cat([c[:,:,:-predictedLengths.shape[0]], torch.zeros_like(c[:,:,-predictedLengths.shape[0]:])], dim=-1)
             #^#print("c", c.shape, c)
             # TODO can make some cumsum, but should only see past - there can be some empty spaces - would perhaps need to also cut begin for predicting and not only end
             locCdimToCut = predictedLengths.shape[0]
@@ -351,12 +363,14 @@ class TimeAlignedPredictionNetwork(nn.Module):
             # moreLengths: preds x B x (N-preds)
             #^#print("ml", moreLengths.shape, moreLengths)
 
-            c = c.clone()
+            #c = c.clone()
             #print("!", predictedLengths.shape[0])
             if self.showDetachedLengths:
-                c[:,:,-predictedLengths.shape[0]:] = predictedLengthsOrg[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()
+                #c[:,:,-predictedLengths.shape[0]:] = predictedLengthsOrg[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()
+                c = torch.cat([c[:,:,:-predictedLengths.shape[0]], predictedLengthsOrg[:,:c.shape[1]].detach()], dim=-1)
             else:
-                c[:,:,-predictedLengths.shape[0]:] = 0.
+                #c[:,:,-predictedLengths.shape[0]:] = 0.
+                c = torch.cat([c[:,:,:-predictedLengths.shape[0]], torch.zeros_like(c[:,:,-predictedLengths.shape[0]:])], dim=-1)
             #^#print("c", c.shape, c)
             # TODO can make some cumsum, but should only see past - there can be some empty spaces - would perhaps need to also cut begin for predicting and not only end
             locCdimToCut = predictedLengths.shape[0]
@@ -539,7 +553,11 @@ class TimeAlignedPredictionNetwork(nn.Module):
             if self.dropout is not None:
                 locC = self.dropout(locC)
             #^#print("locC", locC.shape, len(candidates), candidates[0].shape)
-            locC = locC.view(locC.size(0), locC.size(1), locC.size(2), 1)[:,:,:-locCdimToCut,:]  # cut length and length sum dims
+            # [!] now not cutting pred dim - even if encodings are length-shrinked, zeros are now added
+            #     but shrink this if encodings shrinked - to make it easier to learn a bit (predictions don't have to learn x zeros)
+            locC = locC.view(locC.size(0), locC.size(1), locC.size(2), 1)
+            if self.shrinkEncodingsLengthDims:
+                locC = locC[:,:,:-locCdimToCut,:]  # cut length and length sum dims
             #^#print("view", locC.shape, candidates[k].shape)
             #outK = (locC*candidates[k]).mean(dim=3)
             out.append(locC)  #outK)
@@ -606,6 +624,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
             self.modelFrameNormalsDistMult = lengthInARsettings["modelFrameNormalsDistMult"]
             self.showDetachedLengths = lengthInARsettings["showDetachedLengths"]
             self.showDetachedLengthsCumsum = lengthInARsettings["showDetachedLengthsCumsum"]
+            self.shrinkEncodingsLengthDims = lengthInARsettings["shrinkEncodingsLengthDims"]
         else:
             self.modelLengthInARsimple = False
             self.modelLengthInARpredStartDep = None
@@ -622,6 +641,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
             self.modelFrameNormalsDistMult = None
             self.showDetachedLengths = False
             self.showDetachedLengthsCumsum = False
+            self.shrinkEncodingsLengthDims = False
         print(f"lengthNoise stdev: {self.lengthNoise}")
 
         if not self.modelLengthInARsimple and self.modelLengthInARpredStartDep is None and self.modelLengthInARpredEndDep is None:
@@ -647,7 +667,8 @@ class CPCUnsupersivedCriterion(BaseCriterion):
                 teachLongPredsSqrtLess=self.teachLongPredsSqrtLess,
                 lengthsGradReweight=self.lengthsGradReweight,
                 showDetachedLengths=self.showDetachedLengths,
-                showDetachedLengthsCumsum=self.showDetachedLengthsCumsum)
+                showDetachedLengthsCumsum=self.showDetachedLengthsCumsum,
+                shrinkEncodingsLengthDims=self.shrinkEncodingsLengthDims)
         # elif self.modelLengthInARpredStartDep is not None:
         #     assert nPredicts == self.modelLengthInARpredStartDep
         #     self.wPrediction = TimeAlignedPredictionNetwork(
@@ -753,7 +774,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
 
         # return outputs, labelLoss
 
-    def forward(self, cFeature, encodedData, label, captureOptions=None):
+    def forward(self, cFeature, predictedFrameLengths, encodedData, label, captureOptions=None):
 
 
         if self.mode == "reverse":
@@ -763,12 +784,12 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         batchSize, seqSize, dimAR = cFeature.size()
         windowSize = seqSize - self.nMatched
 
-        if self.modelLengthInARsimple:
-            predictedFrameLengths = cFeature[:,:,-1]
-        elif self.modelLengthInARpredStartDep is not None:
-            predictedFrameLengths = cFeature[:,:,-self.modelLengthInARpredStartDep:]
-        elif self.modelLengthInARpredEndDep is not None:
-            predictedFrameLengths = cFeature[:,:,-self.modelLengthInARpredEndDep:]
+        # if self.modelLengthInARsimple:
+        #     predictedFrameLengths = cFeature[:,:,-1]
+        # elif self.modelLengthInARpredStartDep is not None:
+        #     predictedFrameLengths = cFeature[:,:,-self.modelLengthInARpredStartDep:]
+        # elif self.modelLengthInARpredEndDep is not None:
+        #     predictedFrameLengths = cFeature[:,:,-self.modelLengthInARpredEndDep:]
 
         if self.lengthNoise:
             normalNoise = torch.zeros_like(predictedFrameLengths, device=predictedFrameLengths.device)

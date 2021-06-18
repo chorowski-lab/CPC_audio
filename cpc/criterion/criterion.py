@@ -493,7 +493,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
 
         return "orthoLoss", self.orthoLoss * self.wPrediction.orthoCriterion()
 
-    def forward(self, cFeature, encodedData, label, captureOptions=None):
+    def forward(self, cFeature, predictedLengths, encodedData, label, captureOptions=None):
 
         if self.mode == "reverse":
             encodedData = torch.flip(encodedData, [1])

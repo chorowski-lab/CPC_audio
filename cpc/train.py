@@ -78,7 +78,8 @@ def getCriterion(args, downsampling, nSpeakers, nPhones):
                 "modelFrameNormalsSigma": args.ARmodelFrameNormalsSigma,
                 "modelFrameNormalsDistMult": args.ARmodelFrameNormalsDistMult,
                 "showDetachedLengths": args.predShowDetachedLengths,
-                "showDetachedLengthsCumsum": args.predShowDetachedLengthsCumsum
+                "showDetachedLengthsCumsum": args.predShowDetachedLengthsCumsum,
+                "shrinkEncodingsLengthDims": args.shrinkEncodingsLengthDims
             }
             print("lengthInARsettings:", lengthInARsettings)
 
@@ -195,7 +196,8 @@ def trainStep(dataLoader,
             maxAllowedSegmCost = segmentCostModel.getCurrentMaxCostEstimator()
         else:
             maxAllowedSegmCost = None
-        c_feature, encoded_data, pure_enc, label, labelPhoneByGPU, pushLoss, segmSetTens, batchAimCostSegmTens, batchActualKTens = cpcModel(batchData, label, labelPhone, maxAllowedSegmCost, givenCenters, epochNrs, False, False)
+        c_feature, predictedLengths, encoded_data, pure_enc, label, labelPhoneByGPU, pushLoss, segmSetTens, batchAimCostSegmTens, batchActualKTens = \
+            cpcModel(batchData, label, labelPhone, maxAllowedSegmCost, givenCenters, epochNrs, False, False)
         if segmentCostModel is not None and batchData.shape[0] == normalBatchSize:  # avoiding updating with smaller batches as would spoil average segm number stats
             segmentCostModel.batchUpdate(batchAimCostSegmTens, batchActualKTens)
         #print("!!!!", label.shape)
@@ -226,7 +228,7 @@ def trainStep(dataLoader,
             encoded_data.retain_grad()
             encoded_data2.retain_grad()
             
-        allCriterionLosses, allAcc, _ = cpcCriterion(c_feature, encoded_data, label, None)
+        allCriterionLosses, allAcc, _ = cpcCriterion(c_feature, predictedLengths, encoded_data, label, None)
 
         #totLoss = allCriterionLosses.sum()   # a bit below in if-else now
         #allCriterionLosses.retain_grad()
@@ -365,8 +367,8 @@ def valStep(dataLoader,
                 maxAllowedSegmCost = segmentCostModel.getCurrentMaxCostEstimator()
             else:
                 maxAllowedSegmCost = None
-            c_feature, encoded_data, pure_enc, label, labelPhoneByGPU, pushLoss, segmSetTens, _, _ = cpcModel(batchData, label, labelPhone, maxAllowedSegmCost, givenCenters, epochNrs, False, False)
-            allLosses, allAcc, _ = cpcCriterion(c_feature, encoded_data, label, None)
+            c_feature, predictedLengths, encoded_data, pure_enc, label, labelPhoneByGPU, pushLoss, segmSetTens, _, _ = cpcModel(batchData, label, labelPhone, maxAllowedSegmCost, givenCenters, epochNrs, False, False)
+            allLosses, allAcc, _ = cpcCriterion(c_feature, predictedLengths, encoded_data, label, None)
 
         if "locLoss_val" not in logs:
             logs["locLoss_val"] = np.zeros(allLosses.size(1))
@@ -454,8 +456,8 @@ def captureStep(
                 maxAllowedSegmCost = segmentCostModel.getCurrentMaxCostEstimator()
             else:
                 maxAllowedSegmCost = None
-            c_feature, encoded_data, pure_enc, labelSpeaker, _, _, _, _, _ = cpcModel(batchData, labelSpeaker, None, maxAllowedSegmCost, givenCenters, epochNrs, False, False)
-            allLosses, allAcc, captured = cpcCriterion(c_feature, encoded_data, labelSpeaker, cpcCaptureOpts)
+            c_feature, predictedLengths, encoded_data, pure_enc, labelSpeaker, _, _, _, _, _ = cpcModel(batchData, labelSpeaker, None, maxAllowedSegmCost, givenCenters, epochNrs, False, False)
+            allLosses, allAcc, captured = cpcCriterion(c_feature, predictedLengths, encoded_data, labelSpeaker, cpcCaptureOpts)
         
             # saving it with IDs like that assumes deterministic order of elements
             # which is there as dataLoader is a sequential one here
@@ -841,7 +843,9 @@ def main(args):
             "hierARgradualStart": args.FCMhierARgradualStart,
             "hierARmergePrior": args.FCMhierARmergePrior,
             "modelLengthInARsimple": args.modelLengthInARsimple,
-            "modelLengthInARpredDep": modelLengthInARpredDep
+            "modelLengthInARpredDep": modelLengthInARpredDep,
+            "showLengthsInCtx": args.linsepShowARlengthsInCtx,
+            "shrinkEncodingsLengthDims": args.shrinkEncodingsLengthDims
             #"reprsConcatDontIncreaseARdim": args.FCMreprsConcatIncreaseARdim
         }
         # TODO: maybe better settings? or maybe ok
@@ -1483,6 +1487,8 @@ def parseArgs(argv):
     group_fcm.add_argument('--ARmodelFrameNormalsDistMult',  type=float, default=None)
     group_fcm.add_argument('--predShowDetachedLengths', action='store_true')
     group_fcm.add_argument('--predShowDetachedLengthsCumsum', action='store_true')
+    group_fcm.add_argument('--linsepShowARlengthsInCtx', action='store_true')
+    group_fcm.add_argument('--shrinkEncodingsLengthDims', action='store_true')
 
 
     group_gpu = parser.add_argument_group('GPUs')
