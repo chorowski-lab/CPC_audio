@@ -331,7 +331,7 @@ class CPCModel(nn.Module):
         print(f'--------- FCM: {self.fcm} ----------')
         self.fcmDebug = False
         self.doing_push_loss_or_push_after = False
-        self.fcmReal = False
+        #self.fcmReal = False
         self.hierARshorten = None  # will be set below if needed; otherwise need to set None
         self.VQpushEncCenterWeightOnTopConv = None
         self.VQpushEncCenterWeightOnlyAR = None
@@ -345,7 +345,7 @@ class CPCModel(nn.Module):
         self.showLengthsInCtx = False
         if self.fcm:
             self.fcmDebug = False   #True
-            self.fcmReal = fcmSettings["FCMproject"]
+            # self.fcmReal = fcmSettings["FCMproject"]
             self.shrinkEncodingsLengthDims = fcmSettings["shrinkEncodingsLengthDims"]
             self.showLengthsInCtx = fcmSettings["showLengthsInCtx"]
             self.modelLengthInARsimple = fcmSettings["modelLengthInARsimple"]
@@ -370,15 +370,7 @@ class CPCModel(nn.Module):
             print("reweight:", self.pushLossNormReweight)
             if self.pushLossPointNorm:
                 assert self.pushLossCenterNorm
-            self.reprsConcat = fcmSettings["reprsConcat"]
-            self.reprsConcatNormSumsNotLengths = fcmSettings["reprsConcatNormSumsNotLengths"]
             self.numProtos = fcmSettings["numProtos"]
-            self.mBeforeAR = fcmSettings["mBeforeAR"]
-            self.leftProtos = fcmSettings["leftProtos"]  # either m OR pushDeg
-            self.pushDegFeatureBeforeAR = fcmSettings["pushDegFeatureBeforeAR"]
-            self.mAfterAR = fcmSettings["mAfterAR"]
-            self.pushDegCtxAfterAR = fcmSettings["pushDegCtxAfterAR"]
-            self.pushDegAllAfterAR = fcmSettings["pushDegAllAfterAR"]
             if self.pushLossWeightEnc is not None or self.pushLossWeightCtx is not None \
                 or self.VQpushEncCenterWeightOnlyCriterion is not None or self.VQpushCtxCenterWeight is not None:
 
@@ -386,66 +378,11 @@ class CPCModel(nn.Module):
             else:
                 self.doing_push_loss_or_push_after = False 
             
-            # encoder.getDimOutput() is what was fed to AR and had to be same as AR.getDimOutput() for sim
-            # now replacing encoder.getDimOutput() with self.numProto dims in case with m, leaving with pushDeg
-            assert self.mBeforeAR is None or self.mAfterAR is None
-            assert self.pushDegCtxAfterAR is None or self.pushDegAllAfterAR  is None  # if push both, use only the latter
-            # if self.mBeforeAR is not None or self.mAfterAR is not None:
-            #     assert self.pushDegFeatureBeforeAR is None and self.pushDegCtxAfterAR is None and self.pushDegAllAfterAR is None
-            # if self.mBeforeAR is not None:
-            #     assert self.numProtos == AR.getDimOutput()
-            #if self.leftProtos is not None and self.leftProtos > 0:
-            if self.mAfterAR is not None:
-                pass  # in this case needed to pass correct AR output (changed) dim to criterion
-            # elif self.pushDegFeatureBeforeAR is not None or self.pushDegCtxAfterAR is not None or self.pushDegAllAfterAR is not None:
-            #     # no dim change in those cases
-            #     assert encoder.getDimOutput() == AR.getDimOutput()
-            #     assert self.leftProtos is None
             self.reprDim = encoder.getDimOutput()
             ###print("----------------------Adding protos as parameter---------------------")
             # seems it's needed to also add requires_grad on the tensor step
             ###self.protos = nn.Parameter(torch.randn((self.numProtos, self.reprDim), requires_grad=True) / (5. * math.sqrt(self.reprDim)), requires_grad=True)  # TODO check
 
-    #@staticmethod
-    # TODO option to normalize sums and not lengths
-    def gradualTrainingNormalize(self, part1, part2, epochNrs):
-
-        currentEpoch, totalEpochs = epochNrs
-
-        # # TODO maybe add option to specify moment when part2 starts to learn
-        partOfEpochs = (currentEpoch + 1) / (totalEpochs + 1)  # +-1, don't want 0-division anywhere
-        # if partOfEpochs < 0.25:  # this would mean a possible sudden jump in lengths when this ends
-        #     return part1, 0.*part2
-        if self.fcmDebug:
-            print(f'PART OF EPOCHS: {partOfEpochs}')
-        
-        # partOfEpochs = (currentEpoch - 0.25) / (totalEpochs - 0.25)
-
-        # [!] clamping to 1 so that shorter vectors are not normalized - to prevent problems with initial training
-        #     TODO think if do this also for part 2 - if not, would increase length of stuff like (0.3, 0.3, 0.4)
-        #          (as length is always <1 after fcm, only LSTM can increase) and also of stuff when we cut part of noise-assumed protos
-        #          --> so, for now clamping linear dists
-        part1lengthsNoClamp = torch.sqrt((part1*part1).sum(-1)) if not self.reprsConcatNormSumsNotLengths else (torch.abs(part1)).sum(-1)
-        if self.fcmDebug:
-            print(f'part1lengthsNoClamp: {(part1lengthsNoClamp.min().item(), part1lengthsNoClamp.mean().item(), part1lengthsNoClamp.max().item())}')
-        part1lengths = torch.clamp(part1lengthsNoClamp, min=1.)  #min=0.00000000001)
-        part1 = part1 / part1lengths.view(*(part1lengths.shape), 1)
-        part1 *= (1. - partOfEpochs)  # [!] length is upper bound by (1. - partOfEpochs) after that
-        part1lengthsFinal = (part1lengthsNoClamp / part1lengths) * (1. - partOfEpochs)  # [!] length is upper bound by (1. - partOfEpochs) after that
-        if self.fcmDebug:
-            print(f'part1lengthsFinal: {(part1lengthsFinal.min().item(), part1lengthsFinal.mean().item(), part1lengthsFinal.max().item())}')
-        part2lengthsNoClamp = torch.sqrt((part2*part2).sum(-1)) if not self.reprsConcatNormSumsNotLengths else (torch.abs(part2)).sum(-1)
-        if self.fcmDebug:
-            print(f'part2lengthsNoClamp: {(part2lengthsNoClamp.min().item(), part2lengthsNoClamp.mean().item(), part2lengthsNoClamp.max().item())}')
-        part2lengths = torch.clamp(part2lengthsNoClamp, min=1.)  #min=0.00000000001)
-        if self.fcmDebug:
-            print(f'part2lengths: {(part2lengths.min().item(), part2lengths.mean().item(), part2lengths.max().item())}')
-        #part2sums = torch.clamp(part2.sum(-1), min=1.)
-        # [!] after below, length is <= : big () is <= partOfEpochs, whole thing also
-        part2 = part2 * (part1lengthsFinal * partOfEpochs / (1. - partOfEpochs)).view(*(part2lengths.shape), 1) / part2lengths.view(*(part2lengths.shape), 1)
-        #part2 *= partOfEpochs
-
-        return part1, part2
 
     # epochNrs: (current, total)
     def forward(self, arg1, arg2, arg3, arg4, givenCenters, epochNrs, calcPushLoss, onlyConv):
@@ -479,47 +416,7 @@ class CPCModel(nn.Module):
                 print('--------------------------------------forward fcmDebug')
                 print(f'baseEncDim {baseEncDim}')
                 print(f'epochNrs: {epochNrs}')
-            if self.fcmReal:
-                # could just invoke with some of those as None but this way it's more readable I guess
-                if self.reprsConcat and self.mBeforeAR is not None:
-                    encodedDataM = self._FCMlikeBelong(encodedData, givenCenters, self.mBeforeAR, None)
-                    if self.fcmDebug:
-                        print(f'enc data m before construction')
-                    if self.pushDegFeatureBeforeAR is not None:
-                        encodedDataPush = self._FCMlikeBelong(encodedData, givenCenters, None, self.pushDegFeatureBeforeAR)
-                        if self.fcmDebug:
-                            print(f'enc data pushing before')
-                    else:
-                        encodedDataPush = encodedData
-                    # normalize parts of it and train cluster-distance representations gradually
-                    # at the beginning, regular representations are most of final vec length,
-                    # so that prototypes and LSTM can be reasonably trained
-                    # and then there is transition to another (proto-dist-based) representation
-                    encodedDataPush, encodedDataM = self.gradualTrainingNormalize(encodedDataPush, encodedDataM, epochNrs)
-                    if self.fcmDebug:
-                        print(f'enc data concat before')
-                        lens1 = torch.sqrt((encodedDataPush*encodedDataPush).sum(-1))
-                        sums1 = encodedDataPush.abs().sum(-1)
-                        lens2 = torch.sqrt((encodedDataM*encodedDataM).sum(-1))  #encodedDataM.sum(-1)
-                        sums2 = encodedDataM.abs().sum(-1)
-                        print(f'push lengths min, avg, max {(lens1.min().item(), lens1.mean().item(), lens1.max().item())},',
-                            f'push sums min, avg, max {(sums1.min().item(), sums1.mean().item(), sums1.max().item())},',
-                            f'm lengths min, avg, max: {(lens2.min().item(), lens2.mean().item(), lens2.max().item())}',
-                            f'm sums min, avg, max: {(sums2.min().item(), sums2.mean().item(), sums2.max().item())}')
-                    # TODO check
-                    encodedData = torch.cat([encodedDataPush, encodedDataM], dim=-1)
-                elif self.mBeforeAR is not None:
-                    if self.pushDegFeatureBeforeAR is not None:  # can push before m, but not sure if makes sense
-                        encodedData = self._FCMlikeBelong(encodedData, givenCenters, None, self.pushDegFeatureBeforeAR)
-                        if self.fcmDebug:
-                            print(f'enc data pushing before')
-                    encodedData = self._FCMlikeBelong(encodedData, givenCenters, self.mBeforeAR, None)
-                    if self.fcmDebug:
-                        print(f'enc data m before construction')
-                elif self.pushDegFeatureBeforeAR is not None:
-                    encodedData = self._FCMlikeBelong(encodedData, givenCenters, None, self.pushDegFeatureBeforeAR)
-                    if self.fcmDebug:
-                        print(f'enc data pushing before')
+            
             #print("!!", encodedData.shape)
             if self.fcmDebug:
                 print(f'enc data shape before AR: {encodedData.shape}')
@@ -527,18 +424,6 @@ class CPCModel(nn.Module):
             encForCfeature = encodedData
             if self.hierARshorten is not None:
                 #--t0 = time.time()
-                # lengthSumToObtain = HierarchicalSegmentationLayer.getKforGivenShorteningAndShape(encodedData.shape, self.hierARshorten)
-                # encForCfeature, _, _, _, segmDictTens = HierarchicalSegmentationLayer.apply(
-                #     encodedData,
-                #     None,
-                #     lengthSumToObtain,
-                #     None,  # could also have range here
-                #     5,
-                #     self.hierARmergePrior,
-                #     "shorten",
-                #     None,
-                #     None
-                # )
                 if self.hierARgradualStart is None:
                     shortening = self.hierARshorten
                 else:
@@ -570,9 +455,11 @@ class CPCModel(nn.Module):
                     encForCfeature = torch.cat([encForCfeature, torch.zeros(1,1,1).cuda().repeat(encForCfeature.shape[0], encForCfeature.shape[1], self.modelLengthInARpredDep)], dim=-1)  # append 0s at the end to make dim ok
                     #at the end encodedData = torch.cat([encodedData, torch.zeros(1,1,1).cuda().repeat(encodedData.shape[0], encodedData.shape[1], self.modelLengthInARpredDep)], dim=-1)  # append 0s at the end to make dim ok
             cFeature = self.gAR(encForCfeature)
-            #cFeature = cFeature.clone()  # so that inplace modifications below are ok
+
+            if self.fcmDebug:
+                print(f'ctx data shape just after AR: {cFeature.shape}')
+
             predictedLengths = None
-            #with torch.no_grad():
             if self.modelLengthInARsimple:
                 predictedLengths = cFeature[:,:,-1]
                 if self.showLengthsInCtx:
@@ -600,172 +487,6 @@ class CPCModel(nn.Module):
                 #--t1 = time.time()
                 #--print(f"hier 2 time: {t1 - t0}")
                 #segmDictTens = segmDictTens.cuda()  # for return  TODO check if all returned tensors need to be on the same device, if so, move also segmCostForWantedLengthTens_ and actualSegmK_
-            
-            if self.fcmDebug:
-                print(f'ctx data shape just after AR: {cFeature.shape}')
-            if self.fcmReal:
-                
-                B = cFeature.shape[0]
-                N = cFeature.shape[1]
-
-                if not self.reprsConcat:
-
-                    if self.mBeforeAR is not None:
-                        # normalization - as encodedData is normalized, making LSTM's life easier
-                        # and not forcing it to figure normalization out itself, when 
-                        # making good things bigger only seems good up to 1 and later weird stuff happens
-                        cFeatureLengths = (cFeature).sum(-1)
-                        cFeature = cFeature / torch.clamp(cFeatureLengths.view(B, N, 1), min=1.)  #min=0.00000000001)
-                        # ^ changed to linear sum and clamping to 1 so that 
-                        if self.fcmDebug:
-                            print(f"m before's after-AR ctx norm")
-
-                        # cut "transition" protos after LSTM, before CPC criterion
-                        # only makes sense in mBeforeAR case
-                        if self.leftProtos and self.leftProtos > 0:
-                            encodedData = encodedData[:, :, :self.leftProtos]
-                            cFeature = cFeature[:, :, :self.leftProtos]
-                            if self.fcmDebug:
-                                print(f"m before's protos cutting")
-                    
-                    elif self.mAfterAR is not None:
-                        if self.pushDegCtxAfterAR is not None:
-                            cFeature = self._FCMlikeBelong(cFeature, givenCenters, None, self.pushDegCtxAfterAR)
-                            if self.fcmDebug:
-                                print(f'ctx pushing after, before m after')
-
-                        if self.pushDegAllAfterAR is not None:
-                            encodedData = self._FCMlikeBelong(encodedData, givenCenters, None, self.pushDegAllAfterAR)
-                            cFeature = self._FCMlikeBelong(cFeature, givenCenters, None, self.pushDegAllAfterAR)
-                            if self.fcmDebug:
-                                print(f'enc and ctx pushing after, before m after')
-                        encodedData = self._FCMlikeBelong(encodedData, givenCenters, self.mAfterAR, None)
-                        cFeature = self._FCMlikeBelong(cFeature, givenCenters, self.mAfterAR, None)
-                        if self.fcmDebug:
-                            print(f'enc and ctx m after')
-
-                    # pushes after AR can be done, but need to be before m stuff, hence done above plus else here
-
-                    else:
-
-                        if self.pushDegCtxAfterAR is not None:
-                            cFeature = self._FCMlikeBelong(cFeature, givenCenters, None, self.pushDegCtxAfterAR)
-                            if self.fcmDebug:
-                                print(f'ctx pushing after')
-
-                        if self.pushDegAllAfterAR is not None:
-                            encodedData = self._FCMlikeBelong(encodedData, givenCenters, None, self.pushDegAllAfterAR)
-                            cFeature = self._FCMlikeBelong(cFeature, givenCenters, None, self.pushDegAllAfterAR)
-                            if self.fcmDebug:
-                                print(f'enc and ctx pushing after')
-
-                else:
-
-                    if self.mBeforeAR is not None:
-                        cFeaturePushPart = cFeature[:, :, :baseEncDim]
-                        cFeatureMpart = cFeature[:, :, baseEncDim:]
-                        # need to do pushing before norm
-                        if self.pushDegCtxAfterAR is not None:
-                            cFeaturePushPart = self._FCMlikeBelong(cFeaturePushPart, givenCenters, None, self.pushDegCtxAfterAR)
-                            if self.fcmDebug:
-                                print(f"m before's ctx push after with concat")
-                        if self.pushDegAllAfterAR is not None:
-                            cFeaturePushPart = self._FCMlikeBelong(cFeaturePushPart, givenCenters, None, self.pushDegAllAfterAR)
-                            encodedDataPushPart = encodedData[:, :, :baseEncDim]
-                            encodedDataMpart = encodedData[:, :, baseEncDim:]
-                            encodedDataPushPart = self._FCMlikeBelong(encodedDataPushPart, givenCenters, None, self.pushDegAllAfterAR)
-                            if self.fcmDebug:
-                                print(f"m before's all push after with concat")
-                            encodedData = torch.cat([encodedDataPushPart, encodedDataMpart], dim=-1)
-                        # this also normalizes m part after LSTM, similarly as when no repr concat
-                        cFeaturePushPart, cFeatureMpart = self.gradualTrainingNormalize(cFeaturePushPart, cFeatureMpart, epochNrs)
-                        # TODO check
-                        if self.leftProtos and self.leftProtos > 0:
-                            encodedDataPushPart = encodedData[:, :, :baseEncDim]
-                            encodedDataMpart = encodedData[:, :, baseEncDim:]
-                            encodedDataMpart = encodedDataMpart[:, :, :self.leftProtos]
-                            cFeature = torch.cat([encodedDataPushPart, encodedDataMpart], dim=-1)
-                            cFeatureMpart = cFeatureMpart[:, :, :self.leftProtos]
-                            if self.fcmDebug:
-                                print(f"m before's protos cutting with concat")
-                        # TODO check
-                        if self.fcmDebug:
-                            print(f'ctx data concat after for m before')
-                            lens1 = torch.sqrt((cFeaturePushPart*cFeaturePushPart).sum(-1))
-                            sums1 = cFeaturePushPart.abs().sum(-1)
-                            lens2 = torch.sqrt((cFeatureMpart*cFeatureMpart).sum(-1))  #encodedDataM.sum(-1)
-                            sums2 = cFeatureMpart.abs().sum(-1)
-                            print(f'push lengths min, avg, max {(lens1.min().item(), lens1.mean().item(), lens1.max().item())},',
-                                f'push sums min, avg, max {(sums1.min().item(), sums1.mean().item(), sums1.max().item())},',
-                                f'm lengths min, avg, max: {(lens2.min().item(), lens2.mean().item(), lens2.max().item())}',
-                                f'm sums min, avg, max: {(sums2.min().item(), sums2.mean().item(), sums2.max().item())}')
-                        cFeature = torch.cat([cFeaturePushPart, cFeatureMpart], dim=-1)
-                    
-                    elif self.mAfterAR is not None:  # here encodedData and cFeature are regular-dim at the beginning
-                        cFeaturePushPart = cFeature
-                        cFeatureMpart = self._FCMlikeBelong(cFeature, givenCenters, self.mAfterAR, None)
-                        # need to do pushing before norm
-                        if self.pushDegCtxAfterAR is not None:
-                            cFeaturePushPart = self._FCMlikeBelong(cFeaturePushPart, givenCenters, None, self.pushDegCtxAfterAR)
-                            if self.fcmDebug:
-                                print(f"m after's ctx push after with concat")
-                        if self.pushDegAllAfterAR is not None:
-                            cFeaturePushPart = self._FCMlikeBelong(cFeaturePushPart, givenCenters, None, self.pushDegAllAfterAR)
-                            if self.fcmDebug:
-                                print(f"m after's all (ctx now) push after with concat")
-                        cFeaturePushPart, cFeatureMpart = self.gradualTrainingNormalize(cFeaturePushPart, cFeatureMpart, epochNrs)
-                        if self.fcmDebug:
-                            print(f'ctx data concat after for m after')
-                            lens1 = torch.sqrt((cFeaturePushPart*cFeaturePushPart).sum(-1))
-                            sums1 = cFeaturePushPart.abs().sum(-1)
-                            lens2 = torch.sqrt((cFeatureMpart*cFeatureMpart).sum(-1))  #encodedDataM.sum(-1)
-                            sums2 = cFeatureMpart.abs().sum(-1)
-                            print(f'push lengths min, avg, max {(lens1.min().item(), lens1.mean().item(), lens1.max().item())},',
-                                f'push sums min, avg, max {(sums1.min().item(), sums1.mean().item(), sums1.max().item())},',
-                                f'm lengths min, avg, max: {(lens2.min().item(), lens2.mean().item(), lens2.max().item())}',
-                                f'm sums min, avg, max: {(sums2.min().item(), sums2.mean().item(), sums2.max().item())}')
-                        cFeature = torch.cat([cFeaturePushPart, cFeatureMpart], dim=-1)
-                        encodedDataPushPart = encodedData
-                        encodedDataMpart = self._FCMlikeBelong(encodedData, givenCenters, self.mAfterAR, None)
-                        # need to do pushing before norm
-                        if self.pushDegAllAfterAR is not None:
-                            encodedDataPushPart = self._FCMlikeBelong(encodedDataPushPart, givenCenters, None, self.pushDegAllAfterAR)
-                            if self.fcmDebug:
-                                print(f"m after's all (enc now) push after with concat")
-                        encodedDataPushPart, encodedDataMpart = self.gradualTrainingNormalize(encodedDataPushPart, encodedDataMpart, epochNrs)
-                        if self.fcmDebug:
-                            print(f'enc data concat after for m after')
-                            lens1 = torch.sqrt((encodedDataPushPart*encodedDataPushPart).sum(-1))
-                            sums1 = encodedDataPushPart.abs().sum(-1)
-                            lens2 = torch.sqrt((encodedDataMpart*encodedDataMpart).sum(-1))  #encodedDataM.sum(-1)
-                            sums2 = encodedDataMpart.abs().sum(-1)
-                            print(f'push lengths min, avg, max {(lens1.min().item(), lens1.mean().item(), lens1.max().item())},',
-                                f'push sums min, avg, max {(sums1.min().item(), sums1.mean().item(), sums1.max().item())},',
-                                f'm lengths min, avg, max: {(lens2.min().item(), lens2.mean().item(), lens2.max().item())}',
-                                f'm sums min, avg, max: {(sums2.min().item(), sums2.mean().item(), sums2.max().item())}')
-                        encodedData = torch.cat([encodedDataPushPart, encodedDataMpart], dim=-1)
-
-                    # ones below in separate else as in cases above need to do pushing before other things and not here at the end
-                    else:
-                        if self.pushDegCtxAfterAR is not None:
-                            cFeaturePushPart = cFeature[:, :, :baseEncDim]
-                            cFeatureMpart = cFeature[:, :, baseEncDim:]
-                            cFeaturePushPart = self._FCMlikeBelong(cFeaturePushPart, givenCenters, None, self.pushDegCtxAfterAR)
-                            if self.fcmDebug:
-                                print(f"regular ctx push after")
-                            cFeature = torch.cat([cFeaturePushPart, cFeatureMpart], dim=-1)
-
-                        if self.pushDegAllAfterAR is not None:
-                            cFeaturePushPart = cFeature[:, :, :baseEncDim]
-                            cFeatureMpart = cFeature[:, :, baseEncDim:]
-                            cFeaturePushPart = self._FCMlikeBelong(cFeaturePushPart, givenCenters, None, self.pushDegAllAfterAR)
-                            cFeature = torch.cat([cFeaturePushPart, cFeatureMpart], dim=-1)
-                            encodedDataPushPart = encodedData[:, :, :baseEncDim]
-                            encodedDataMpart = encodedData[:, :, baseEncDim:]
-                            encodedDataPushPart = self._FCMlikeBelong(encodedDataPushPart, givenCenters, None, self.pushDegAllAfterAR)
-                            if self.fcmDebug:
-                                print(f"regular all push after")
-                            encodedData = torch.cat([encodedDataPushPart, encodedDataMpart], dim=-1)
 
             if self.fcmDebug:
                 print(f'ctx shape returned {cFeature.shape}')
@@ -955,21 +676,6 @@ class CPCModel(nn.Module):
             return 1. / torch.clamp(denomin, min=0.00000001)  #torch.maximum(denomin, torch.tensor(0.00000001).cuda())
 
         elif pushDeg is not None:  # centerpush
-            #print(res.shape, centers.shape)
-            #print(res)
-            #print(points.view(points.shape[0], 1, points.shape[1]).shape, centers.view(1, centers.shape[0], centers.shape[1]).shape)
-            # diffs = points.view(points.shape[0], 1, points.shape[1]) - centers.view(1, centers.shape[0], centers.shape[1])
-            # #print(diffs.shape, res.shape)
-            # resNotSummed = (1 - deg * res.view(*res.shape, 1)) * diffs + centers  #torch.matmul(res, diffs) #+ centers #torch.matmul(res, centers)
-            # #print(resNotSummed.shape, res.shape)
-            # resNotAvg = k*res.view(*res.shape, 1) * resNotSummed   # TODO here add how close to go & also try to even more force far clusters not to affect
-            # #print(resNotAvg.shape)
-            # res = resNotAvg.mean((1,))
-            #print(res.shape)
-            #res = torch.matmul(res, centers)
-            #dists = dists.view(*dists.shape[1:])
-            #print("!!!!", dists.shape)
-            # print(dists.shape)
             closest = dists.argmin(-1)
             # print(points.shape, closest.shape, centers[closest].view(N, -1).shape)
             diffs = centers[closest].view(B, N, -1) - points
@@ -1013,12 +719,7 @@ class CPCModel(nn.Module):
         else:
             assert False
 
-        # print(distsRev3dim.shape, dists3dim.shape, distsDiv.shape, powed.shape, denomin.shape, res.shape)
-        #fcmNoPower = distsBy1 / distsBy1.sum(1).view(-1,1)  # it uses square distances, so it is like for m=2 NOT REALLY XD
-        # print(dists.shape, fcmNoPower.shape, k, distsBy1.sum(1).view(-1,1).shape)
-        # #fcm = torch.square(fcmNoPower)
-        # print(dists, distsBy1, distsBy1.sum(1), fcmNoPower)
-        #return res
+
 
 class CPCModelNullspace(nn.Module):
 

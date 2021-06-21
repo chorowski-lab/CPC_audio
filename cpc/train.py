@@ -37,31 +37,31 @@ def getCriterion(args, downsampling, nSpeakers, nPhones):
             sizeInputSeq = (args.sizeWindow // downsampling)
 
             # TODO this part can be simplified with m's and reprsConcat
-            if args.FCMproject and args.FCMmBeforeAR:
+            # if args.FCMproject and args.FCMmBeforeAR:
 
-                if not args.FCMreprsConcat:
-                    # this could be replaced with encoder.getOutDim, but didn't want to change signature
-                    encoderOutDimForCriterion = args.FCMprotosForCriterion  # .FCMprotos
-                    # [!] args.hiddenGar already updated with possible FCM dim stuff in main train script
-                    #     it is the actual AR dimension - so only needs to be changed here in case of FCMmAfterAR
-                    #     changes the dimension after AR
-                    ARoutDimForCriterion = args.FCMprotosForCriterion  #args.hiddenGar  # but actually should also be == args.FCMprotos
-                else:
-                    encoderOutDimForCriterion = args.hiddenEncoder + args.FCMprotosForCriterion
-                    ARoutDimForCriterion = args.hiddenEncoder + args.FCMprotosForCriterion
+            #     if not args.FCMreprsConcat:
+            #         # this could be replaced with encoder.getOutDim, but didn't want to change signature
+            #         encoderOutDimForCriterion = args.FCMprotosForCriterion  # .FCMprotos
+            #         # [!] args.hiddenGar already updated with possible FCM dim stuff in main train script
+            #         #     it is the actual AR dimension - so only needs to be changed here in case of FCMmAfterAR
+            #         #     changes the dimension after AR
+            #         ARoutDimForCriterion = args.FCMprotosForCriterion  #args.hiddenGar  # but actually should also be == args.FCMprotos
+            #     else:
+            #         encoderOutDimForCriterion = args.hiddenEncoder + args.FCMprotosForCriterion
+            #         ARoutDimForCriterion = args.hiddenEncoder + args.FCMprotosForCriterion
 
-            elif args.FCMproject and args.FCMmAfterAR:
+            # elif args.FCMproject and args.FCMmAfterAR:
 
-                if not args.FCMreprsConcat:
-                    encoderOutDimForCriterion = args.FCMprotosForCriterion
-                    ARoutDimForCriterion = args.FCMprotosForCriterion
-                else:
-                    encoderOutDimForCriterion = args.hiddenEncoder + args.FCMprotosForCriterion
-                    ARoutDimForCriterion = args.hiddenEncoder + args.FCMprotosForCriterion
+            #     if not args.FCMreprsConcat:
+            #         encoderOutDimForCriterion = args.FCMprotosForCriterion
+            #         ARoutDimForCriterion = args.FCMprotosForCriterion
+            #     else:
+            #         encoderOutDimForCriterion = args.hiddenEncoder + args.FCMprotosForCriterion
+            #         ARoutDimForCriterion = args.hiddenEncoder + args.FCMprotosForCriterion
 
-            else:
-                encoderOutDimForCriterion = args.hiddenEncoder
-                ARoutDimForCriterion = args.hiddenGar
+            # else:
+            encoderOutDimForCriterion = args.hiddenEncoder
+            ARoutDimForCriterion = args.hiddenGar
                 
             lengthInARsettings = {
                 "modelLengthInARsimple": args.modelLengthInARsimple,
@@ -816,16 +816,7 @@ def main(args):
         else:
             modelLengthInARpredDep = None
         fcmSettings = {
-            "FCMproject": args.FCMproject,
             "numProtos": args.FCMprotos, 
-            "mBeforeAR": args.FCMmBeforeAR, 
-            "leftProtos": args.FCMleaveProtos,
-            "pushDegFeatureBeforeAR": args.FCMpushDegFeatureBeforeAR, 
-            "mAfterAR": args.FCMmAfterAR,
-            "pushDegCtxAfterAR": args.FCMpushDegCtxAfterAR,
-            "pushDegAllAfterAR": args.FCMpushDegAllAfterAR,
-            "reprsConcat": args.FCMreprsConcat, #,
-            "reprsConcatNormSumsNotLengths": args.FCMreprsConcatNormSumsNotLengths,
             "pushLossWeightEnc": args.FCMpushLossWeightEnc,
             "pushLossWeightCtx": args.FCMpushLossWeightCtx,
             "VQpushEncCenterWeightOnTopConv": args.FCMVQpushEncCenterWeightOnTopConv,
@@ -846,7 +837,6 @@ def main(args):
             "modelLengthInARpredDep": modelLengthInARpredDep,
             "showLengthsInCtx": args.linsepShowARlengthsInCtx,
             "shrinkEncodingsLengthDims": args.shrinkEncodingsLengthDims
-            #"reprsConcatDontIncreaseARdim": args.FCMreprsConcatIncreaseARdim
         }
         # TODO: maybe better settings? or maybe ok
         if args.FCMcentermodule:
@@ -875,44 +865,13 @@ def main(args):
             }
         else:
             segmentCostSettings = None
-        if args.FCMleaveProtos is not None and args.FCMleaveProtos > 0:
-            assert args.FCMleaveProtos <= args.FCMprotos
-            args.FCMprotosForCriterion = args.FCMleaveProtos
-        else:
-            args.FCMprotosForCriterion = args.FCMprotos
     else:
         fcmSettings = None
         centerInitSettings = None
         segmentCostSettings = None
 
-    #print(f'REPRCONCAT {fcmSettings["reprsConcat"]}')
     if fcmSettings is not None:  
-        #locArgsCpy = deepcopy(locArgs)
-        if fcmSettings["reprsConcat"]:
-            assert fcmSettings["mBeforeAR"] is not None \
-                or fcmSettings["mAfterAR"] is not None
-            assert fcmSettings["pushDegFeatureBeforeAR"] is not None \
-                or fcmSettings["pushDegCtxAfterAR"] is not None \
-                or fcmSettings["pushDegAllAfterAR"] is not None
-            # if fcmSettings["reprsConcatDontIncreaseARdim"] is not None:
-            #     args.ARinputDim = args.hiddenEncoder + fcmSettings["numProtos"]
-            #     args.hiddenGar = args.hiddenEncoder
-            # else:
-            if fcmSettings["mBeforeAR"] is not None:
-                args.ARinputDim = args.hiddenEncoder + fcmSettings["numProtos"]
-                args.hiddenGar = args.hiddenEncoder + fcmSettings["numProtos"]
-            elif fcmSettings["mAfterAR"] is not None:
-                args.ARinputDim = args.hiddenEncoder
-                args.hiddenGar = args.hiddenEncoder
-        elif fcmSettings["mBeforeAR"] is not None:
-            args.ARinputDim = fcmSettings["numProtos"]
-            args.hiddenGar = fcmSettings["numProtos"]
-        elif fcmSettings["mAfterAR"] is not None:
-            args.ARinputDim = args.hiddenEncoder
-            pass  # in this case need to only pass changed dim to criterion,
-                  # as there is no dim change inside encoder nor AR nets
-        else:  # otherwise just pushing to closest proto, without dim change
-            args.ARinputDim = args.hiddenEncoder
+        args.ARinputDim = args.hiddenEncoder
         print("FCM settings:", fcmSettings)
     else:
         #locArgsCpy = deepcopy(locArgs)
@@ -1065,14 +1024,7 @@ def main(args):
 
         dim_features = CPChiddenEncoder if args.phone_get_encoded else CPChiddenGar
         dim_ctx_features = CPChiddenGar  # for speakers using CNN encodings is not supported; could add but not very useful perhaps
-        if args.FCMmBeforeAR:
-            dim_features = args.FCMprotos if args.phone_get_encoded else CPChiddenGar
-            # ctx_features CPChiddenGar, as in this case it's just AR dim; it's also == args.FCMprotos
-        elif args.FCMmAfterAR:
-            # this case FCM is done at the end in CPC model on both features and ctx's
-            dim_features = args.FCMprotos
-            dim_ctx_features = args.FCMprotos
-
+        
         #phoneLabelsData = None
         if args.path_phone_data:
             #phoneLabelsData, nPhonesInData = parseSeqLabels(args.path_phone_data)
@@ -1420,17 +1372,17 @@ def parseArgs(argv):
                             help="Additionally load nullspace")
 
     group_fcm = parser.add_argument_group("FCM")
-    group_fcm.add_argument('--FCMproject', action='store_true')
+    # group_fcm.add_argument('--FCMproject', action='store_true')
     group_fcm.add_argument('--FCMsettings', action='store_true')
     group_fcm.add_argument('--FCMprotos', type=int, default=50)
-    group_fcm.add_argument('--FCMmBeforeAR', type=float, default=None)
-    group_fcm.add_argument('--FCMleaveProtos', type=int, default=None)  # only makes sense for mBeforeAR
-    group_fcm.add_argument('--FCMpushDegFeatureBeforeAR', type=float, default=None)
-    group_fcm.add_argument('--FCMmAfterAR', type=float, default=None)
-    group_fcm.add_argument('--FCMpushDegCtxAfterAR', type=float, default=None)
-    group_fcm.add_argument('--FCMpushDegAllAfterAR', type=float, default=None)
-    group_fcm.add_argument('--FCMreprsConcat', action='store_true')
-    group_fcm.add_argument('--FCMreprsConcatNormSumsNotLengths', action='store_true')
+    # group_fcm.add_argument('--FCMmBeforeAR', type=float, default=None)
+    # group_fcm.add_argument('--FCMleaveProtos', type=int, default=None)  # only makes sense for mBeforeAR
+    # group_fcm.add_argument('--FCMpushDegFeatureBeforeAR', type=float, default=None)
+    # group_fcm.add_argument('--FCMmAfterAR', type=float, default=None)
+    # group_fcm.add_argument('--FCMpushDegCtxAfterAR', type=float, default=None)
+    # group_fcm.add_argument('--FCMpushDegAllAfterAR', type=float, default=None)
+    # group_fcm.add_argument('--FCMreprsConcat', action='store_true')
+    # group_fcm.add_argument('--FCMreprsConcatNormSumsNotLengths', action='store_true')
     # TODO? one below for now is not properly done when AR=transformer
     #      WHEN AR=TRANSFORMER IT'S LIKE IT'S ALWAYS FALSE
     # TODO? this is also not properly dealt with for criterion's prediction network
