@@ -169,7 +169,8 @@ class TimeAlignedPredictionNetwork(nn.Module):
                  lengthsGradReweight=None,
                  showDetachedLengths=False,
                  showDetachedLengthsCumsum=False,
-                 shrinkEncodingsLengthDims=False):
+                 shrinkEncodingsLengthDims=False,
+                 debug=False):
 
         super(TimeAlignedPredictionNetwork, self).__init__()
         self.predictors = nn.ModuleList()
@@ -186,6 +187,7 @@ class TimeAlignedPredictionNetwork(nn.Module):
         self.showDetachedLengths = showDetachedLengths
         self.showDetachedLengthsCumsum = showDetachedLengthsCumsum
         self.shrinkEncodingsLengthDims = shrinkEncodingsLengthDims
+        self.debug = debug
         print(f"LOADING TIME ALIGNED PRED {mode} softalign; teachOnlyLastFrameLength: {teachOnlyLastFrameLength}; weightMode: {weightMode}; firstPredID {firstPredID};"
             f" teachLongPredsUniformlyLess: {teachLongPredsUniformlyLess}; modelNormalsSettings: {modelNormalsSettings}; teachLongPredsSqrtLess: {teachLongPredsSqrtLess};"
             f" lengthsGradReweight: {lengthsGradReweight}; showDetachedLengths: {showDetachedLengths}; showDetachedLengthsCumsum: {showDetachedLengthsCumsum};"
@@ -234,128 +236,116 @@ class TimeAlignedPredictionNetwork(nn.Module):
 
     def forward(self, c, predictedLengths):
 
-        #assert(len(candidates) == len(self.predictors))
         out = []
 
+        # TODO better mappings; LSTM output is (-1,1)-restricted
         predictedLengths = torch.sigmoid(predictedLengths)
 
+        if self.debug:
+            print("predictedLengths", predictedLengths.shape, predictedLengths)
+
         if self.mode == "simple":
+            # predictedLengths: B x N
+            predictedLengthsSum = predictedLengths.cumsum(dim=1)
+            if self.debug:
+                print("predictedLengthsSum", predictedLengthsSum)
             if not self.teachOnlyLastFrameLength:
-                # predictedLengths: B x N
-                predictedLengthsSum = predictedLengths.cumsum(dim=1)
-                #^#print("pl", predictedLengths)
-                #^#print("predLenSum", predictedLengthsSum)
                 moreLengths = predictedLengthsSum.view(1,predictedLengthsSum.shape[0],predictedLengthsSum.shape[1]).cuda().repeat(len(self.predictors)-1,1,1)
-                #^#print(moreLengths.shape)
                 for i in range(1,len(self.predictors)):  # +1 is in longer Predictors
-                    #^#print(moreLengths[i-1].shape)
-                    #^#print("*", i, moreLengths[i-1], torch.roll(moreLengths[i-1], shifts=(0,-i), dims=(0,1)))
                     moreLengths[i-1] = torch.roll(moreLengths[i-1], shifts=(0,-i), dims=(0,1)) - predictedLengthsSum
-                moreLengths = moreLengths[:,:,:c.shape[1]]  # cut rubbish at the end which is not being predicted
-                #^#print("ml", moreLengths.shape, moreLengths)
-                # moreLengths: preds x B x (N - preds)
             else:
                 predictedLengthsSum = predictedLengths.detach().cumsum(dim=1)
-                #^#print("pl", predictedLengths)
-                #^#print("predLenSum", predictedLengthsSum)
                 moreLengths = torch.zeros_like(predictedLengths).view(1,predictedLengths.shape[0],predictedLengths.shape[1]).cuda().repeat(len(self.predictors)-1,1,1)
-                #^#print(moreLengths.shape)
                 for i in range(1,len(self.predictors)):  # +1 is in longer Predictors
-                    #^#print(moreLengths[i-1].shape)
-                    #^#print("*", i, moreLengths[i-1], torch.roll(moreLengths[i-1], shifts=(0,-i), dims=(0,1)))
                     moreLengths[i-1] = torch.roll(predictedLengthsSum, shifts=(0,-(i-1)), dims=(0,1)) - predictedLengthsSum \
                         + torch.roll(predictedLengths, shifts=(0,-i), dims=(0,1))
-                moreLengths = moreLengths[:,:,:c.shape[1]]  # cut rubbish at the end which is not being predicted
-                #^#print("ml", moreLengths.shape, moreLengths)
+            moreLengths = moreLengths[:,:,:c.shape[1]]  # cut rubbish at the end which is not being predicted
+            if self.debug:
+                print("moreLengths", moreLengths.shape, moreLengths)
+            # moreLengths: predictions x B x (N-predictions)
 
-
-            #^#print("shapes:", c.shape, predictedLengthsSum.shape, predictedLengths.shape)
+            if self.debug:
+                print("shapes (c, lengthSum, lengths):", c.shape, predictedLengthsSum.shape, predictedLengths.shape)
             if self.showDetachedLengthsCumsum:  # [!] needs to be before non-sum on last dim as it would spoil it
-                #c[:,:,-2] = predictedLengthsSum[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()
                 toPut = predictedLengthsSum[:,:c.shape[1]].detach()
                 c = torch.cat([c[:,:,:-2], toPut.view(toPut.shape[0], toPut.shape[1], 1).repeat(1,1,2)], dim=-1)
             else:
-                #c[:,:,-2] = 0.  #predictedLengthsSum[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()
                 c = torch.cat([c[:,:,:-2], torch.zeros_like(c[:,:,-2:])], dim=-1)
             if self.showDetachedLengths:
-                #c[:,:,-1] = predictedLengths[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()  #.requires_grad_()
                 toPut = predictedLengths[:,:c.shape[1]].detach()
                 c = torch.cat([c[:,:,:-1], toPut.view(toPut.shape[0], toPut.shape[1], 1)], dim=-1)
             else:
-                #c[:,:,-1] = 0.
                 c = torch.cat([c[:,:,:-1], torch.zeros_like(c[:,:,-1:]).view(c.shape[0], c.shape[1], 1)], dim=-1)
             
-            #^#print("c:", c)
+            if self.debug:
+                print("c:", c.shape, c)
+
             locCdimToCut = 2
+
         elif self.mode == "predStartDep":
-            # predictedLengths: B x N x preds
-            predictedLengthsOrg = predictedLengths
+            # predictedLengths: B x N x predictions
+            predictedLengthsOrg = predictedLengths.clone()
             predictedLengths = predictedLengths.permute(2,0,1)
-            #^#print("pl", predictedLengths)
             moreLengths = torch.zeros_like(predictedLengths)
-            # moreLengths, predictedLengths now:  preds x B x N
+            # moreLengths, predictedLengths now:  predictions x B x N
+
+            # predictedLengths[k,i,j] is "what length does frame (i,j) appear when predicted from frame (i, j-k-1)"
+            # so to have length sums for predictions need to first roll each predictedLengths[k] by -k and then cumsum lengths from each prediction starting point
             for i in range(predictedLengths.shape[0]):
-                #^#print(":", i)
                 moreLengths[i,:,:-(i+1)] = predictedLengths[i,:,(i+1):]  
-                # predictedLengths[:, k] is "what length does frame k appear : frames before"
-                # predictedLengths[j,k] is "what length does frame k appear when predicted from frame k-j-1"
             if not self.teachOnlyLastFrameLength:
                 moreLengths = moreLengths.cumsum(dim=0)
             else:
                 moreLengths = moreLengths.detach().cumsum(dim=0) - moreLengths.detach() + moreLengths
-            #^#print("ml0", moreLengths.shape, moreLengths)
             moreLengths = moreLengths[:,:,:c.shape[1]]
-            # moreLengths: preds x B x (N-preds)
-            #^#print("ml", moreLengths.shape, moreLengths)
+            if self.debug:
+                print("moreLengths", moreLengths.shape, moreLengths)
+            # moreLengths: predictions x B x (N-predictions)
 
-            #c = c.clone()
-            #print("!", predictedLengths.shape[0])
             if self.showDetachedLengths:
-                #c[:,:,-predictedLengths.shape[0]:] = predictedLengthsOrg[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()
                 c = torch.cat([c[:,:,:-predictedLengths.shape[0]], predictedLengthsOrg[:,:c.shape[1]].detach()], dim=-1)
             else:
-                #c[:,:,-predictedLengths.shape[0]:] = 0
                 c = torch.cat([c[:,:,:-predictedLengths.shape[0]], torch.zeros_like(c[:,:,-predictedLengths.shape[0]:])], dim=-1)
-            #^#print("c", c.shape, c)
-            # TODO can make some cumsum, but should only see past - there can be some empty spaces - would perhaps need to also cut begin for predicting and not only end
+            
+            if self.debug:
+                print("c:", c.shape, c)
+
             locCdimToCut = predictedLengths.shape[0]
 
         elif self.mode == "predEndDep":
-            # predictedLengths: B x N x preds
-            predictedLengthsOrg = predictedLengths
+            # predictedLengths: B x N x predictions
+            predictedLengthsOrg = predictedLengths.clone()
             predictedLengths = predictedLengths.permute(2,0,1)
-            #^#print("pl", predictedLengths)
+            # predictedLengths now:  predictions x B x N
+            
+            # predictedLengths[k,i,j] is "what length does frame (i,j-k-1) appear when predicted to frame j"
+            # so to have length sums for predictions need to first cumsum lengths from each prediction ending point and then roll each predictedLengths[k] by -k
             if not self.teachOnlyLastFrameLength:
                 moreLengths = predictedLengths.cumsum(dim=0)
             else:
                 moreLengths = predictedLengths.detach().cumsum(dim=0) - predictedLengths.detach() + predictedLengths
-            #moreLengths = torch.zeros_like(predictedLengths)
-            # moreLengths, predictedLengths now:  preds x B x N
             for i in range(predictedLengths.shape[0]):
-                #^#print(":", i)
                 moreLengths[i,:,:-(i+1)] = predictedLengths[i,:,(i+1):]  
-                # predictedLengths[:, k] is "what length does frame k before appear now"
-                # predictedLengths[j,k] is "what length does frame j-k appear when predicted to frame j"
-            #^#print("ml0", moreLengths.shape, moreLengths)
             moreLengths = moreLengths[:,:,:c.shape[1]]
-            # moreLengths: preds x B x (N-preds)
-            #^#print("ml", moreLengths.shape, moreLengths)
+            if self.debug:
+                print("moreLengths", moreLengths.shape, moreLengths)
+            # moreLengths: predictions x B x (N-predictions)
 
-            #c = c.clone()
-            #print("!", predictedLengths.shape[0])
             if self.showDetachedLengths:
-                #c[:,:,-predictedLengths.shape[0]:] = predictedLengthsOrg[:,:c.shape[1]].detach()  #:-(len(self.predictors)-1)].detach()
                 c = torch.cat([c[:,:,:-predictedLengths.shape[0]], predictedLengthsOrg[:,:c.shape[1]].detach()], dim=-1)
             else:
-                #c[:,:,-predictedLengths.shape[0]:] = 0.
                 c = torch.cat([c[:,:,:-predictedLengths.shape[0]], torch.zeros_like(c[:,:,-predictedLengths.shape[0]:])], dim=-1)
-            #^#print("c", c.shape, c)
-            # TODO can make some cumsum, but should only see past - there can be some empty spaces - would perhaps need to also cut begin for predicting and not only end
+            
+            if self.debug:
+                print("c:", c.shape, c)
+                
             locCdimToCut = predictedLengths.shape[0]
+
         else:
             assert False
-        #^#print("ml", moreLengths.shape, moreLengths)
-        ## moreLengths: predictions x B x (N-preds)
+        
+        ## moreLengths: predictions x B x (N-predictions)
+
         if self.teachLongPredsUniformlyLess:
             predFrameLengths = torch.arange(1,moreLengths.shape[0]+1).to(moreLengths.device)
             gradLengthsTeachWeights = (1. / predFrameLengths).view(-1,1,1)
@@ -364,60 +354,67 @@ class TimeAlignedPredictionNetwork(nn.Module):
             # 1 time with 1 for 1 len1 pred it is used for, 2 times with weight 1/2 for 2 len2 preds it's used for, ...
             # at least it's like that with simple length prediction way; but more sophisticated ways 
             # look similar if you think about different "visible from" lengths as lengths of same thing and sum that up
+            # ; however, that means lengths would accomodate less for longer predictions
         elif self.teachLongPredsSqrtLess:
             predFrameLengths = torch.arange(1,moreLengths.shape[0]+1).to(moreLengths.device)
             gradLengthsTeachWeights = (1. / torch.sqrt(predFrameLengths)).view(-1,1,1)
             moreLengths = gradLengthsTeachWeights*moreLengths + (1.-gradLengthsTeachWeights)*moreLengths.detach()
+            # similar as above, but teaching lengths in each prediction so that all gradient (for all predicted frames) magnitudes
+            # sum up to standard deviation if some normal assumed for each frame's length
 
         if self.lengthsGradReweight is not None:
             moreLengths = self.lengthsGradReweight * moreLengths - (self.lengthsGradReweight - 1.) * moreLengths.detach()
+            # if one of the above options is used, can use this to increase gradients so that sum of magnitudes is as regular
 
         if self.modelFrameNormalsSigma is not None:
             normalsStdevs = torch.sqrt(torch.arange(1,moreLengths.shape[0]+1).to(moreLengths.device) * (self.modelFrameNormalsSigma)**2)
+            # modifications assuming normal distributions of frame lengths; normalsStdevs are resulting standard devs for each prediciton lengths
 
         # for each nr of frames in future separately,
         # calc and switch last elements in c as lengths, and also get predictor choices
         toPredCenters = (torch.arange(len(self.predictors)).cuda()).view(1,1,1,-1)
         lengthsDists = torch.abs(moreLengths.view(moreLengths.shape[0],moreLengths.shape[1],moreLengths.shape[2],1) - toPredCenters)
+
+        # could also use some more efficient implementation for bilinear etc. weighting, calculating only needed predicitons
         #weights, closest = torch.topk(lengthsDists, 2, dim=-1, largest=False)
-        #weights = 1 - weights
-        #w1 = weights[0]
-        #w2 = weights[1]
-        #weights[0,w2<0] = 1  # in places not between two predictors (<0.5 on borders), assign all weight to closest one
-        #weights = torch.clamp(weights, min=0)
-        #^#print("lengthsDists", lengthsDists)
-        ## lengthsDists: predictions x B x (N-preds) x predictors
+        #...
+
+        ## lengthsDists: predictions x B x (N-predictions) x predictors
+
         weightType, w = self.weightMode
         if weightType == "exp":
             if self.modelFrameNormalsSigma is not None:
-                lengthsDists = lengthsDists * (1./normalsStdevs.view(-1,1,1,1))  # decreases exponent for long predictions
+                lengthsDists = lengthsDists * (1./normalsStdevs.view(-1,1,1,1))  # decreases exponent for long predictions - more fuzzy
             weights = torch.exp(-w*lengthsDists)
             weightsNorms = weights.sum(-1)
-            #^#print("weightsUnnormed", weights)
-            #^#print("weightNorms", weightsNorms)
+            if self.debug:
+                print("weightsUnnormed", weights)
+                print("weightNorms", weightsNorms)
             weights = weights / weightsNorms.view(*(weightsNorms.shape),1)
         elif weightType == "doubleExp":
             if self.modelFrameNormalsSigma is not None:
-                lengthsDists = lengthsDists * (1./normalsStdevs.view(-1,1,1,1))  # decreases exponent for long predictions
+                lengthsDists = lengthsDists * (1./normalsStdevs.view(-1,1,1,1))  # decreases exponent for long predictions - more fuzzy
             weights = torch.exp(1.-torch.exp(w*lengthsDists))
             weightsNorms = weights.sum(-1)
-            #^#print("weightsUnnormed", weights)
-            #^#print("weightNorms", weightsNorms)
+            if self.debug:
+                print("weightsUnnormed", weights)
+                print("weightNorms", weightsNorms)
             weights = weights / weightsNorms.view(*(weightsNorms.shape),1)
         elif weightType == "bilin":  # bilinear
             if self.modelFrameNormalsSigma is not None:
                 assert False  # caution: use "trilin" for this case as it's like "generalized bilin"
             weights = torch.clamp(1. - lengthsDists, min=0)  # here no normalization needed, sums up to 1
-            # won't teach dists on dostant predictors, exp would teach strongly because to inc weight a bit needs to move a lot
+            # won't teach dists on distant predictors, exp would teach a bit
         elif weightType == "trilin":  # "trilinear"
             maxSeenDist = torch.tensor(1.5).to(lengthsDists.device).repeat(lengthsDists.shape[0]).view(-1,1,1,1)
             if self.modelFrameNormalsSigma is not None:
-                maxSeenDist = (self.seenDistMult*normalsStdevs).view(-1,1,1,1)  # seenDistMult * sigma needs to be at least 0.5001 (maybe better 1) for 1-long preds
+                maxSeenDist = (self.seenDistMult*normalsStdevs).view(-1,1,1,1)  # seenDistMult * sigma needs to be at least 0.5001 (maybe better 1) for 1-long predictions
                 # ^ this param is actually not needed, increasing sigma has same effect in this case 
             weights = torch.clamp(maxSeenDist - lengthsDists, min=0)
             weightsNorms = weights.sum(-1)
-            #^#print("weightsUnnormed", weights)
-            #^#print("weightNorms", weightsNorms)
+            if self.debug:
+                print("weightsUnnormed", weights)
+                print("weightNorms", weightsNorms)
             weights = weights / weightsNorms.view(*(weightsNorms.shape),1)
         elif weightType == "normals":
             assert self.modelFrameNormalsSigma is not None
@@ -430,27 +427,29 @@ class TimeAlignedPredictionNetwork(nn.Module):
                 thisFrameNormal = Normal(0., normalsStdevs[i].item())
                 weights[i] = thisFrameNormal.cdf(stripeEnds[i]) - thisFrameNormal.cdf(stripeBegins[i])
             weightsNorms = weights.sum(-1)
-            #^#print("weightsUnnormed", weights)
-            #^#print("weightNorms", weightsNorms)
-            weights = weights / weightsNorms.view(*(weightsNorms.shape),1)  # need to normalize as not summing whole distribution; 
-            # sometimes taking impossible things with <0 len, but ok
+            if self.debug:
+                print("weightsUnnormed", weights)
+                print("weightNorms", weightsNorms)
+            weights = weights / weightsNorms.view(*(weightsNorms.shape),1)  # need to normalize as not summing whole distribution mass
+            # sometimes taking impossible things with <0 len, but ok - approximation
         else:
             assert False
-        #^#print("weights", weights)
+        if self.debug:
+            print("weights", weights)
 
-        ## weights: predictions x B x (N-preds) x predictors
+        ## weights: predictions x B x (N-predictions) x predictors
         
-        # UGLY   ; not sure if will work
+        # UGLY   ; not sure if would work
         # if isinstance(self.predictors[0], EqualizedConv1d):
         #     c = c.permute(0, 2, 1)
 
-
         predictsPerPredictor = torch.zeros(1,*(c.shape)).cuda().repeat(len(self.predictors),1,1,1)  #.view(c.shape[0],c.shape[1],c.shape[2],c.shape[3])  #.repeat(1,1,1,2,1)
-        ## predictsPerPredictor: predictors x B x (N-preds) x Dim
+        ## predictsPerPredictor: predictors x B x (N-predictions) x Dim
         
-        #^#print("devices:", c.device, predictsPerPredictor.device, weights.device, predictedLengths.device, predictedLengthsSum.device)
+        if self.debug:
+            print("devices:", c.device, predictsPerPredictor.device, weights.device, predictedLengths.device, predictedLengthsSum.device)
+            print("shapes (c, predictsPerPredictor):", c.shape, predictsPerPredictor.shape)
 
-        #print("shapes0:", c.shape, predictsPerPredictor.shape)
         for k in range(len(self.predictors)):
 
             locC = self.predictors[k](c)
@@ -458,54 +457,52 @@ class TimeAlignedPredictionNetwork(nn.Module):
                 locC = locC[0]
             predictsPerPredictor[k] = locC
 
-        #^#print("ppp", predictsPerPredictor.shape)
-
-        ##predsWeighted = predictsPerPredictor.view(predictsPerPredictor.shape[0], predictsPerPredictor.shape[1], predictsPerPredictor.shape[2], 1, predictsPerPredictor.shape[3])
-        # TODO is it actually correct? 1st dim is predictors and NOT predicted frames; it was rather incorrect but unsure with dimensions equal
-        # TODO rather fixed, but check more thoroughly
-        ## predsWeighted was: predictors x B x (N-preds) x 1 x Dim , weights after view was: predictions x B x (N-preds) x predictors x 1,
-        ## result was (mixed predictors/predictions) x B x (N-preds) x predictors x Dim - for one prediction, outputs of same predictor with different weights were summed (?)
-        ##predsWeighted = predsWeighted * weights.view(weights.shape[0], weights.shape[1], weights.shape[2], weights.shape[3], 1)
-        ## weights: predictions x B x (N-preds) x predictors
-        ## predictsPerPredictor: predictors x B x (N-preds) x Dim
+        ## weights: predictions x B x (N-predictions) x predictors
+        ## predictsPerPredictor: predictors x B x (N-predictions) x Dim
         predictors_ = predictsPerPredictor.shape[0]
         B_ = predictsPerPredictor.shape[1]
         N_minus_preds_ = predictsPerPredictor.shape[2]
         Dim_ = predictsPerPredictor.shape[3]
         
         predsWeighted = predictsPerPredictor.permute(1,2,0,3)
-        ## predsWeighted after permute: B x (N-preds) x predictors x Dim
+        ## predsWeighted after permute: B x (N-predictions) x predictors x Dim
         predsWeighted = predsWeighted.view(1, B_, N_minus_preds_, predictors_, Dim_)
-        ## predsWeighted after view: 1 x B x (N-preds) x predictors x Dim
+        ## predsWeighted after view: 1 x B x (N-predictions) x predictors x Dim
         predsWeighted = predsWeighted.repeat(len(self.predictors)-1,1,1,1,1)
-        ## predsWeighted repeated: predictions x B x (N-preds) x predictors x Dim ; weights after view: predictions x B x (N-preds) x predictors x 1
+        ## predsWeighted repeated: predictions x B x (N-predictions) x predictors x Dim ; weights after view: predictions x B x (N-predictions) x predictors x 1
         predsWeighted = predsWeighted * weights.view(weights.shape[0], weights.shape[1], weights.shape[2], weights.shape[3], 1)
+        ## predsWeighted before summing across predictors:  predictions x B x (N-predictions) x predictors x Dim
         
-        #^#print("predsWeightedNoSum", predsWeighted.shape)
+        if self.debug:
+            print("predsWeightedNoSum", predsWeighted.shape)
 
-        #predictions = predictions.sum(dim=-2)  # sum weighted stuff
-        predsWeighted = predsWeighted.sum(dim=-2)
-        #print("shapes1:", c.shape, predsWeighted.shape) #^#print("predsWeighted", predsWeighted.shape)
-        # now predictions numPred x B x N x Dim
+        predsWeighted = predsWeighted.sum(dim=-2)  # sum weighted stuff
+        ## now predsWeighted predictions x B x (N-predictions) x Dim
+
+        if self.debug:
+            print("predsWeighted", predsWeighted.shape, predsWeighted)
 
         for k in range(len(self.predictors)-1):  #(len(self.predictors)):  # same, but clearer
             # if isinstance(locC, tuple):
             #     locC = locC[0]
             # if isinstance(self.predictors[k], EqualizedConv1d):
             #     locC = locC.permute(0, 2, 1)
-            locC = predsWeighted[k]  # B x (N-pred) x Dim
+            locC = predsWeighted[k]  # B x (N-predictions) x Dim
             if self.dropout is not None:
                 locC = self.dropout(locC)
-            #^#print("locC", locC.shape, len(candidates), candidates[0].shape)
-            # [!] now not cutting pred dim - even if encodings are length-shrinked, zeros are now added
+            # [!] now not cutting prediction vectors dim if encodings are not length-shrinked (--shrinkEncodingsLengthDims)
             #     but shrink this if encodings shrinked - to make it easier to learn a bit (predictions don't have to learn x zeros)
             locC = locC.view(locC.size(0), locC.size(1), locC.size(2), 1)
             if self.shrinkEncodingsLengthDims:
                 locC = locC[:,:,:-locCdimToCut,:]  # cut length and length sum dims
-            #^#print("view", locC.shape, candidates[k].shape)
-            #outK = (locC*candidates[k]).mean(dim=3)
-            out.append(locC)  #outK)
-        return torch.cat(out, 3)
+            out.append(locC)
+
+        res = torch.cat(out, 3)
+
+        if self.debug:
+            print("res", res.shape, res)
+
+        return res
 
 
 
@@ -613,11 +610,6 @@ class CPCUnsupersivedCriterion(BaseCriterion):
                 showDetachedLengths=self.showDetachedLengths,
                 showDetachedLengthsCumsum=self.showDetachedLengthsCumsum,
                 shrinkEncodingsLengthDims=self.shrinkEncodingsLengthDims)
-        # elif self.modelLengthInARpredStartDep is not None:
-        #     assert nPredicts == self.modelLengthInARpredStartDep
-        #     self.wPrediction = TimeAlignedPredictionNetwork(
-        #         nPredicts, dimOutputAR, dimOutputEncoder, rnnMode=rnnMode,
-        #         dropout=dropout, sizeInputSeq=sizeInputSeq - nPredicts, mode="predStartDep", teachOnlyLastFrameLength=self.teachOnlyLastFrameLength)
         else:
             assert False
         
@@ -727,13 +719,6 @@ class CPCUnsupersivedCriterion(BaseCriterion):
 
         batchSize, seqSize, dimAR = cFeature.size()
         windowSize = seqSize - self.nMatched
-
-        # if self.modelLengthInARsimple:
-        #     predictedFrameLengths = cFeature[:,:,-1]
-        # elif self.modelLengthInARpredStartDep is not None:
-        #     predictedFrameLengths = cFeature[:,:,-self.modelLengthInARpredStartDep:]
-        # elif self.modelLengthInARpredEndDep is not None:
-        #     predictedFrameLengths = cFeature[:,:,-self.modelLengthInARpredEndDep:]
 
         if self.lengthNoise:
             normalNoise = torch.zeros_like(predictedFrameLengths, device=predictedFrameLengths.device)

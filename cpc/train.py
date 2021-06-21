@@ -36,30 +36,6 @@ def getCriterion(args, downsampling, nSpeakers, nPhones):
         else:
             sizeInputSeq = (args.sizeWindow // downsampling)
 
-            # TODO this part can be simplified with m's and reprsConcat
-            # if args.FCMproject and args.FCMmBeforeAR:
-
-            #     if not args.FCMreprsConcat:
-            #         # this could be replaced with encoder.getOutDim, but didn't want to change signature
-            #         encoderOutDimForCriterion = args.FCMprotosForCriterion  # .FCMprotos
-            #         # [!] args.hiddenGar already updated with possible FCM dim stuff in main train script
-            #         #     it is the actual AR dimension - so only needs to be changed here in case of FCMmAfterAR
-            #         #     changes the dimension after AR
-            #         ARoutDimForCriterion = args.FCMprotosForCriterion  #args.hiddenGar  # but actually should also be == args.FCMprotos
-            #     else:
-            #         encoderOutDimForCriterion = args.hiddenEncoder + args.FCMprotosForCriterion
-            #         ARoutDimForCriterion = args.hiddenEncoder + args.FCMprotosForCriterion
-
-            # elif args.FCMproject and args.FCMmAfterAR:
-
-            #     if not args.FCMreprsConcat:
-            #         encoderOutDimForCriterion = args.FCMprotosForCriterion
-            #         ARoutDimForCriterion = args.FCMprotosForCriterion
-            #     else:
-            #         encoderOutDimForCriterion = args.hiddenEncoder + args.FCMprotosForCriterion
-            #         ARoutDimForCriterion = args.hiddenEncoder + args.FCMprotosForCriterion
-
-            # else:
             encoderOutDimForCriterion = args.hiddenEncoder
             ARoutDimForCriterion = args.hiddenGar
                 

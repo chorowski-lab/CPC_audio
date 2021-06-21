@@ -567,13 +567,9 @@ class CPCModel(nn.Module):
                     pushLoss = pushLoss + lossPart2
                 # https://discuss.pytorch.org/t/dataparallel-only-supports-tensor-output/34519
                 
-                # [!] need to do thing below on returned values
-                #     in train.py as those act as different acces points
+                # [!] need to do retain_grad on returned values of cFeaturePushLoss, ctxDataPushPart, encodedDataPushLoss, encodedDataPushPart
+                #     in train.py as those act as different access points
                 #     and doing it here has no effect on them there
-                # cFeaturePushLoss.retain_grad()
-                # ctxDataPushPart.retain_grad()
-                # encodedDataPushLoss.retain_grad()
-                # encodedDataPushPart.retain_grad()
                 # [!] can't even check grad as the copy is returned - had to make this 2-variant forward
                 
                 xLoss += pushLoss
@@ -582,7 +578,7 @@ class CPCModel(nn.Module):
                 #print(x.shape)
                 #print(":::::", givenCenters.shape, protoUsedCounts1.shape, protoUsedCounts1)
 
-            # now, VQ push will not be used for linsep, would need to add that (TODO?)
+            # VQ push will not be used for linsep with those two - as this is "only for criterion VQ"
             if self.VQpushEncCenterWeightOnlyCriterion is not None and (self.VQgradualStart is None or epochNow_ >= self.VQgradualStart):
                 encodedDataPushPart = encodedData[:, :, :baseEncDim]  #.clone()
                 coeffOnlyCritEnc = self.VQpushEncCenterWeightOnlyCriterion if self.VQgradualStart is None \
@@ -623,19 +619,12 @@ class CPCModel(nn.Module):
                 if self.pushLossNormReweight and pushLossWeight is not None:  # for similar pushing weight as without norm
                     # have to check for none, as in pushDegWithCenterDetach also entering here
                     pushLossWeight *= pointsLens.mean()
-            # TODO if we make centers much shorter, encodings will just be pushed to 0, each similarly
-
-            #pointLens2 = torch.sqrt(torch.clamp((points*points).sum(dim=-1), min=0)).mean()
-            #centersLens2 = torch.sqrt(torch.clamp((centers*centers).sum(dim=-1), min=0))  #.mean()
-            #print(f"centers min, max len: {(centersLens2.min(), centersLens2.max())}")
-            #print(f"pts: {pointLens2.item()}, centers: {centersLens2.item()}")
-            # TODO there may be some batch norm, but only on enc and not on LSTM perhaps - maybe try it?
+            # if we make only centers much shorter and encodings not, encodings will just be pushed to 0, each similarly
 
         if self.pushLossProtosMult is None:  
             distsSq = seDistancesToCentroidsCpy(points, centers)
             distsSq = torch.clamp(distsSq, min=0)
-            #print(distsSq.dtype)
-            dists = torch.sqrt(distsSq)  #distsSq  #torch.sqrt(distsSq)  TODO avoiding nans
+            dists = torch.sqrt(distsSq)  
         else:  # only to be used with protos, not when possible future k-means
             # VQ-VAE-commitment-loss-weight - like
             assert pushLossWeight is not None
