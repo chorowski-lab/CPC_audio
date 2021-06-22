@@ -55,7 +55,8 @@ def getCriterion(args, downsampling, nSpeakers, nPhones):
                 "modelFrameNormalsDistMult": args.ARmodelFrameNormalsDistMult,
                 "showDetachedLengths": args.predShowDetachedLengths,
                 "showDetachedLengthsCumsum": args.predShowDetachedLengthsCumsum,
-                "shrinkEncodingsLengthDims": args.shrinkEncodingsLengthDims
+                "shrinkEncodingsLengthDims": args.shrinkEncodingsLengthDims,
+                "map01range": (args.ARmap01rangeMin, args.ARmap01rangeMax)
             }
             print("lengthInARsettings:", lengthInARsettings)
 
@@ -1417,6 +1418,8 @@ def parseArgs(argv):
     group_fcm.add_argument('--predShowDetachedLengthsCumsum', action='store_true')
     group_fcm.add_argument('--linsepShowARlengthsInCtx', action='store_true')
     group_fcm.add_argument('--shrinkEncodingsLengthDims', action='store_true')
+    group_fcm.add_argument('--ARmap01rangeMin',  type=float, default=0.)
+    group_fcm.add_argument('--ARmap01rangeMax',  type=float, default=1.)
 
 
     group_gpu = parser.add_argument_group('GPUs')

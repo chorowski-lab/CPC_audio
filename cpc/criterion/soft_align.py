@@ -170,6 +170,7 @@ class TimeAlignedPredictionNetwork(nn.Module):
                  showDetachedLengths=False,
                  showDetachedLengthsCumsum=False,
                  shrinkEncodingsLengthDims=False,
+                 map01range=(0.,1.),
                  debug=False):
 
         super(TimeAlignedPredictionNetwork, self).__init__()
@@ -187,11 +188,12 @@ class TimeAlignedPredictionNetwork(nn.Module):
         self.showDetachedLengths = showDetachedLengths
         self.showDetachedLengthsCumsum = showDetachedLengthsCumsum
         self.shrinkEncodingsLengthDims = shrinkEncodingsLengthDims
+        self.map01min, self.map01max = map01range
         self.debug = debug
         print(f"LOADING TIME ALIGNED PRED {mode} softalign; teachOnlyLastFrameLength: {teachOnlyLastFrameLength}; weightMode: {weightMode}; firstPredID {firstPredID};"
             f" teachLongPredsUniformlyLess: {teachLongPredsUniformlyLess}; modelNormalsSettings: {modelNormalsSettings}; teachLongPredsSqrtLess: {teachLongPredsSqrtLess};"
             f" lengthsGradReweight: {lengthsGradReweight}; showDetachedLengths: {showDetachedLengths}; showDetachedLengthsCumsum: {showDetachedLengthsCumsum};"
-            f" shrinkEncodingsLengthDims: {shrinkEncodingsLengthDims}")
+            f" shrinkEncodingsLengthDims: {shrinkEncodingsLengthDims}; map01range: {map01range}")
         self.dropout = nn.Dropout(p=0.5) if dropout else None
         for i in range(nPredicts+1):  # frame len is 0-1 so for up to nPredicts frames for nPredicts need nPred+1 predictors from 0 to nPred
                                       # TODO? (or could just assume pred #0 is just the current frame, hm)
@@ -238,8 +240,9 @@ class TimeAlignedPredictionNetwork(nn.Module):
 
         out = []
 
-        # TODO better mappings; LSTM output is (-1,1)-restricted
-        predictedLengths = torch.sigmoid(predictedLengths)
+        # mappings; LSTM output is (-1,1)-restricted, so torch.sigmoid(predictedLengths) is limited to (0.27,0.73)
+        # however limiting this may actually help, hence the params
+        predictedLengths = ((predictedLengths + 1.) / 2.) * (self.map01max - self.map01min) + self.map01min  #torch.sigmoid(predictedLengths)
 
         if self.debug:
             print("predictedLengths", predictedLengths.shape, predictedLengths)
@@ -566,6 +569,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
             self.showDetachedLengths = lengthInARsettings["showDetachedLengths"]
             self.showDetachedLengthsCumsum = lengthInARsettings["showDetachedLengthsCumsum"]
             self.shrinkEncodingsLengthDims = lengthInARsettings["shrinkEncodingsLengthDims"]
+            self.map01range = lengthInARsettings["map01range"]
         else:
             self.modelLengthInARsimple = False
             self.modelLengthInARpredStartDep = None
@@ -583,6 +587,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
             self.showDetachedLengths = False
             self.showDetachedLengthsCumsum = False
             self.shrinkEncodingsLengthDims = False
+            self.map01range = None
         print(f"lengthNoise stdev: {self.lengthNoise}")
 
         if not self.modelLengthInARsimple and self.modelLengthInARpredStartDep is None and self.modelLengthInARpredEndDep is None:
@@ -609,7 +614,8 @@ class CPCUnsupersivedCriterion(BaseCriterion):
                 lengthsGradReweight=self.lengthsGradReweight,
                 showDetachedLengths=self.showDetachedLengths,
                 showDetachedLengthsCumsum=self.showDetachedLengthsCumsum,
-                shrinkEncodingsLengthDims=self.shrinkEncodingsLengthDims)
+                shrinkEncodingsLengthDims=self.shrinkEncodingsLengthDims,
+                map01range=self.map01range)
         else:
             assert False
         
