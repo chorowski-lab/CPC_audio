@@ -6,7 +6,7 @@ import numpy as np
 import math
 from collections import deque
 
-from cpc.model import seDistancesToCentroidsCpy
+from cpc.model import seDistancesToCentroids
 
 class CentroidModule(nn.Module):
 
@@ -139,7 +139,7 @@ class CentroidModule(nn.Module):
                 with torch.no_grad():
                     self.protos = self.normLen(self.protos)
 
-            distsSq = seDistancesToCentroidsCpy(batch, self.protos)
+            distsSq = seDistancesToCentroids(batch, self.protos)
             distsSq = torch.clamp(distsSq, min=0)
             #dists = torch.sqrt(distsSq)
             closest = distsSq.argmin(-1)
@@ -214,7 +214,7 @@ class CentroidModule(nn.Module):
                 encoded_data = self.normLen(encoded_data) 
                 with torch.no_grad():
                     self.protos = self.normLen(self.protos)
-            distsSq = seDistancesToCentroidsCpy(encoded_data, self.protos)
+            distsSq = seDistancesToCentroids(encoded_data, self.protos)
             distsSq = torch.clamp(distsSq, min=0)
             #dists = torch.sqrt(distsSq)
             closest = distsSq.argmin(-1)
@@ -275,7 +275,7 @@ class CentroidModule(nn.Module):
         protosHere = self.centersForStuff(epoch)
         if protosHere is None:
             return None
-        DMsq = seDistancesToCentroidsCpy(protosHere, protosHere).view(protosHere.shape[0], protosHere.shape[0])
+        DMsq = seDistancesToCentroids(protosHere, protosHere).view(protosHere.shape[0], protosHere.shape[0])
         return torch.sqrt(torch.clamp(DMsq, min=0))
 
     def epochUpdate(self, epochNrs, cpcModel):  # after that epoch
@@ -333,7 +333,7 @@ class CentroidModule(nn.Module):
                 encoded_data = self.normLen(encoded_data) 
                 with torch.no_grad():
                     self.protos = self.normLen(self.protos)
-            distsSq = seDistancesToCentroidsCpy(encoded_data, self.protos)
+            distsSq = seDistancesToCentroids(encoded_data, self.protos)
             distsSq = torch.clamp(distsSq, min=0)
             #dists = torch.sqrt(distsSq)
             closest = distsSq.argmin(-1)
@@ -346,7 +346,7 @@ class CentroidModule(nn.Module):
 
 
     def centersForStuff(self, epoch):
-        # TODO can add option to always return, for some FCM cases etc
+        # TODO can add option to always return, for some MOD cases etc
         if self.centerNorm:
             with torch.no_grad():
                 self.protos = self.normLen(self.protos)

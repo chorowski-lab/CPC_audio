@@ -787,69 +787,69 @@ def main(args):
         captureSetStatsCollector = None
 
     assert not args.modelLengthInARsimple or not args.modelLengthInARpredStartDep
-    if args.FCMsettings:
+    if args.modSettings:
         if args.modelLengthInARpredStartDep or args.modelLengthInARpredEndDep:
             modelLengthInARpredDep = args.nPredicts
         else:
             modelLengthInARpredDep = None
-        fcmSettings = {
-            "numProtos": args.FCMprotos, 
-            "pushLossWeightEnc": args.FCMpushLossWeightEnc,
-            "pushLossWeightCtx": args.FCMpushLossWeightCtx,
-            "VQpushEncCenterWeightOnTopConv": args.FCMVQpushEncCenterWeightOnTopConv,
-            "VQpushEncCenterWeightOnlyAR": args.FCMVQpushEncCenterWeightOnlyAR,
-            "VQpushEncCenterWeightOnlyCriterion": args.FCMVQpushEncCenterWeightOnlyCriterion,
-            "VQgradualStart": args.FCMVQgradualStart,
-            "VQpushCtxCenterWeight": args.FCMVQpushCtxCenterWeight,
-            "pushLossLinear": args.FCMpushLossLinear,
-            "pushLossGradualStart": args.FCMpushLossGradualStart,
-            "pushLossProtosMult": args.FCMpushLossProtosMult,
-            "pushLossCenterNorm": args.FCMpushLossCenterNorm,
-            "pushLossPointNorm": args.FCMpushLossPointNorm,
-            "pushLossNormReweight": args.FCMpushLossNormReweight,
-            "hierARshorten": args.FCMhierARshorten,
-            "hierARgradualStart": args.FCMhierARgradualStart,
-            "hierARmergePrior": args.FCMhierARmergePrior,
+        modSettings = {
+            "numProtos": args.modProtos, 
+            "pushLossWeightEnc": args.modPushLossWeightEnc,
+            "pushLossWeightCtx": args.modPushLossWeightCtx,
+            "VQpushEncCenterWeightOnTopConv": args.modVQpushEncCenterWeightOnTopConv,
+            "VQpushEncCenterWeightOnlyAR": args.modVQpushEncCenterWeightOnlyAR,
+            "VQpushEncCenterWeightOnlyCriterion": args.modVQpushEncCenterWeightOnlyCriterion,
+            "VQgradualStart": args.modVQgradualStart,
+            "VQpushCtxCenterWeight": args.modVQpushCtxCenterWeight,
+            "pushLossLinear": args.modPushLossLinear,
+            "pushLossGradualStart": args.modPushLossGradualStart,
+            "pushLossProtosMult": args.modPushLossProtosMult,
+            "pushLossCenterNorm": args.modPushLossCenterNorm,
+            "pushLossPointNorm": args.modPushLossPointNorm,
+            "pushLossNormReweight": args.modPushLossNormReweight,
+            "hierARshorten": args.modHierARshorten,
+            "hierARgradualStart": args.modHierARgradualStart,
+            "hierARmergePrior": args.modHierARmergePrior,
             "modelLengthInARsimple": args.modelLengthInARsimple,
             "modelLengthInARpredDep": modelLengthInARpredDep,
             "showLengthsInCtx": args.linsepShowARlengthsInCtx,
             "shrinkEncodingsLengthDims": args.shrinkEncodingsLengthDims
         }
         # TODO: maybe better settings? or maybe ok
-        if args.FCMcentermodule:
+        if args.modCentermodule:
             centerInitSettings = {
-                "mode": args.FCMcenter_mode,
-                "numCentroids": args.FCMprotos,
+                "mode": args.modCenter_mode,
+                "numCentroids": args.modProtos,
                 "reprDim": args.hiddenEncoder,
                 "numPhones": nPhones,
-                "initAfterEpoch": args.FCMcenter_initAfterEpoch,
-                "firstInitNoIters": args.FCMcenter_firstInitNoIters,
-                "kmeansInitIters": args.FCMcenter_kmeansInitIters,
-                "kmeansInitBatches": args.FCMcenter_kmeansInitBatches,
-                "kmeansReinitEachN": args.FCMcenter_kmeansReinitEachN,
-                "kmeansReinitUpTo": args.FCMcenter_kmeansReinitUpTo,
-                "onlineKmeansBatches": args.FCMcenter_onlineKmeansBatches,
-                "onlineKmeansBatchesLongTerm": args.FCMcenter_onlineKmeansBatchesLongTerm,
-                "onlineKmeansBatchesLongTermWeight": args.FCMcenter_onlineKmeansBatchesLongTermWeight,
-                "centerNorm": args.FCMcenter_norm,
-                "batchRecompute": args.FCMcenter_batchRecompute
+                "initAfterEpoch": args.modCenter_initAfterEpoch,
+                "firstInitNoIters": args.modCenter_firstInitNoIters,
+                "kmeansInitIters": args.modCenter_kmeansInitIters,
+                "kmeansInitBatches": args.modCenter_kmeansInitBatches,
+                "kmeansReinitEachN": args.modCenter_kmeansReinitEachN,
+                "kmeansReinitUpTo": args.modCenter_kmeansReinitUpTo,
+                "onlineKmeansBatches": args.modCenter_onlineKmeansBatches,
+                "onlineKmeansBatchesLongTerm": args.modCenter_onlineKmeansBatchesLongTerm,
+                "onlineKmeansBatchesLongTermWeight": args.modCenter_onlineKmeansBatchesLongTermWeight,
+                "centerNorm": args.modCenter_norm,
+                "batchRecompute": args.modCenter_batchRecompute
             }
         else:
             centerInitSettings = None
-        if args.FCMsegmentCostModule:
+        if args.modSegmentCostModule:
             segmentCostSettings = {
-                "batchesMem": args.FCMsegment_batchesMem
+                "batchesMem": args.modSegment_batchesMem
             }
         else:
             segmentCostSettings = None
     else:
-        fcmSettings = None
+        modSettings = None
         centerInitSettings = None
         segmentCostSettings = None
 
-    if fcmSettings is not None:  
+    if modSettings is not None:  
         args.ARinputDim = args.hiddenEncoder
-        print("FCM settings:", fcmSettings)
+        print("MOD settings:", modSettings)
     else:
         #locArgsCpy = deepcopy(locArgs)
         args.ARinputDim = args.hiddenEncoder
@@ -876,7 +876,7 @@ def main(args):
         #     in epoch 150, checkpoint from epoch 200 has "best from epoch 150" saved as globally best
         #     (but this is internal-CPC-score best anyway, which is quite vague)
         loadedData = \
-            fl.loadModel(args.load, args.batchSizeGPU, fcmSettings=fcmSettings, load_nullspace=args.nullspace, updateConfig=updateConfig, loadSCM=(segmentCostSettings is not None))
+            fl.loadModel(args.load, args.batchSizeGPU, modSettings=modSettings, load_nullspace=args.nullspace, updateConfig=updateConfig, loadSCM=(segmentCostSettings is not None))
         if segmentCostSettings is not None:
             cpcModel, args.hiddenGar, args.hiddenEncoder, segmentCostModel = loadedData
         else:
@@ -896,7 +896,7 @@ def main(args):
         # AR Network
         arNet = fl.getAR(args)
 
-        cpcModel = model.CPCModel(encoderNet, arNet, args.batchSizeGPU, fcmSettings=fcmSettings)
+        cpcModel = model.CPCModel(encoderNet, arNet, args.batchSizeGPU, modSettings=modSettings)
 
         CPChiddenGar, CPChiddenEncoder = cpcModel.gAR.getDimOutput(), cpcModel.gEncoder.getDimOutput()
     # TODO saving, loading, stuff for centerModel
@@ -1348,78 +1348,63 @@ def parseArgs(argv):
     group_load.add_argument('--nullspace', action='store_true',
                             help="Additionally load nullspace")
 
-    group_fcm = parser.add_argument_group("FCM")
-    # group_fcm.add_argument('--FCMproject', action='store_true')
-    group_fcm.add_argument('--FCMsettings', action='store_true')
-    group_fcm.add_argument('--FCMprotos', type=int, default=50)
-    # group_fcm.add_argument('--FCMmBeforeAR', type=float, default=None)
-    # group_fcm.add_argument('--FCMleaveProtos', type=int, default=None)  # only makes sense for mBeforeAR
-    # group_fcm.add_argument('--FCMpushDegFeatureBeforeAR', type=float, default=None)
-    # group_fcm.add_argument('--FCMmAfterAR', type=float, default=None)
-    # group_fcm.add_argument('--FCMpushDegCtxAfterAR', type=float, default=None)
-    # group_fcm.add_argument('--FCMpushDegAllAfterAR', type=float, default=None)
-    # group_fcm.add_argument('--FCMreprsConcat', action='store_true')
-    # group_fcm.add_argument('--FCMreprsConcatNormSumsNotLengths', action='store_true')
-    # TODO? one below for now is not properly done when AR=transformer
-    #      WHEN AR=TRANSFORMER IT'S LIKE IT'S ALWAYS FALSE
-    # TODO? this is also not properly dealt with for criterion's prediction network
-    # [!!] --> actually, rather just keep it like that, and make smaller enc if needed
-    #group_fcm.add_argument('--FCMreprsConcatDontIncreaseARdim', action='store_true')
-    group_fcm.add_argument('--FCMpushLossWeightEnc', type=float, default=None)  # not really FCM part but well
-    group_fcm.add_argument('--FCMpushLossWeightCtx', type=float, default=None)  # not really FCM part but well
-    group_fcm.add_argument('--FCMVQpushEncCenterWeightOnTopConv', type=float, default=None)  # not really FCM part but well
-    group_fcm.add_argument('--FCMVQpushEncCenterWeightOnlyAR', type=float, default=None)  # not really FCM part but well
-    group_fcm.add_argument('--FCMVQpushEncCenterWeightOnlyCriterion', type=float, default=None)  # not really FCM part but well
-    group_fcm.add_argument('--FCMVQpushCtxCenterWeight', type=float, default=None)  # not really FCM part but well
-    group_fcm.add_argument('--FCMVQgradualStart', type=int, default=None)  # not really FCM part but well
-    # TODO think about adding linear loss option, but don't think makes too much sense?
-    group_fcm.add_argument('--FCMpushLossLinear', action='store_true')
-    group_fcm.add_argument('--FCMpushLossGradualStart', type=int, default=None)  # increase loss weight from 0 * x at chosen start epoch to 1 * x through the training
-    group_fcm.add_argument('--FCMpushLossProtosMult', type=float, default=None)  # like VQ-VAE commitment loss
-    group_fcm.add_argument('--FCMpushLossCenterNorm', action='store_true')
-    group_fcm.add_argument('--FCMpushLossPointNorm', action='store_true')
-    group_fcm.add_argument('--FCMpushLossNormReweight', action='store_true')
-    group_fcm.add_argument('--FCMhierARshorten', type=float, default=None)  # how big length reduction to make
-    group_fcm.add_argument('--FCMhierARgradualStart', type=int, default=None)
-    group_fcm.add_argument('--FCMhierARmergePrior', type=str, default="se")  # how big length reduction to make
 
-    group_fcm.add_argument('--FCMcentermodule', action='store_true')
-    group_fcm.add_argument('--FCMcenter_mode', type=str, default=None)
-    group_fcm.add_argument('--FCMcenter_initAfterEpoch', type=int, default=None)
-    group_fcm.add_argument('--FCMcenter_firstInitNoIters', action='store_true')
-    group_fcm.add_argument('--FCMcenter_kmeansInitIters', type=int, default=None)
-    group_fcm.add_argument('--FCMcenter_kmeansInitBatches', type=int, default=None)
-    group_fcm.add_argument('--FCMcenter_kmeansReinitEachN', type=int, default=None)
-    group_fcm.add_argument('--FCMcenter_kmeansReinitUpTo', type=int, default=None)
-    group_fcm.add_argument('--FCMcenter_onlineKmeansBatches', type=int, default=None)
-    group_fcm.add_argument('--FCMcenter_onlineKmeansBatchesLongTerm', type=int, default=None)
-    group_fcm.add_argument('--FCMcenter_onlineKmeansBatchesLongTermWeight', type=float, default=None)
-    group_fcm.add_argument('--FCMcenter_norm', action='store_true')
-    group_fcm.add_argument('--FCMcenter_batchRecompute', type=int, default=None)
-    #FCMcenterInitAfterEpoch
+    group_mod = parser.add_argument_group("MOD")
+    group_mod.add_argument('--modSettings', action='store_true')
+    group_mod.add_argument('--modProtos', type=int, default=50)
+    group_mod.add_argument('--modPushLossWeightEnc', type=float, default=None)  
+    group_mod.add_argument('--modPushLossWeightCtx', type=float, default=None)  
+    group_mod.add_argument('--modVQpushEncCenterWeightOnTopConv', type=float, default=None)  
+    group_mod.add_argument('--modVQpushEncCenterWeightOnlyAR', type=float, default=None)  
+    group_mod.add_argument('--modVQpushEncCenterWeightOnlyCriterion', type=float, default=None)  
+    group_mod.add_argument('--modVQpushCtxCenterWeight', type=float, default=None)  
+    group_mod.add_argument('--modVQgradualStart', type=int, default=None)  
+    group_mod.add_argument('--modPushLossLinear', action='store_true')
+    group_mod.add_argument('--modPushLossGradualStart', type=int, default=None)  # increase loss weight from 0 * x at chosen start epoch to 1 * x through the training
+    group_mod.add_argument('--modPushLossProtosMult', type=float, default=None)  # like VQ-VAE commitment loss
+    group_mod.add_argument('--modPushLossCenterNorm', action='store_true')
+    group_mod.add_argument('--modPushLossPointNorm', action='store_true')
+    group_mod.add_argument('--modPushLossNormReweight', action='store_true')
+    group_mod.add_argument('--modHierARshorten', type=float, default=None)  # how big length reduction to make
+    group_mod.add_argument('--modHierARgradualStart', type=int, default=None)
+    group_mod.add_argument('--modHierARmergePrior', type=str, default="se")  # how big length reduction to make
 
-    group_fcm.add_argument('--FCMsegmentCostModule', action='store_true')
-    group_fcm.add_argument('--FCMsegment_batchesMem', type=int, default=None)
+    group_mod.add_argument('--modCentermodule', action='store_true')
+    group_mod.add_argument('--modCenter_mode', type=str, default=None)
+    group_mod.add_argument('--modCenter_initAfterEpoch', type=int, default=None)
+    group_mod.add_argument('--modCenter_firstInitNoIters', action='store_true')
+    group_mod.add_argument('--modCenter_kmeansInitIters', type=int, default=None)
+    group_mod.add_argument('--modCenter_kmeansInitBatches', type=int, default=None)
+    group_mod.add_argument('--modCenter_kmeansReinitEachN', type=int, default=None)
+    group_mod.add_argument('--modCenter_kmeansReinitUpTo', type=int, default=None)
+    group_mod.add_argument('--modCenter_onlineKmeansBatches', type=int, default=None)
+    group_mod.add_argument('--modCenter_onlineKmeansBatchesLongTerm', type=int, default=None)
+    group_mod.add_argument('--modCenter_onlineKmeansBatchesLongTermWeight', type=float, default=None)
+    group_mod.add_argument('--modCenter_norm', action='store_true')
+    group_mod.add_argument('--modCenter_batchRecompute', type=int, default=None)
+    
+    group_mod.add_argument('--modSegmentCostModule', action='store_true')
+    group_mod.add_argument('--modSegment_batchesMem', type=int, default=None)
 
-    group_fcm.add_argument('--modelLengthInARsimple', action='store_true')
-    group_fcm.add_argument('--modelLengthInARpredStartDep', action='store_true')
-    group_fcm.add_argument('--modelLengthInARpredEndDep', action='store_true')
-    group_fcm.add_argument('--ARteachOnlyLastFrameLength', action='store_true')
-    group_fcm.add_argument('--ARteachLongPredsUniformlyLess', action='store_true')
-    group_fcm.add_argument('--ARteachLongPredsSqrtLess', action='store_true')
-    group_fcm.add_argument('--ARlengthsGradReweight',  type=float, default=None)
-    group_fcm.add_argument('--modelLengthInARweightsMode',  type=str, default="exp")
-    group_fcm.add_argument('--modelLengthInARweightsCoeff',  type=float, default=2.)
-    group_fcm.add_argument('--ARlengthFirstPredID', action='store_true')
-    group_fcm.add_argument('--ARlengthPredNoise',  type=float, default=None)
-    group_fcm.add_argument('--ARmodelFrameNormalsSigma',  type=float, default=None)
-    group_fcm.add_argument('--ARmodelFrameNormalsDistMult',  type=float, default=None)
-    group_fcm.add_argument('--predShowDetachedLengths', action='store_true')
-    group_fcm.add_argument('--predShowDetachedLengthsCumsum', action='store_true')
-    group_fcm.add_argument('--linsepShowARlengthsInCtx', action='store_true')
-    group_fcm.add_argument('--shrinkEncodingsLengthDims', action='store_true')
-    group_fcm.add_argument('--ARmap01rangeMin',  type=float, default=0.)
-    group_fcm.add_argument('--ARmap01rangeMax',  type=float, default=1.)
+    group_mod.add_argument('--modelLengthInARsimple', action='store_true')
+    group_mod.add_argument('--modelLengthInARpredStartDep', action='store_true')
+    group_mod.add_argument('--modelLengthInARpredEndDep', action='store_true')
+    group_mod.add_argument('--ARteachOnlyLastFrameLength', action='store_true')
+    group_mod.add_argument('--ARteachLongPredsUniformlyLess', action='store_true')
+    group_mod.add_argument('--ARteachLongPredsSqrtLess', action='store_true')
+    group_mod.add_argument('--ARlengthsGradReweight',  type=float, default=None)
+    group_mod.add_argument('--modelLengthInARweightsMode',  type=str, default="exp")
+    group_mod.add_argument('--modelLengthInARweightsCoeff',  type=float, default=2.)
+    group_mod.add_argument('--ARlengthFirstPredID', action='store_true')
+    group_mod.add_argument('--ARlengthPredNoise',  type=float, default=None)
+    group_mod.add_argument('--ARmodelFrameNormalsSigma',  type=float, default=None)
+    group_mod.add_argument('--ARmodelFrameNormalsDistMult',  type=float, default=None)
+    group_mod.add_argument('--predShowDetachedLengths', action='store_true')
+    group_mod.add_argument('--predShowDetachedLengthsCumsum', action='store_true')
+    group_mod.add_argument('--linsepShowARlengthsInCtx', action='store_true')
+    group_mod.add_argument('--shrinkEncodingsLengthDims', action='store_true')
+    group_mod.add_argument('--ARmap01rangeMin',  type=float, default=0.)
+    group_mod.add_argument('--ARmap01rangeMax',  type=float, default=1.)
 
 
     group_gpu = parser.add_argument_group('GPUs')

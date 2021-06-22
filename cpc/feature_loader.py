@@ -170,8 +170,6 @@ def getAR(args):
         from .transformers import buildTransformerAR
         #print(f'=====args.ARinputDim: {args.ARinputDim}')
         #raise Exception()
-        # TODO? change this so that it doesn't increase hidden dim etc when 
-        #      --FCMreprsConcat and --FCMreprsConcatDontIncreaseARdim
         arNet = buildTransformerAR(args.ARinputDim, 1, #args.hiddenEncoder, 1,
                                    args.sizeWindow // 160, args.abspos)
         args.hiddenGar = args.ARinputDim  #args.hiddenEncoder
@@ -192,7 +190,7 @@ def getAR(args):
 
 
 
-def loadModel(pathCheckpoints, perGPUbatchSize, loadStateDict=True, fcmSettings=None, load_nullspace=False, updateConfig=None, loadBestNotLast=False, loadSCM=False):
+def loadModel(pathCheckpoints, perGPUbatchSize, loadStateDict=True, modSettings=None, load_nullspace=False, updateConfig=None, loadBestNotLast=False, loadSCM=False):
 
     models = []
     hiddenGar, hiddenEncoder = 0, 0
@@ -210,7 +208,7 @@ def loadModel(pathCheckpoints, perGPUbatchSize, loadStateDict=True, fcmSettings=
             loadArgs(locArgs, updateConfig)
 
         if doLoad:
-            loaded = loadModel(locArgs.load, loadStateDict=False, loadBestNotLast=loadBestNotLast, fcmSettings=fcmSettings, updateConfig=updateConfig, loadSCM=loadSCM)
+            loaded = loadModel(locArgs.load, loadStateDict=False, loadBestNotLast=loadBestNotLast, modSettings=modSettings, updateConfig=updateConfig, loadSCM=loadSCM)
             if loadSCM:
                 m_, hg, he, _ = loaded  # here ignore scm, want to load one from "main" checkpoint
             else:
@@ -223,7 +221,7 @@ def loadModel(pathCheckpoints, perGPUbatchSize, loadStateDict=True, fcmSettings=
             encoderNet = getEncoder(locArgs)
             
             arNet = getAR(locArgs)
-            m_ = CPCModel(encoderNet, arNet, perGPUbatchSize, fcmSettings=fcmSettings)
+            m_ = CPCModel(encoderNet, arNet, perGPUbatchSize, modSettings=modSettings)
             scm = None
 
         if loadStateDict:

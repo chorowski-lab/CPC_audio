@@ -288,8 +288,7 @@ class BiDIRAR(nn.Module):
 # Model
 ###########################################
 
-def seDistancesToCentroidsCpy(vecs, centroids, doNorm=False):
-    #print(torch.square(centroids).sum(1).view(1,-1).shape, torch.square(vecs).sum(1).view(-1,1).shape, torch.matmul(vecs, centroids.T).shape)
+def seDistancesToCentroids(vecs, centroids, doNorm=False, debug=False):
     if len(vecs.shape) == 2:
         vecs = vecs.view(1, *(vecs.shape))
     B = vecs.shape[0]
@@ -302,17 +301,16 @@ def seDistancesToCentroidsCpy(vecs, centroids, doNorm=False):
         vecs = vecs / vecLengths.view(B, N, 1)
         centrLengths = torch.sqrt((centroids*centroids).sum(-1))
         centroids = centroids / centrLengths.view(k, 1)
-        # print(vecLengths)
-        # print(centrLengths)
-        # vecLengths2 = (vecs*vecs).sum(-1)
-        # print(f'vec lengths after norm from {vecLengths2.min().item()} to {vecLengths2.max().item()}')
-        # centrLengths2 = (centroids*centroids).sum(-1)
-        # print(f'center lengths after norm from {centrLengths2.min().item()} to {centrLengths2.max().item()}')
-    # print(torch.square(centroids).sum(1).view(1, 1, -1).shape, torch.square(vecs).sum(-1).view(B, N, 1).shape,
-    #     (vecs.view(B, N, 1, -1) * centroids.view(1, 1, k, -1)).sum(-1).shape,
-    #     vecs.view(B, N, 1, -1).shape, centroids.view(1, 1, k, -1).shape)
-    return torch.square(centroids).sum(1).view(1, 1, -1) + torch.square(vecs).sum(-1).view(B, N, 1) \
-        - 2*(vecs.view(B, N, 1, -1) * centroids.view(1, 1, k, -1)).sum(-1)  #torch.matmul(vecs, centroids.T)
+        if debug:
+            print("vecLengths", vecLengths.shape, vecLengths)
+            print("centrLengths", centrLengths.shape, centrLengths)
+            print(f'vec lengths after norm from {vecLengths.min().item()} to {vecLengths.max().item()}')
+            print(f'center lengths after norm from {centrLengths.min().item()} to {centrLengths.max().item()}')
+    res = torch.square(centroids).sum(1).view(1, 1, -1) + torch.square(vecs).sum(-1).view(B, N, 1) \
+        - 2*(vecs.view(B, N, 1, -1) * centroids.view(1, 1, k, -1)).sum(-1)  
+    if debug:
+        print("res", res.shape, res)
+    return res
 
 
 class CPCModel(nn.Module):
@@ -321,17 +319,16 @@ class CPCModel(nn.Module):
                  encoder,
                  AR, 
                  perGPUbatchSize,
-                 fcmSettings=None):
+                 modSettings=None):
 
         super(CPCModel, self).__init__()
         self.normalBatchSize = perGPUbatchSize  # needed in some cases because DataParallel enforces absurd constraints on returned dim
         self.gEncoder = encoder
         self.gAR = AR
-        self.fcm = fcmSettings is not None
-        print(f'--------- FCM: {self.fcm} ----------')
-        self.fcmDebug = False
+        self.doMod = modSettings is not None
+        print(f'--------- MOD: {self.doMod} ----------')
+        self.modDebug = False
         self.doing_push_loss_or_push_after = False
-        #self.fcmReal = False
         self.hierARshorten = None  # will be set below if needed; otherwise need to set None
         self.VQpushEncCenterWeightOnTopConv = None
         self.VQpushEncCenterWeightOnlyAR = None
@@ -343,34 +340,32 @@ class CPCModel(nn.Module):
         self.modelLengthInARpredDep = None  # num preds if do
         self.shrinkEncodingsLengthDims = False
         self.showLengthsInCtx = False
-        if self.fcm:
-            self.fcmDebug = False   #True
-            # self.fcmReal = fcmSettings["FCMproject"]
-            self.shrinkEncodingsLengthDims = fcmSettings["shrinkEncodingsLengthDims"]
-            self.showLengthsInCtx = fcmSettings["showLengthsInCtx"]
-            self.modelLengthInARsimple = fcmSettings["modelLengthInARsimple"]
-            self.modelLengthInARpredDep = fcmSettings["modelLengthInARpredDep"]  # num preds if do
-            self.hierARshorten = fcmSettings["hierARshorten"]
-            self.hierARgradualStart = fcmSettings["hierARgradualStart"]
-            self.hierARmergePrior = fcmSettings["hierARmergePrior"]
-            self.VQpushEncCenterWeightOnTopConv = fcmSettings["VQpushEncCenterWeightOnTopConv"]
-            self.VQpushEncCenterWeightOnlyAR = fcmSettings["VQpushEncCenterWeightOnlyAR"]
-            self.VQpushEncCenterWeightOnlyCriterion = fcmSettings["VQpushEncCenterWeightOnlyCriterion"]
-            self.VQpushCtxCenterWeight = fcmSettings["VQpushCtxCenterWeight"]
-            self.VQgradualStart = fcmSettings["VQgradualStart"]
-            # caution - need to set args.hiddenGar to same as args.FCMprotos
-            self.pushLossWeightEnc = fcmSettings["pushLossWeightEnc"]
-            self.pushLossWeightCtx = fcmSettings["pushLossWeightCtx"]
-            self.pushLossLinear = fcmSettings["pushLossLinear"]
-            self.pushLossGradualStart = fcmSettings["pushLossGradualStart"]
-            self.pushLossProtosMult = fcmSettings["pushLossProtosMult"]
-            self.pushLossCenterNorm = fcmSettings["pushLossCenterNorm"]
-            self.pushLossPointNorm = fcmSettings["pushLossPointNorm"]  # can be set only if centerNorm
-            self.pushLossNormReweight = fcmSettings["pushLossNormReweight"]
+        if self.doMod:
+            self.modDebug = False   #True
+            self.shrinkEncodingsLengthDims = modSettings["shrinkEncodingsLengthDims"]
+            self.showLengthsInCtx = modSettings["showLengthsInCtx"]
+            self.modelLengthInARsimple = modSettings["modelLengthInARsimple"]
+            self.modelLengthInARpredDep = modSettings["modelLengthInARpredDep"]  # num predicted frames if do
+            self.hierARshorten = modSettings["hierARshorten"]
+            self.hierARgradualStart = modSettings["hierARgradualStart"]
+            self.hierARmergePrior = modSettings["hierARmergePrior"]
+            self.VQpushEncCenterWeightOnTopConv = modSettings["VQpushEncCenterWeightOnTopConv"]
+            self.VQpushEncCenterWeightOnlyAR = modSettings["VQpushEncCenterWeightOnlyAR"]
+            self.VQpushEncCenterWeightOnlyCriterion = modSettings["VQpushEncCenterWeightOnlyCriterion"]
+            self.VQpushCtxCenterWeight = modSettings["VQpushCtxCenterWeight"]
+            self.VQgradualStart = modSettings["VQgradualStart"]
+            self.pushLossWeightEnc = modSettings["pushLossWeightEnc"]
+            self.pushLossWeightCtx = modSettings["pushLossWeightCtx"]
+            self.pushLossLinear = modSettings["pushLossLinear"]
+            self.pushLossGradualStart = modSettings["pushLossGradualStart"]
+            self.pushLossProtosMult = modSettings["pushLossProtosMult"]
+            self.pushLossCenterNorm = modSettings["pushLossCenterNorm"]
+            self.pushLossPointNorm = modSettings["pushLossPointNorm"]  # can be set only if centerNorm
+            self.pushLossNormReweight = modSettings["pushLossNormReweight"]
             print("reweight:", self.pushLossNormReweight)
             if self.pushLossPointNorm:
                 assert self.pushLossCenterNorm
-            self.numProtos = fcmSettings["numProtos"]
+            self.numProtos = modSettings["numProtos"]
             if self.pushLossWeightEnc is not None or self.pushLossWeightCtx is not None \
                 or self.VQpushEncCenterWeightOnlyCriterion is not None or self.VQpushCtxCenterWeight is not None:
 
@@ -407,18 +402,18 @@ class CPCModel(nn.Module):
             if givenCenters is not None and self.VQpushEncCenterWeightOnTopConv and (self.VQgradualStart is None or epochNow_ >= self.VQgradualStart):
                 coeffOnTopConv = self.VQpushEncCenterWeightOnTopConv if self.VQgradualStart is None \
                     else self.VQpushEncCenterWeightOnTopConv*(max(epochNow_-self.VQgradualStart,0.)/max(epochAll_-self.VQgradualStart,1))
-                encodedData = self._FCMlikeBelong(encodedData, givenCenters, None, None, None, coeffOnTopConv)
+                encodedData = self._centerPushing(encodedData, givenCenters, None, None, coeffOnTopConv)
 
             #print("!", encodedData.shape)
             # TODO check if shape is like I think it is
             baseEncDim = encodedData.shape[-1]
-            if self.fcmDebug:
-                print('--------------------------------------forward fcmDebug')
+            if self.modDebug:
+                print('--------------------------------------forward modDebug')
                 print(f'baseEncDim {baseEncDim}')
                 print(f'epochNrs: {epochNrs}')
             
             #print("!!", encodedData.shape)
-            if self.fcmDebug:
+            if self.modDebug:
                 print(f'enc data shape before AR: {encodedData.shape}')
             
             encForCfeature = encodedData
@@ -446,7 +441,7 @@ class CPCModel(nn.Module):
             if givenCenters is not None and self.VQpushEncCenterWeightOnlyAR and (self.VQgradualStart is None or epochNow_ >= self.VQgradualStart):
                 coeffOnlyAR = self.VQpushEncCenterWeightOnlyAR if self.VQgradualStart is None \
                     else self.VQpushEncCenterWeightOnlyAR*(max(epochNow_-self.VQgradualStart, 0.)/max(epochAll_-self.VQgradualStart,1.))
-                encForCfeature = self._FCMlikeBelong(encForCfeature, givenCenters, None, None, None, coeffOnlyAR)
+                encForCfeature = self._centerPushing(encForCfeature, givenCenters, None, None, coeffOnlyAR)
             if self.shrinkEncodingsLengthDims:
                 if self.modelLengthInARsimple:
                     encForCfeature = torch.cat([encForCfeature, torch.zeros(1,1,1).cuda().repeat(encForCfeature.shape[0], encForCfeature.shape[1], 2)], dim=-1)  # append 0s at the end to make dim ok
@@ -456,7 +451,7 @@ class CPCModel(nn.Module):
                     #at the end encodedData = torch.cat([encodedData, torch.zeros(1,1,1).cuda().repeat(encodedData.shape[0], encodedData.shape[1], self.modelLengthInARpredDep)], dim=-1)  # append 0s at the end to make dim ok
             cFeature = self.gAR(encForCfeature)
 
-            if self.fcmDebug:
+            if self.modDebug:
                 print(f'ctx data shape just after AR: {cFeature.shape}')
 
             predictedLengths = None
@@ -488,7 +483,7 @@ class CPCModel(nn.Module):
                 #--print(f"hier 2 time: {t1 - t0}")
                 #segmDictTens = segmDictTens.cuda()  # for return  TODO check if all returned tensors need to be on the same device, if so, move also segmCostForWantedLengthTens_ and actualSegmK_
 
-            if self.fcmDebug:
+            if self.modDebug:
                 print(f'ctx shape returned {cFeature.shape}')
                 print(f'enc shape returned {encodedData.shape}')
 
@@ -560,10 +555,10 @@ class CPCModel(nn.Module):
                 protoUsedCounts1 = 0
                 protoUsedCounts2 = 0
                 if self.pushLossWeightEnc is not None:
-                    lossPart1, protoUsedCounts1 = self._FCMlikeBelong(encodedDataPushLossPart, givenCenters, None, None, weightMult * self.pushLossWeightEnc)
+                    lossPart1, protoUsedCounts1 = self._centerPushing(encodedDataPushLossPart, givenCenters, None, weightMult * self.pushLossWeightEnc)
                     pushLoss = pushLoss + lossPart1
                 if self.pushLossWeightCtx is not None:
-                    lossPart2, protoUsedCounts2 = self._FCMlikeBelong(ctxDataPushLossPart, givenCenters, None, None, weightMult * self.pushLossWeightCtx)
+                    lossPart2, protoUsedCounts2 = self._centerPushing(ctxDataPushLossPart, givenCenters, None, weightMult * self.pushLossWeightCtx)
                     pushLoss = pushLoss + lossPart2
                 # https://discuss.pytorch.org/t/dataparallel-only-supports-tensor-output/34519
                 
@@ -583,14 +578,14 @@ class CPCModel(nn.Module):
                 encodedDataPushPart = encodedData[:, :, :baseEncDim]  #.clone()
                 coeffOnlyCritEnc = self.VQpushEncCenterWeightOnlyCriterion if self.VQgradualStart is None \
                     else self.VQpushEncCenterWeightOnlyCriterion*(max(epochNow_-self.VQgradualStart,0.)/max(epochAll_-self.VQgradualStart,1))
-                encodedDataOut = self._FCMlikeBelong(encodedDataPushPart, givenCenters, None, None, None, coeffOnlyCritEnc)
+                encodedDataOut = self._centerPushing(encodedDataPushPart, givenCenters, None, None, coeffOnlyCritEnc)
 
             if self.VQpushCtxCenterWeight is not None and (self.VQgradualStart is None or epochNow_ >= self.VQgradualStart):
                 ctxDataPushPart = cFeature[:, :, :baseEncDim]  #.clone()
                 coeffOnlyCritCtx = self.VQpushCtxCenterWeight if self.VQgradualStart is None \
                     else self.VQpushCtxCenterWeight*(max(epochNow_-self.VQgradualStart,0.)/max(epochAll_-self.VQgradualStart,1))
                 #print(";", coeffOnlyCritCtx)
-                cFeatureOut = self._FCMlikeBelong(ctxDataPushPart, givenCenters, None, None, None, coeffOnlyCritCtx)
+                cFeatureOut = self._centerPushing(ctxDataPushPart, givenCenters, None, None, coeffOnlyCritCtx)
             
             return xLoss, usedCounts, cFeatureOut, encodedDataOut  #pushLoss  #torch.full((1,), baseEncDim, dtype=int).cuda(), pushLoss
         # else:
@@ -599,7 +594,7 @@ class CPCModel(nn.Module):
         # return cFeature, encodedData, label, pushLoss
 
     #@staticmethod
-    def _FCMlikeBelong(self, points, centers, m=None, pushDeg=None, pushLossWeight=None, pushDegWithCenterDetach=None):  # for pushDeg no FCM; pushDeg OR m? TODO BUT COULD ALSO TRY THAT WEIGHTED PUSH
+    def _centerPushing(self, points, centers, pushDegSimple=None, pushLossWeight=None, pushDegWithCenterDetach=None):  # 3 last args are one-of
 
         # probably didn't help too much, but maybe a bit
         if (pushLossWeight is not None or pushDegWithCenterDetach is not None) and self.pushLossCenterNorm:
@@ -622,17 +617,17 @@ class CPCModel(nn.Module):
             # if we make only centers much shorter and encodings not, encodings will just be pushed to 0, each similarly
 
         if self.pushLossProtosMult is None:  
-            distsSq = seDistancesToCentroidsCpy(points, centers)
+            distsSq = seDistancesToCentroids(points, centers)
             distsSq = torch.clamp(distsSq, min=0)
             dists = torch.sqrt(distsSq)  
         else:  # only to be used with protos, not when possible future k-means
             # VQ-VAE-commitment-loss-weight - like
             assert pushLossWeight is not None
 
-            distsSq1 = seDistancesToCentroidsCpy(points, centers.clone().detach())
+            distsSq1 = seDistancesToCentroids(points, centers.clone().detach())
             distsSq1 = torch.clamp(distsSq1, min=0)
             dists1 = torch.sqrt(distsSq1)  
-            distsSq2 = seDistancesToCentroidsCpy(points.clone().detach(), centers)
+            distsSq2 = seDistancesToCentroids(points.clone().detach(), centers)
             distsSq2 = torch.clamp(distsSq2, min=0)
             dists2 = torch.sqrt(distsSq2)
             # just sum distances, as later only linear stuff on this is made to obtain loss
@@ -648,27 +643,11 @@ class CPCModel(nn.Module):
 
         #print(dists.shape)
 
-        if m is not None:
-            distsRev = 1. / torch.clamp(dists, min=0.00000001)  #torch.maximum(dists, torch.tensor(0.00000001).cuda())
-            # print("________________________")
-            # print(dists, distsRev)
-            # print('========================')
-            #print(distsRev.shape, k)
-            distsRev3dim = distsRev.view(*(distsRev.shape[:2]), 1, k)
-            dists3dim = dists.view(*dists.shape, 1)
-            distsDiv = dists3dim * distsRev3dim
-            powed = torch.pow(distsDiv, 2./(m-1.))  #1./(m-1.))  #2./(m-1.))  TODO avoiding nans
-            # print(distsDiv)
-            # print(powed)
-            denomin = torch.sum(powed, (-1))
-            # print(denomin)
-            return 1. / torch.clamp(denomin, min=0.00000001)  #torch.maximum(denomin, torch.tensor(0.00000001).cuda())
-
-        elif pushDeg is not None:  # centerpush
+        if pushDegSimple is not None:  # centerpush
             closest = dists.argmin(-1)
             # print(points.shape, closest.shape, centers[closest].view(N, -1).shape)
             diffs = centers[closest].view(B, N, -1) - points
-            return pushDeg * diffs + points
+            return pushDegSimple * diffs + points
             # print(diffs.shape)
 
         elif pushLossWeight is not None:
