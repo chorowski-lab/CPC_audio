@@ -374,16 +374,19 @@ class CPCModel(nn.Module):
                 self.doing_push_loss_or_push_after = False 
             
             self.reprDim = encoder.getDimOutput()
-            ###print("----------------------Adding protos as parameter---------------------")
-            # seems it's needed to also add requires_grad on the tensor step
-            ###self.protos = nn.Parameter(torch.randn((self.numProtos, self.reprDim), requires_grad=True) / (5. * math.sqrt(self.reprDim)), requires_grad=True)  # TODO check
-
+            
 
     # epochNrs: (current, total)
     def forward(self, arg1, arg2, arg3, arg4, givenCenters, epochNrs, calcPushLoss, onlyConv):
+
         # [!] OK, DataParallel splits in same way at both forward stages when push
-        #print("::", arg1.shape, arg2.shape, calcPushLoss)
+        if self.modDebug:
+            print(f"CPC model forward arg1 shape {arg1.shape}, arg2 shape {arg2.shape} | -> calcPushLoss {calcPushLoss}")
+
         epochNow_, epochAll_ = map(float,epochNrs)
+
+
+        # regular variant without push loss; see comments below for explanation why 2 variants of forward are used
         if not calcPushLoss:
             batchData, label, labelPhonePerGPU, maxSegmentCost = arg1, arg2, arg3, arg4
             
@@ -404,36 +407,34 @@ class CPCModel(nn.Module):
                     else self.VQpushEncCenterWeightOnTopConv*(max(epochNow_-self.VQgradualStart,0.)/max(epochAll_-self.VQgradualStart,1))
                 encodedData = self._centerPushing(encodedData, givenCenters, None, None, coeffOnTopConv)
 
-            #print("!", encodedData.shape)
-            # TODO check if shape is like I think it is
             baseEncDim = encodedData.shape[-1]
             if self.modDebug:
-                print('--------------------------------------forward modDebug')
+                print('---forward modDebug')
+                print(f"encodedData shape {encodedData.shape}")
                 print(f'baseEncDim {baseEncDim}')
                 print(f'epochNrs: {epochNrs}')
             
-            #print("!!", encodedData.shape)
-            if self.modDebug:
-                print(f'enc data shape before AR: {encodedData.shape}')
-            
             encForCfeature = encodedData
             if self.hierARshorten is not None:
-                #--t0 = time.time()
+                if self.modDebug:
+                    t0 = time.time()
                 if self.hierARgradualStart is None:
                     shortening = self.hierARshorten
                 else:
                     shortening = 1. + ((self.hierARshorten - 1.) * (max(epochNow_-self.hierARgradualStart, 0.)/max(epochAll_-self.hierARgradualStart,1.)))
                     # before chosen start epoch will just not shorten (will give 1 as shortening)
                     shortening = max(1., shortening)
-                #print(f"SHORTENING: {shortening}; epoch data: {epochNow_} / {epochAll_}, start {self.hierARgradualStart}")
+                if self.modDebug:
+                    print(f"hierAR; shortening: {shortening}; epoch data: {epochNow_} / {epochAll_}, start {self.hierARgradualStart}")
                 lengthSumToObtain, _ = FastHierarchicalSegmentationLayer\
                     .getKforGivenShorteningAndShape(encodedData.shape, shortening)
                 encForCfeature, segmDictTens, shrinkIndices_, lengths_, numsInLinesC0_, numsInLinesC1_, maxInLine_, encShapeTens_, segmCostForWantedLengthTens_, actualSegmK_ = \
                     FastHierarchicalSegmentationLayer.apply(encodedData, maxSegmentCost, lengthSumToObtain, 20, 5)
-                #print("!!!", encShapeTens_)
-                #--t1 = time.time()
-                #--print(f"hier 1 time: {t1 - t0}; lengthSumToObtain {lengthSumToObtain}")
-                #--print(f"shape segmented: {encForCfeature.shape}")
+                if self.modDebug:
+                    print("encodings shrinked after hierAR shape as tensor:", encShapeTens_)
+                    t1 = time.time()
+                    print(f"hier 1 time: {t1 - t0}; lengthSumToObtain {lengthSumToObtain}")
+                    print(f"shape segmented: {encForCfeature.shape}")
             else:
                 segmDictTens = None
                 segmCostForWantedLengthTens_ = None
@@ -445,55 +446,51 @@ class CPCModel(nn.Module):
             if self.shrinkEncodingsLengthDims:
                 if self.modelLengthInARsimple:
                     encForCfeature = torch.cat([encForCfeature, torch.zeros(1,1,1).cuda().repeat(encForCfeature.shape[0], encForCfeature.shape[1], 2)], dim=-1)  # append 0s at the end to make dim ok
-                    #at the end encodedData = torch.cat([encodedData, torch.zeros(1,1,1).cuda().repeat(encodedData.shape[0], encodedData.shape[1], 2)], dim=-1)  # append 0s at the end to make dim ok
+                    # at the end will do same with encodedData
                 elif self.modelLengthInARpredDep is not None:
                     encForCfeature = torch.cat([encForCfeature, torch.zeros(1,1,1).cuda().repeat(encForCfeature.shape[0], encForCfeature.shape[1], self.modelLengthInARpredDep)], dim=-1)  # append 0s at the end to make dim ok
-                    #at the end encodedData = torch.cat([encodedData, torch.zeros(1,1,1).cuda().repeat(encodedData.shape[0], encodedData.shape[1], self.modelLengthInARpredDep)], dim=-1)  # append 0s at the end to make dim ok
+                    # at the end will do same with encodedData
             cFeature = self.gAR(encForCfeature)
 
             if self.modDebug:
-                print(f'ctx data shape just after AR: {cFeature.shape}')
+                print(f'ctx data shape: {cFeature.shape}')
 
+            # below cat is used to avoid inplace modifications which autograd wouldn't like
             predictedLengths = None
             if self.modelLengthInARsimple:
                 predictedLengths = cFeature[:,:,-1]
                 if self.showLengthsInCtx:
-                    #cFeature[:,:,-2] = 0.  # only zero -2, in -1 there are lengths already
                     cFeature = torch.cat([
                             cFeature[:,:,:-2], 
                             torch.zeros_like(cFeature[:,:,-2]).view(cFeature.shape[0], cFeature.shape[1], 1), 
                             predictedLengths.view(cFeature.shape[0], cFeature.shape[1], 1)],
                         dim=-1)
                 else:
-                    #cFeature[:,:,-2:] = 0.
                     cFeature = torch.cat([cFeature[:,:,:-2], torch.zeros_like(cFeature[:,:,-2:])], dim=-1)
             elif self.modelLengthInARpredDep is not None:
                 predictedLengths = cFeature[:,:,-self.modelLengthInARpredDep:]
                 if self.showLengthsInCtx:
                     pass  # length already in ctx
                 else:
-                    #cFeature[:,:,-self.modelLengthInARpredDep:] = 0.
                     cFeature = torch.cat([cFeature[:,:,:-self.modelLengthInARpredDep], predictedLengths], dim=-1)
-            if self.hierARshorten is not None:  # TODO here or at the end, unsure
-                #--t0 = time.time()
-                #cFeature = HierarchicalSegmentationRestoreLengthLayer.apply(cFeature, segmDictTens)
+            if self.hierARshorten is not None:
+                if self.modDebug:
+                    t0 = time.time()
                 cFeature = FastSegmentationLengthRestoreLayer.apply(
                     cFeature, numsInLinesC0_, numsInLinesC1_, shrinkIndices_, maxInLine_, torch.Size(encShapeTens_))
-                #--t1 = time.time()
-                #--print(f"hier 2 time: {t1 - t0}")
-                #segmDictTens = segmDictTens.cuda()  # for return  TODO check if all returned tensors need to be on the same device, if so, move also segmCostForWantedLengthTens_ and actualSegmK_
-
-            if self.modDebug:
-                print(f'ctx shape returned {cFeature.shape}')
-                print(f'enc shape returned {encodedData.shape}')
+                if self.modDebug:
+                    t1 = time.time()
+                    print(f"hier 2 time: {t1 - t0}")
+                
 
             pushLoss = torch.full((1,), baseEncDim, dtype=int).cuda() if self.doing_push_loss_or_push_after else None
 
-            #--t01 = time.time()
-            #print(f"normalBatchSize: {self.normalBatchSize} x {encodedData.shape[1]}")
+            if self.modDebug:
+                t01 = time.time()
+                print(f"normalBatchSize: {self.normalBatchSize} x {encodedData.shape[1]}")
             if segmDictTens is not None:
                 segmDictTens = padTens3ValueSetToLength(segmDictTens, self.normalBatchSize*encodedData.shape[1])  
-                # ^ needed because of torch being extremely indiscriminate, making things unnecessary user unfriendly
+                # ^ needed because of torch being extremely mindless, making things unnecessary user unfriendly
                 #   (with dataParallel whole shape needs to be the same and not only dim0); also, need to pad to max possible size
                 #   as it can happen that GPU0 batch has different dim0 than GPU0 one and dataParallel will be even more annoying
                 segmDictTens = segmDictTens.view(1,-1).cuda()
@@ -505,13 +502,14 @@ class CPCModel(nn.Module):
                 actualSegmK_ = actualSegmK_.view(1,-1).cuda()
 
             if labelPhonePerGPU is not None:
-                # ugly things below needed because dataParallel is hopeless as described several lines above
+                # ugly things below needed because dataParallel is user unfriendly as described several lines above
                 labelPhonePerGPU2 = torch.zeros(self.normalBatchSize, encodedData.shape[1], dtype=labelPhonePerGPU.dtype).cuda()
                 labelPhonePerGPU2[:labelPhonePerGPU.shape[0], :labelPhonePerGPU.shape[1]] = labelPhonePerGPU
                 labelPhonePerGPU = labelPhonePerGPU2
                 labelPhonePerGPU = labelPhonePerGPU.view(1,*(labelPhonePerGPU.shape))
-            #--t02 = time.time()
-            #--print(f"part of additional time lost because of DataParallel: {t02-t01}")
+            if self.modDebug:
+                t02 = time.time()
+                print(f"time lost because of DataParallel-needed shape conversions: {t02-t01}")
 
             if self.shrinkEncodingsLengthDims:
                 if self.modelLengthInARsimple:
@@ -519,16 +517,23 @@ class CPCModel(nn.Module):
                 elif self.modelLengthInARpredDep is not None:
                     encodedData = torch.cat([encodedData, torch.zeros(1,1,1).cuda().repeat(encodedData.shape[0], encodedData.shape[1], self.modelLengthInARpredDep)], dim=-1)  # append 0s at the end to make dim ok
 
+            if self.modDebug:
+                print(f'ctx shape returned {cFeature.shape}')
+                print(f'enc shape returned {encodedData.shape}')
+
             return cFeature, predictedLengths, encodedData, pureEncoded, label, labelPhonePerGPU, pushLoss, segmDictTens, segmCostForWantedLengthTens_, actualSegmK_
 
+
+        # pushLoss - calculating variant of forward
         else:
 
             if givenCenters is None:
-                #print(f"***NONE CENTERS, ep. {epochNrs[0]}")
+                if self.modDebug:
+                    print(f"***NONE CENTERS, ep. {epochNrs[0]}") # this can happen if not pushing yet in this epoch etc.
                 return torch.zeros(1).cuda(), torch.zeros(1,self.numProtos).cuda(), arg1, arg2
 
             # had to do it like that, as couldn't return tensors and later check grad as 
-            # DataParallel spoiled everything making a new concatenated tensor
+            # DataParallel spoiled everything making a new concatenated tensor (so retain_grad wouldn't work)
             cFeature, encodedData, cFeatureForPushLoss, encodedDataForPushLoss = arg1, arg2, arg3, arg4
             baseEncDim = self.gEncoder.getDimOutput()
             
@@ -540,15 +545,10 @@ class CPCModel(nn.Module):
             if self.pushLossWeightEnc is not None or self.pushLossWeightCtx is not None\
                 and (self.pushLossGradualStart is None or epochNow_ >= self.pushLossGradualStart):
 
-                # needs enc to go through LSTM; shouldn't have non-loss pushing set
                 pushLoss = torch.zeros(1).cuda().sum()
-                # there was a bug with just [:baseEncDim] here, but with only-pushloss config should change anything
                 encodedDataPushLossPart = encodedDataForPushLoss[:, :, :baseEncDim]  #.clone()
                 ctxDataPushLossPart = cFeatureForPushLoss[:, :, :baseEncDim]  #.clone()
-                # [!] need to also clone original tensors, otherwise gradient there would also have pushLoss part
-                #     ^ BUT NEED TO DO SO IN TRAIN BECAUSE OF DATAPARALLEL
                 if self.pushLossGradualStart is not None:
-                    #currentEpoch, allEpochs = epochNrs
                     weightMult = max(epochNow_ - self.pushLossGradualStart,0.) / max(epochAll_ - self.pushLossGradualStart, 1.)
                 else:
                     weightMult = 1.
@@ -563,48 +563,45 @@ class CPCModel(nn.Module):
                 # https://discuss.pytorch.org/t/dataparallel-only-supports-tensor-output/34519
                 
                 # [!] need to do retain_grad on returned values of cFeaturePushLoss, ctxDataPushPart, encodedDataPushLoss, encodedDataPushPart
-                #     in train.py as those act as different access points
+                #     in train.py as those act as different access points (because DataParallel creates new concatenated tensors)
                 #     and doing it here has no effect on them there
-                # [!] can't even check grad as the copy is returned - had to make this 2-variant forward
+                # [!] couldn't even check grad because this new concatenated tensor is returned - had to make this 2-variant forward
                 
                 xLoss += pushLoss
 
                 usedCounts = usedCounts + protoUsedCounts1 + protoUsedCounts2
-                #print(x.shape)
-                #print(":::::", givenCenters.shape, protoUsedCounts1.shape, protoUsedCounts1)
+                
+                if self.modDebug:
+                    print(f"shapes when pushLoss: givenCenters {givenCenters.shape}, protoUsedCounts1 {protoUsedCounts1.shape}, protoUsedCounts1 {protoUsedCounts1}")
+                    print(f"push loss: {pushLoss.item()}")
 
             # VQ push will not be used for linsep with those two - as this is "only for criterion VQ"
             if self.VQpushEncCenterWeightOnlyCriterion is not None and (self.VQgradualStart is None or epochNow_ >= self.VQgradualStart):
                 encodedDataPushPart = encodedData[:, :, :baseEncDim]  #.clone()
                 coeffOnlyCritEnc = self.VQpushEncCenterWeightOnlyCriterion if self.VQgradualStart is None \
                     else self.VQpushEncCenterWeightOnlyCriterion*(max(epochNow_-self.VQgradualStart,0.)/max(epochAll_-self.VQgradualStart,1))
+                if self.modDebug:
+                    print("coeffOnlyCritEnc:", coeffOnlyCritEnc)
                 encodedDataOut = self._centerPushing(encodedDataPushPart, givenCenters, None, None, coeffOnlyCritEnc)
 
             if self.VQpushCtxCenterWeight is not None and (self.VQgradualStart is None or epochNow_ >= self.VQgradualStart):
                 ctxDataPushPart = cFeature[:, :, :baseEncDim]  #.clone()
                 coeffOnlyCritCtx = self.VQpushCtxCenterWeight if self.VQgradualStart is None \
                     else self.VQpushCtxCenterWeight*(max(epochNow_-self.VQgradualStart,0.)/max(epochAll_-self.VQgradualStart,1))
-                #print(";", coeffOnlyCritCtx)
+                if self.modDebug:
+                    print("coeffOnlyCritCtx:", coeffOnlyCritCtx)
                 cFeatureOut = self._centerPushing(ctxDataPushPart, givenCenters, None, None, coeffOnlyCritCtx)
             
-            return xLoss, usedCounts, cFeatureOut, encodedDataOut  #pushLoss  #torch.full((1,), baseEncDim, dtype=int).cuda(), pushLoss
-        # else:
-        #     pushLoss = None
+            return xLoss, usedCounts, cFeatureOut, encodedDataOut
+        
 
-        # return cFeature, encodedData, label, pushLoss
 
-    #@staticmethod
     def _centerPushing(self, points, centers, pushDegSimple=None, pushLossWeight=None, pushDegWithCenterDetach=None):  # 3 last args are one-of
 
-        # probably didn't help too much, but maybe a bit
         if (pushLossWeight is not None or pushDegWithCenterDetach is not None) and self.pushLossCenterNorm:
             pointsLens = torch.sqrt(torch.clamp((points*points).sum(dim=-1), min=0))  #.mean()
             centersLens = torch.sqrt(torch.clamp((centers*centers).sum(dim=-1), min=0))  #.mean()
 
-            #print(points.shape, centers.shape, pointLens.shape, centersLens.shape, pointLens.view(*(pointLens.shape), 1).shape)
-            #centers = (centers / (centersLens.view(-1,1))) #* pointLens  # avg 5 times shorter
-            #pointLens = (points / pointLens.view(*(pointLens.shape), 1))
-            #print("@@@@@@@@@@@@@", pointLens, centersLens)
             if not self.pushLossPointNorm:
                 pointsLensAvg = pointsLens.mean()
                 centers = (centers / torch.clamp(centersLens.view(-1,1), min=1)) * pointsLensAvg
@@ -616,11 +613,20 @@ class CPCModel(nn.Module):
                     pushLossWeight *= pointsLens.mean()
             # if we make only centers much shorter and encodings not, encodings will just be pushed to 0, each similarly
 
+            if self.modDebug:
+                pointsLensAfter = torch.sqrt(torch.clamp((points*points).sum(dim=-1), min=0))  
+                centersLensAfter = torch.sqrt(torch.clamp((centers*centers).sum(dim=-1), min=0))
+                print(f"_centerPushing push loss lengths BEFORE normalization: representations from {pointsLens.min().item()} to {pointsLens.max().item()},"
+                      f" centers from {centersLens.min().item()} to {centersLens.max().item()}")
+                print(f"_centerPushing push loss normalization, lengths after: representations from {pointsLensAfter.min().item()} to {pointsLensAfter.max().item()},"
+                      f" centers from {centersLensAfter.min().item()} to {centersLensAfter.max().item()}")
+                    
+
         if self.pushLossProtosMult is None:  
             distsSq = seDistancesToCentroids(points, centers)
             distsSq = torch.clamp(distsSq, min=0)
             dists = torch.sqrt(distsSq)  
-        else:  # only to be used with protos, not when possible future k-means
+        else:  # only to be used with protos, not with online k-means
             # VQ-VAE-commitment-loss-weight - like
             assert pushLossWeight is not None
 
@@ -641,16 +647,18 @@ class CPCModel(nn.Module):
         N = points.shape[1]
         B = points.shape[0]
 
-        #print(dists.shape)
+        if self.modDebug:
+            print(f"_centerPushing dists shape: {dists.shape}; points shape {points.shape}")
 
-        if pushDegSimple is not None:  # centerpush
+        if pushDegSimple is not None:  # centerpush without gradient, just push representation towards closest centroid
             closest = dists.argmin(-1)
-            # print(points.shape, closest.shape, centers[closest].view(N, -1).shape)
             diffs = centers[closest].view(B, N, -1) - points
-            return pushDegSimple * diffs + points
-            # print(diffs.shape)
+            res = pushDegSimple * diffs + points
+            if self.modDebug:
+                print(f"pushDegSimple, shapes: closest {closest.shape}, diffs {diffs.shape}, res {res.shape}")
+            return res
 
-        elif pushLossWeight is not None:
+        elif pushLossWeight is not None:  # "main" centerpush with additional centerpushing loss term
 
             if self.pushLossLinear:
                 dst = dists
@@ -660,28 +668,35 @@ class CPCModel(nn.Module):
             minDistsData = dst.min(dim=2)
             minDistsValues = minDistsData.values
             minDistsIndices = minDistsData.indices
-            #print(minDistsIndices)
+
             indices, indicesCounts = torch.unique(minDistsIndices, return_counts=True)
             closestCounts = torch.zeros(self.numProtos, dtype=int).cuda()
             closestCounts[indices] += indicesCounts
-            #print(indicesCounts)
+            
             mean = minDistsValues.mean()
             pushLoss = mean * pushLossWeight
-            #print("--->!", pushLoss, pushLoss.shape, mean.shape)
-            #res = pushLoss
-            return pushLoss, closestCounts.view(1,-1)  # view because of dataparallel
+            
+            if self.modDebug:
+                print(f"pushLossWeight, shapes: minDistsIndices {minDistsIndices.shape}, minDistsValues {minDistsValues.shape}, closestCounts {closestCounts.shape}")
+                print(f"pushLoss: {pushLoss.item()} (already multiplied with pushLossWeight {pushLossWeight})")
 
-        elif pushDegWithCenterDetach is not None:
+            return pushLoss, closestCounts.view(1,-1)  # view because of dataparallel - would glue dimensions incorrectly otherwise
+
+        elif pushDegWithCenterDetach is not None:  # VQ-VAE-like weighted replacement variant (can be combined with "main" centerpush, then one invoked after another)
 
             closest = dists.argmin(-1)
             closestCenters = centers[closest].view(B, N, -1)
             pushedPoints = points + (pushDegWithCenterDetach*closestCenters - pushDegWithCenterDetach*points).detach()  # push*closestCenters + (1-push)*points in forward
-            # [!] this doesn't normalize, here, but normalization is done above also in this case
-            #     if centers are normalized (in centermodel), we have problem here
+            # [!] this doesn't normalize here, but normalization is done above also in this case
+            #     if centers are normalized (in centermodel), we have problem here (because we need to normalize points too and not just push; need to set pushLossCenterNorm here too)
             #     so we need to do it like that v
-            #print("===", closestCenters, )
+            if self.modDebug:
+                print(f"pushDegWithCenterDetach, shapes: closest {closest.shape}, closestCenters {closestCenters.shape}, pushedPoints {pushedPoints.shape}")
             if self.pushLossCenterNorm and self.pushLossPointNorm:
                 pushedPoints *= pointsLens.view(*(pointsLens.shape), 1)  # restore original lengths not to collapse those even if pushing to cosine-closest in cosine-way
+                if self.modDebug:
+                    pointsLensAfter = torch.sqrt(torch.clamp((pushedPoints*pushedPoints).sum(dim=-1), min=0))  
+                    print(f"_centerPushing pushDegWithCenterDetach point lengths after restoring lengths: representations from {pointsLensAfter.min().item()} to {pointsLensAfter.max().item()},")
             return pushedPoints
 
         else:

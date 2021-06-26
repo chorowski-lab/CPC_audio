@@ -40,6 +40,7 @@ def getCriterion(args, downsampling, nSpeakers, nPhones):
             ARoutDimForCriterion = args.hiddenGar
                 
             lengthInARsettings = {
+                "nPredictorsTimeAligned": args.nPredictorsTimeAligned,
                 "modelLengthInARsimple": args.modelLengthInARsimple,
                 "modelLengthInARpredStartDep": args.nPredicts if args.modelLengthInARpredStartDep else None,
                 "modelLengthInARpredEndDep": args.nPredicts if args.modelLengthInARpredEndDep else None,
@@ -815,7 +816,6 @@ def main(args):
             "showLengthsInCtx": args.linsepShowARlengthsInCtx,
             "shrinkEncodingsLengthDims": args.shrinkEncodingsLengthDims
         }
-        # TODO: maybe better settings? or maybe ok
         if args.modCentermodule:
             centerInitSettings = {
                 "mode": args.modCenter_mode,
@@ -1386,6 +1386,7 @@ def parseArgs(argv):
     group_mod.add_argument('--modSegmentCostModule', action='store_true')
     group_mod.add_argument('--modSegment_batchesMem', type=int, default=None)
 
+    group_mod.add_argument('--nPredictorsTimeAligned',  type=int, default=None)
     group_mod.add_argument('--modelLengthInARsimple', action='store_true')
     group_mod.add_argument('--modelLengthInARpredStartDep', action='store_true')
     group_mod.add_argument('--modelLengthInARpredEndDep', action='store_true')

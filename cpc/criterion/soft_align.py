@@ -154,6 +154,7 @@ class TimeAlignedPredictionNetwork(nn.Module):
 
     def __init__(self,
                  nPredicts,
+                 nPredictors,
                  dimOutputAR,
                  dimOutputEncoder,
                  rnnMode=None,
@@ -175,6 +176,8 @@ class TimeAlignedPredictionNetwork(nn.Module):
 
         super(TimeAlignedPredictionNetwork, self).__init__()
         self.predictors = nn.ModuleList()
+        self.nPredictions = nPredicts
+        self.nPredictors = nPredictors if nPredictors is not None else nPredicts + 1
         self.RESIDUAL_STD = 0.01
         self.dimOutputAR = dimOutputAR
         self.mode = mode
@@ -195,8 +198,7 @@ class TimeAlignedPredictionNetwork(nn.Module):
             f" lengthsGradReweight: {lengthsGradReweight}; showDetachedLengths: {showDetachedLengths}; showDetachedLengthsCumsum: {showDetachedLengthsCumsum};"
             f" shrinkEncodingsLengthDims: {shrinkEncodingsLengthDims}; map01range: {map01range}")
         self.dropout = nn.Dropout(p=0.5) if dropout else None
-        for i in range(nPredicts+1):  # frame len is 0-1 so for up to nPredicts frames for nPredicts need nPred+1 predictors from 0 to nPred
-                                      # TODO? (or could just assume pred #0 is just the current frame, hm)
+        for i in range(self.nPredictors):  
             if i == 0 and self.firstPredID:
                 self.predictors.append(nn.Identity())  # length dims are cut later
                 continue
@@ -253,13 +255,13 @@ class TimeAlignedPredictionNetwork(nn.Module):
             if self.debug:
                 print("predictedLengthsSum", predictedLengthsSum)
             if not self.teachOnlyLastFrameLength:
-                moreLengths = predictedLengthsSum.view(1,predictedLengthsSum.shape[0],predictedLengthsSum.shape[1]).cuda().repeat(len(self.predictors)-1,1,1)
-                for i in range(1,len(self.predictors)):  # +1 is in longer Predictors
+                moreLengths = predictedLengthsSum.view(1,predictedLengthsSum.shape[0],predictedLengthsSum.shape[1]).cuda().repeat(self.nPredictions,1,1)
+                for i in range(1,self.nPredictions+1):  
                     moreLengths[i-1] = torch.roll(moreLengths[i-1], shifts=(0,-i), dims=(0,1)) - predictedLengthsSum
             else:
                 predictedLengthsSum = predictedLengths.detach().cumsum(dim=1)
-                moreLengths = torch.zeros_like(predictedLengths).view(1,predictedLengths.shape[0],predictedLengths.shape[1]).cuda().repeat(len(self.predictors)-1,1,1)
-                for i in range(1,len(self.predictors)):  # +1 is in longer Predictors
+                moreLengths = torch.zeros_like(predictedLengths).view(1,predictedLengths.shape[0],predictedLengths.shape[1]).cuda().repeat(self.nPredictions,1,1)
+                for i in range(1,self.nPredictions+1):  
                     moreLengths[i-1] = torch.roll(predictedLengthsSum, shifts=(0,-(i-1)), dims=(0,1)) - predictedLengthsSum \
                         + torch.roll(predictedLengths, shifts=(0,-i), dims=(0,1))
             moreLengths = moreLengths[:,:,:c.shape[1]]  # cut rubbish at the end which is not being predicted
@@ -350,7 +352,7 @@ class TimeAlignedPredictionNetwork(nn.Module):
         ## moreLengths: predictions x B x (N-predictions)
 
         if self.teachLongPredsUniformlyLess:
-            predFrameLengths = torch.arange(1,moreLengths.shape[0]+1).to(moreLengths.device)
+            predFrameLengths = torch.arange(1,self.nPredictions+1).to(moreLengths.device)
             gradLengthsTeachWeights = (1. / predFrameLengths).view(-1,1,1)
             moreLengths = gradLengthsTeachWeights*moreLengths + (1.-gradLengthsTeachWeights)*moreLengths.detach()
             # with grad like that, frame length will be teached with same weight for all prediction lengths:
@@ -359,7 +361,7 @@ class TimeAlignedPredictionNetwork(nn.Module):
             # look similar if you think about different "visible from" lengths as lengths of same thing and sum that up
             # ; however, that means lengths would accomodate less for longer predictions
         elif self.teachLongPredsSqrtLess:
-            predFrameLengths = torch.arange(1,moreLengths.shape[0]+1).to(moreLengths.device)
+            predFrameLengths = torch.arange(1,self.nPredictions+1).to(moreLengths.device)
             gradLengthsTeachWeights = (1. / torch.sqrt(predFrameLengths)).view(-1,1,1)
             moreLengths = gradLengthsTeachWeights*moreLengths + (1.-gradLengthsTeachWeights)*moreLengths.detach()
             # similar as above, but teaching lengths in each prediction so that all gradient (for all predicted frames) magnitudes
@@ -370,7 +372,7 @@ class TimeAlignedPredictionNetwork(nn.Module):
             # if one of the above options is used, can use this to increase gradients so that sum of magnitudes is as regular
 
         if self.modelFrameNormalsSigma is not None:
-            normalsStdevs = torch.sqrt(torch.arange(1,moreLengths.shape[0]+1).to(moreLengths.device) * (self.modelFrameNormalsSigma)**2)
+            normalsStdevs = torch.sqrt(torch.arange(1,self.nPredictions+1).to(moreLengths.device) * (self.modelFrameNormalsSigma)**2)
             # modifications assuming normal distributions of frame lengths; normalsStdevs are resulting standard devs for each prediciton lengths
 
         # for each nr of frames in future separately,
@@ -426,7 +428,7 @@ class TimeAlignedPredictionNetwork(nn.Module):
             weights = torch.zeros_like(lengthsDists)
             stripeEnds = lengthsDists + 0.5
             stripeBegins = lengthsDists - 0.5
-            for i in range(moreLengths.shape[0]):
+            for i in range(self.nPredictions):
                 thisFrameNormal = Normal(0., normalsStdevs[i].item())
                 weights[i] = thisFrameNormal.cdf(stripeEnds[i]) - thisFrameNormal.cdf(stripeBegins[i])
             weightsNorms = weights.sum(-1)
@@ -471,7 +473,7 @@ class TimeAlignedPredictionNetwork(nn.Module):
         ## predsWeighted after permute: B x (N-predictions) x predictors x Dim
         predsWeighted = predsWeighted.view(1, B_, N_minus_preds_, predictors_, Dim_)
         ## predsWeighted after view: 1 x B x (N-predictions) x predictors x Dim
-        predsWeighted = predsWeighted.repeat(len(self.predictors)-1,1,1,1,1)
+        predsWeighted = predsWeighted.repeat(self.nPredictions,1,1,1,1)
         ## predsWeighted repeated: predictions x B x (N-predictions) x predictors x Dim ; weights after view: predictions x B x (N-predictions) x predictors x 1
         predsWeighted = predsWeighted * weights.view(weights.shape[0], weights.shape[1], weights.shape[2], weights.shape[3], 1)
         ## predsWeighted before summing across predictors:  predictions x B x (N-predictions) x predictors x Dim
@@ -480,12 +482,12 @@ class TimeAlignedPredictionNetwork(nn.Module):
             print("predsWeightedNoSum", predsWeighted.shape)
 
         predsWeighted = predsWeighted.sum(dim=-2)  # sum weighted stuff
-        ## now predsWeighted predictions x B x (N-predictions) x Dim
+        ## now predsWeighted: predictions x B x (N-predictions) x Dim
 
         if self.debug:
             print("predsWeighted", predsWeighted.shape, predsWeighted)
 
-        for k in range(len(self.predictors)-1):  #(len(self.predictors)):  # same, but clearer
+        for k in range(self.nPredictions):  
             # if isinstance(locC, tuple):
             #     locC = locC[0]
             # if isinstance(self.predictors[k], EqualizedConv1d):
@@ -553,6 +555,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         self.nMatched = nMatched
         self.no_negs_in_match_window = no_negs_in_match_window
         if lengthInARsettings is not None:
+            self.nPredictorsTimeAligned = lengthInARsettings["nPredictorsTimeAligned"]
             self.modelLengthInARsimple = lengthInARsettings["modelLengthInARsimple"]
             self.modelLengthInARpredStartDep = lengthInARsettings["modelLengthInARpredStartDep"]
             self.modelLengthInARpredEndDep = lengthInARsettings["modelLengthInARpredEndDep"]
@@ -571,6 +574,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
             self.shrinkEncodingsLengthDims = lengthInARsettings["shrinkEncodingsLengthDims"]
             self.map01range = lengthInARsettings["map01range"]
         else:
+            self.nPredictorsTimeAligned = None
             self.modelLengthInARsimple = False
             self.modelLengthInARpredStartDep = None
             self.modelLengthInARpredEndDep = None
@@ -605,7 +609,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
                 assert False
             assert self.modelLengthInARweightsMode in ("exp", "doubleExp", "bilin", "trilin", "normals")
             self.wPrediction = TimeAlignedPredictionNetwork(
-                nPredicts, dimOutputAR, dimOutputEncoder, rnnMode=rnnMode,
+                nPredicts, self.nPredictorsTimeAligned, dimOutputAR, dimOutputEncoder, rnnMode=rnnMode,
                 dropout=dropout, sizeInputSeq=sizeInputSeq - nMatched, mode=lengthMode, teachOnlyLastFrameLength=self.teachOnlyLastFrameLength,
                 weightMode=(self.modelLengthInARweightsMode, self.modelLengthInARweightsCoeff), firstPredID=self.firstPredID,
                 teachLongPredsUniformlyLess=self.teachLongPredsUniformlyLess,
