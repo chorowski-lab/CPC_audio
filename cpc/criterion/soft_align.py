@@ -536,7 +536,8 @@ class CPCUnsupersivedCriterion(BaseCriterion):
                  speakerEmbedding=0,
                  nSpeakers=0,
                  sizeInputSeq=128,
-                 lengthInARsettings=None):
+                 lengthInARsettings=None,
+                 debug=False):
 
         print ("!!!!!!!!!USING CPCCTC!!!!!!!!!!!!")
 
@@ -619,7 +620,8 @@ class CPCUnsupersivedCriterion(BaseCriterion):
                 showDetachedLengths=self.showDetachedLengths,
                 showDetachedLengthsCumsum=self.showDetachedLengthsCumsum,
                 shrinkEncodingsLengthDims=self.shrinkEncodingsLengthDims,
-                map01range=self.map01range)
+                map01range=self.map01range,
+                debug=debug)
         else:
             assert False
         

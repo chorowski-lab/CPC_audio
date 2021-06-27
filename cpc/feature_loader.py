@@ -168,17 +168,13 @@ def getEncoder(args):
 def getAR(args):
     if args.arMode == 'transformer':
         from .transformers import buildTransformerAR
-        #print(f'=====args.ARinputDim: {args.ARinputDim}')
-        #raise Exception()
         arNet = buildTransformerAR(args.ARinputDim, 1, #args.hiddenEncoder, 1,
                                    args.sizeWindow // 160, args.abspos)
         args.hiddenGar = args.ARinputDim  #args.hiddenEncoder
     elif args.arMode == 'no_ar':
-        #raise Exception()
         from .model import NoAr
         arNet = NoAr()
     else:
-        #raise Exception()
         from .model import CPCAR
         arNet = CPCAR(args.ARinputDim, #args.hiddenEncoder,
                       args.hiddenGar,

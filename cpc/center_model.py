@@ -25,6 +25,7 @@ class CentroidModule(nn.Module):
         self.protoCounts = None
         self.protoSums = None
         #self.inBatch = 0
+        self.debug = settings["debug"]
         self.chosenBatchInputs = []
         self.chosenKMeansBatches = []
         self.numCentroids = settings["numCentroids"]

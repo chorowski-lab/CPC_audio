@@ -83,7 +83,8 @@ def getCriterion(args, downsampling, nSpeakers, nPhones):
                                                         nSpeakers=nSpeakers,
                                                         speakerEmbedding=args.speakerEmbedding,
                                                         sizeInputSeq=sizeInputSeq,
-                                                        lengthInARsettings=lengthInARsettings)
+                                                        lengthInARsettings=lengthInARsettings,
+                                                        debug=args.debug)
 
             else:
                 cpcCriterion = cr.CPCUnsupersivedCriterion(args.nPredicts,
@@ -128,7 +129,8 @@ def trainStep(dataLoader,
               optimizer,
               scheduler,
               loggingStep,
-              epochNrs):
+              epochNrs,
+              debug=False):
 
     cpcModel.train()
     cpcCriterion.train()
@@ -144,26 +146,26 @@ def trainStep(dataLoader,
     for step, fulldata in enumerate(dataLoader):
         batchData, labelData = fulldata
         normalBatchSize = max(normalBatchSize, batchData.shape[0])  # if weird small one goes first, some stats can get a bit spoiled but not much
-        #%#print("::", normalBatchSize)
         label = labelData['speaker']
         labelPhone = labelData['phone']
-        #print("!!!", labelData.keys())
         n_examples += batchData.size(0)
         batchData = batchData.cuda(non_blocking=True)
         label = label.cuda(non_blocking=True)
         labelPhone = labelPhone.cuda(non_blocking=True)
 
-        #print("!!!", batchData.shape)
-        # [!] ok, this has concatenated shape and later DataParallel splits it by 2
-        #     so can do this 2-stage forward as I did
-
+        if debug:
+            print("normalBatchSize:", normalBatchSize)
+            print("batchData shape:", batchData.shape)
+            print("labelData keys:", labelData.keys())
+            print("speaker label shape:", label.shape)
+            print("labelPhone shape:", labelPhone.shape)
+        # ok, this has concatenated shape and later DataParallel splits it by 2
+        # so can do this 2-stage forward as I did
         
         givenCenters = centerModel.centersForStuff(epochNr) if centerModel is not None else None
         numGPUs = len(cpcModel.device_ids)
         if givenCenters is not None:
             givenCenters = givenCenters.repeat(numGPUs,1)
-        #print(dir(cpcModel))
-        #print(1/0)
 
         # https://discuss.pytorch.org/t/dataparallel-only-supports-tensor-output/34519
         # did it like that so that code in other places doesn;t need to be changed
@@ -178,10 +180,10 @@ def trainStep(dataLoader,
             cpcModel(batchData, label, labelPhone, maxAllowedSegmCost, givenCenters, epochNrs, False, False)
         if segmentCostModel is not None and batchData.shape[0] == normalBatchSize:  # avoiding updating with smaller batches as would spoil average segm number stats
             segmentCostModel.batchUpdate(batchAimCostSegmTens, batchActualKTens)
-        #print("!!!!", label.shape)
         if centerModel is not None:
             centerUpdateRes = centerModel.encodingsBatchUpdate(encoded_data, epochNrs, cpcModel, label=labelPhone)
-            #print(f"!!! centerUpdate is None: {centerUpdateRes is None}")
+            if debug:
+                print(f"! -> centerUpdate is None: {centerUpdateRes is None}")
             if centerUpdateRes is None:
                 centerUpdateRes = {}
             DM = centerModel.getDM(epochNr)
@@ -190,14 +192,12 @@ def trainStep(dataLoader,
             DM = None
         # [!] baseEncDim returned (in tensor) if push loss
 
-        if pushLoss is not None:  # else
+        if pushLoss is not None:  
             baseEncDim = pushLoss[0].item()
             c_feature1 = c_feature.clone()
-            #encoded_data1 = encoded_data.clone()
             c_feature2 = c_feature.clone()
-            encoded_data2 = pure_enc #encoded_data.clone()
+            encoded_data2 = pure_enc.clone()
             c_feature = c_feature1
-            #encoded_data = encoded_data1
             pushLoss, closestCountsDataPar, c_feature, encoded_data = \
                 cpcModel(c_feature, encoded_data, c_feature2, encoded_data2, givenCenters, epochNrs, True, False)
             closestCounts = closestCountsDataPar.sum(dim=0).view(-1)
@@ -209,11 +209,11 @@ def trainStep(dataLoader,
         allCriterionLosses, allAcc, _ = cpcCriterion(c_feature, predictedLengths, encoded_data, label, None)
 
         #totLoss = allCriterionLosses.sum()   # a bit below in if-else now
-        #allCriterionLosses.retain_grad()
         if pushLoss is not None:
             # pushLoss will have shape depeding on dataParallel
-            #print(allCriterionLosses.shape, pushLoss.shape)
-            totLoss = allCriterionLosses.sum() + pushLoss.sum()  # pushLoss is an average per-vector
+            if debug:
+                print(f"allCriterionLosses shape {allCriterionLosses.shape}, pushLoss shape {pushLoss.shape}")
+            totLoss = allCriterionLosses.sum() + pushLoss.sum()  # pushLoss elements are averages per-vector for each GPU
             
         else:
             totLoss = allCriterionLosses.sum()
@@ -268,7 +268,8 @@ def trainStep(dataLoader,
             logs["grad_enc_push_train"] += pushgradenc.cpu().numpy()
             logs["grad_ctx_cpc_train"] += nonpushgradctx.cpu().numpy()
             logs["grad_ctx_push_train"] += pushgradctx.cpu().numpy()
-            #print("!", logs["pushloss_closest"].shape, closestCounts.shape)
+            if debug:
+                print(f"logs['pushloss_closest'] shape {logs['pushloss_closest'].shape}, closestCounts shape {closestCounts.shape}")
             logs["pushloss_closest"] += closestCounts.detach().cpu().numpy()
         if "labelCounts" in centerUpdateRes:
             logs["labelCounts"] = centerUpdateRes["labelCounts"].detach().cpu().numpy() + logs["labelCounts"]
@@ -276,8 +277,9 @@ def trainStep(dataLoader,
             logs["centersDM"] = DM.detach().cpu().numpy() + logs["centersDM"]
         if segmSetTens is not None and epochNr == totalEpochs:  # this stat is super slow, only do at the very end
             numPhones = labelData['phoneNr'][0].item()
-            #--print(f"-------->*************** train numPhones: {numPhones}, label shape {labelPhone.shape}")
-            #%#print(f"----> SHAPE [0] OF SET TENSOR train: {segmSetTens.shape[0]}")
+            if debug:
+                print(f"train numPhones: {numPhones}, phone label shape {labelPhone.shape}")
+                print(f"shape [0] of segment set tensor train: {segmSetTens.shape[0]}")
             for i in range(segmSetTens.shape[0]):
                 mergesNums, _ = mergeSlowStats(segmSetTens[i], labelPhoneByGPU[i], numPhones)
                 logs["merge_stats_train"] = mergesNums + logs["merge_stats_train"]
@@ -316,7 +318,8 @@ def valStep(dataLoader,
             centerModel,
             segmentCostModel,
             cpcCriterion,
-            epochNrs):
+            epochNrs,
+            debug=False):
 
     cpcCriterion.eval()
     cpcModel.eval()
@@ -359,8 +362,9 @@ def valStep(dataLoader,
         logs["locAcc_val"] += allAcc.mean(dim=0).cpu().numpy()
         if segmSetTens is not None and epochNr == totalEpochs:  # this stat is super slow, only do at the very end
             numPhones = labelData['phoneNr'][0].item()
-            #print(f"-------->*************** val numPhones: {numPhones}")
-            #%#print(f"----> SHAPE [0] OF SET TENSOR val: {segmSetTens.shape[0]}")
+            if debug:
+                print(f"train numPhones: {numPhones}, phone label shape {labelPhone.shape}")
+                print(f"shape [0] of segment set tensor validation: {segmSetTens.shape[0]}")
             for i in range(segmSetTens.shape[0]):
                 mergesNums, _ = mergeSlowStats(segmSetTens[i], labelPhoneByGPU[i], numPhones)
                 logs["merge_stats_val"] = mergesNums + logs["merge_stats_val"]
@@ -471,8 +475,6 @@ def captureStep(
 
                 captureStatsCollector.batchUpdate(allBatchData)
 
-            # TODO maybe later can write that with process pool or something??? but not even sure if makes sense
-
         batchBegin += batchData.shape[0]
 
     if captureStatsCollector:
@@ -495,7 +497,8 @@ def run(trainDataset,
         optimizer,
         scheduler,
         logs,
-        cpcEpochCompleted):
+        cpcEpochCompleted,
+        debug=False):
 
     startEpoch = cpcEpochCompleted + 1  #len(logs["epoch"])
     print(f"Running {nEpoch} epochs, now at {startEpoch}")
@@ -526,7 +529,8 @@ def run(trainDataset,
             linsepEpochs = list(range(nextok, nEpoch, eachn))
     else:
         linsepEpochs = None
-        #print("@@@@@@", eachn, linsepEpochs)
+    if debug:
+        print(f"linsep eachn {eachn}, linsepEpochs {linsepEpochs}")
 
     print(f'DS sizes: train {str(len(trainDataset)) if trainDataset is not None else "-"}, '
         f'val {str(len(valDataset)) if valDataset is not None else "-"}, capture '
@@ -552,9 +556,9 @@ def run(trainDataset,
             (len(trainLoader), len(valLoader), batchSize))
 
         locLogsTrain = trainStep(trainLoader, cpcModel, centerModel, segmentCostModel, cpcCriterion,
-                                optimizer, scheduler, logs["logging_step"], (epoch, nEpoch-1))
+                                optimizer, scheduler, logs["logging_step"], (epoch, nEpoch-1), debug=debug)
 
-        locLogsVal = valStep(valLoader, cpcModel, centerModel, segmentCostModel, cpcCriterion, (epoch, nEpoch-1))
+        locLogsVal = valStep(valLoader, cpcModel, centerModel, segmentCostModel, cpcCriterion, (epoch, nEpoch-1), debug=debug)
 
         if captureDataset is not None and epoch % captureEachEpochs == 0:
             print(f"Capturing data for epoch {epoch}")
@@ -630,7 +634,7 @@ def main(args):
 
     args = parseArgs(args)
 
-    utils.set_seed(args.random_seed)
+    #utils.set_seed(args.random_seed)  # moved a bit later, to use same DS shuffling when resuming training
     logs = {"epoch": [], "iter": [], "saveStep": args.save_step}
     loadOptimizer = False
     os.makedirs(args.pathCheckpoint, exist_ok=True)
@@ -652,6 +656,11 @@ def main(args):
                                         "max_size_loaded"})
             args.load, loadOptimizer = [data], True
             args.loadCriterion = True
+            if locArgs and locArgs.random_seed:
+                args.random_seed = locArgs.random_seed  # to use same seed for DS shuffling
+
+    utils.set_seed(args.random_seed)
+    print(f"----> setting random seed {args.random_seed}")
 
     logs["logging_step"] = args.logging_step
     logs0 = {"epoch": [], "iter": [], "saveStep": args.save_step}
@@ -703,7 +712,7 @@ def main(args):
                                     ['conv_repr', 'ctx_repr', 'speaker_align', 'phone_align', 'pred', 'cpcctc_align', 'cpcctc_log_scores']):
                 if argVal:
                     whatToSave.append(name)
-        ###assert len(whatToSave) > 0
+        # whatToSave can have length 0 if used for stats
         captureOptions = {
             'path': args.pathCaptureSave,
             'eachEpochs': args.captureEachEpochs,
@@ -735,14 +744,14 @@ def main(args):
         print("")
         print(f'Loading audio data at {args.pathDB}')
         print("Loading the training dataset")
-        #print(f"############### NPHONES {nPhones}")
         trainDataset = AudioBatchData(args.pathDB,
                                     args.sizeWindow,
                                     seqTrain,
                                     (phoneLabels, nPhones),
                                     len(speakers),
                                     nProcessLoader=args.n_process_loader,
-                                    MAX_SIZE_LOADED=args.max_size_loaded)
+                                    MAX_SIZE_LOADED=args.max_size_loaded,
+                                    keepSameSeedForDSshuffle=not args.randomizeDSshuffleSeed)
         print("Training dataset loaded")
         print("")
 
@@ -752,7 +761,8 @@ def main(args):
                                     seqVal,
                                     (phoneLabels, nPhones),
                                     len(speakers),
-                                    nProcessLoader=args.n_process_loader)
+                                    nProcessLoader=args.n_process_loader,
+                                    keepSameSeedForDSshuffle=not args.randomizeDSshuffleSeed)
         print("Validation dataset loaded")
         print("")
     else:
@@ -775,7 +785,8 @@ def main(args):
                                     seqCapture,
                                     (phoneLabelsForCapture, nPhonesCapture),
                                     len(speakers),
-                                    nProcessLoader=args.n_process_loader)
+                                    nProcessLoader=args.n_process_loader,
+                                    keepSameSeedForDSshuffle=True)
         print("Capture dataset loaded")
         print("")
 
@@ -794,6 +805,7 @@ def main(args):
         else:
             modelLengthInARpredDep = None
         modSettings = {
+            "modDebug": args.debug,
             "numProtos": args.modProtos, 
             "pushLossWeightEnc": args.modPushLossWeightEnc,
             "pushLossWeightCtx": args.modPushLossWeightCtx,
@@ -818,6 +830,7 @@ def main(args):
         }
         if args.modCentermodule:
             centerInitSettings = {
+                "debug": args.debug,
                 "mode": args.modCenter_mode,
                 "numCentroids": args.modProtos,
                 "reprDim": args.hiddenEncoder,
@@ -899,7 +912,8 @@ def main(args):
         cpcModel = model.CPCModel(encoderNet, arNet, args.batchSizeGPU, modSettings=modSettings)
 
         CPChiddenGar, CPChiddenEncoder = cpcModel.gAR.getDimOutput(), cpcModel.gEncoder.getDimOutput()
-    # TODO saving, loading, stuff for centerModel
+    # TODO(?) saving, loading, stuff for centerModel - now it is not saved, would reinit centers when continuing train etc
+    #     but also ^ would need to take much memory as sum of batch representations in remembered for many batches (all memory)
     if centerInitSettings is not None:
         centerModel = center_model.CentroidModule(centerInitSettings)
     else:
@@ -942,7 +956,6 @@ def main(args):
         if loadOptimizer and not args.onlyCapture and not args.only_classif_metric:
             print("Loading optimizer " + args.load[0])
             state_dict = torch.load(args.load[0], 'cpu')
-            #print("!!!", state_dict["optimizer"].keys(), state_dict["optimizer"]['state'].keys(), state_dict["optimizer"]['state'][183].keys(), len(state_dict["optimizer"]['state'].keys()), state_dict["optimizer"]['param_groups'])
             if "optimizer" in state_dict:
                 optimizer.load_state_dict(state_dict["optimizer"])
     except:
@@ -978,7 +991,9 @@ def main(args):
                                                 [0, args.schedulerRamp])
     if scheduler is not None:
         print(f"DOING {len(range(cpcEpochCompleted + 1))} SCHEDULER STEPS")
-        for i in range(cpcEpochCompleted + 1):  #len(logs["epoch"])):
+        for i in range(cpcEpochCompleted + 1):  
+            # changed from range(len(logs["epoch"])) in order to be able to resume training from just a checkpoint, 
+            # and also with different settings starting at some epoch
             scheduler.step()
 
     print("cpcModel", cpcModel)
@@ -1002,7 +1017,6 @@ def main(args):
         dim_features = CPChiddenEncoder if args.phone_get_encoded else CPChiddenGar
         dim_ctx_features = CPChiddenGar  # for speakers using CNN encodings is not supported; could add but not very useful perhaps
         
-        #phoneLabelsData = None
         if args.path_phone_data:
             #phoneLabelsData, nPhonesInData = parseSeqLabels(args.path_phone_data)
             # ^ this is now done high above, and below same DS as above is used
@@ -1014,12 +1028,10 @@ def main(args):
 
             def constructPhoneCriterionAndOptimizer():
                 if not args.CTCphones:
-                    # print(f"Running phone separability with aligned phones")
                     phone_criterion = cr.PhoneCriterion(dim_features,
                                                 nPhones, args.phone_get_encoded,
                                                 nLayers=args.linsep_net_layers)
                 else:
-                    # print(f"Running phone separability with CTC loss")
                     phone_criterion = cr.CTCPhoneCriterion(dim_features,
                                                     nPhones, args.phone_get_encoded,
                                                     nLayers=args.linsep_net_layers)
@@ -1052,19 +1064,23 @@ def main(args):
 
                 return speaker_criterion, speaker_optimizer
 
+        # now regular DBs are used also for linsep, as constructing those is VERY RAM-consuming
+
         # print("preparing linsep DBs")
 
         # linsep_db_train = AudioBatchData(args.pathDB, args.sizeWindow, seqTrain,
-        #                         phoneLabelsData, len(speakers),
+        #                                 phoneLabelsData, len(speakers),
         #                                 nProcessLoader=args.n_process_loader,
-        #                                 MAX_SIZE_LOADED=args.max_size_loaded)
+        #                                 MAX_SIZE_LOADED=args.max_size_loaded,
+        #                                 keepSameSeedForDSshuffle=...)
 
         # print("linsep_db_train ready")
 
         # linsep_db_val = AudioBatchData(args.pathDB, args.sizeWindow, seqVal,
         #                             phoneLabelsData, len(speakers),
         #                             nProcessLoader=args.n_process_loader,
-        #                             MAX_SIZE_LOADED=args.max_size_loaded)
+        #                             MAX_SIZE_LOADED=args.max_size_loaded,
+        #                             keepSameSeedForDSshuffle=...)
 
         # print("linsep_db_val ready")
         #linsep_db_train
@@ -1166,7 +1182,8 @@ def main(args):
             optimizer,
             scheduler,
             logs,
-            cpcEpochCompleted)
+            cpcEpochCompleted,
+            debug=args.debug)
     if args.onlyCapture:  
     # caution [!] - will capture for last checkpoint (last saved state) if checkpoint directory given
     #               to use specific checkpoint provide full checkpoint file path
@@ -1210,7 +1227,10 @@ def parseArgs(argv):
     group_db.add_argument('--pathVal', type=str, default=None,
                           help='Path to a .txt file containing the list of the '
                           'validation sequences.')
-    # stuff below for capturing data
+    group_db.add_argument('--randomizeDSshuffleSeed', action='store_true',
+                          help="if not set, will always shuffle train & val DS same way (with same seed); "
+                          "if set, will use randomized seed used for other stuff also for this")
+    # stuff below for capturing data  
     group_db.add_argument('--onlyCapture', action='store_true',
                           help='Only capture data from learned model for one epoch, ignore training; '
                           'conflicts with pathTrain, pathVal etc. arguments')
@@ -1305,7 +1325,7 @@ def parseArgs(argv):
         'Args for specifying stats to compute for validation and capture DS')
     # group_stats.add_argument('--valSetStats', type=str, default=None,
     #                     help='For validation DS.')
-    # validation DS has smaller number of info - will need to specify stats accordingly
+    # validation DS has smaller number of info - would need to specify stats accordingly
     group_stats.add_argument('--captureSetStats', type=str, default=None,
                         help='For capture DS.')
 

@@ -109,5 +109,3 @@ def set_default_cpc_config(parser):
                        
     return parser
 
-
-# https://www.programmersought.com/article/27754146000/

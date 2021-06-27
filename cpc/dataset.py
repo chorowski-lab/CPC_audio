@@ -27,7 +27,8 @@ class AudioBatchData(Dataset):
                  phoneLabelsData,
                  nSpeakers,
                  nProcessLoader=50,
-                 MAX_SIZE_LOADED=4000000000):
+                 MAX_SIZE_LOADED=4000000000,
+                 keepSameSeedForDSshuffle=True):
         """
         Args:
             - path (string): path to the training dataset
@@ -45,6 +46,7 @@ class AudioBatchData(Dataset):
            - MAX_SIZE_LOADED (int): target maximal size of the floating array
                                     containing all loaded data.
         """
+        self.keepSameSeedForDSshuffle = keepSameSeedForDSshuffle
         self.MAX_SIZE_LOADED = MAX_SIZE_LOADED
         self.nProcessLoader = nProcessLoader
         self.dbPath = Path(path)
@@ -96,11 +98,16 @@ class AudioBatchData(Dataset):
             del self.seqLabel
 
     def prepare(self):
-        randomstate = random.getstate()
-        random.seed(767543)  # set seed only for batching so that it is random but always same for same dataset
-                             # so that capturing captures data for same audio across runs if same dataset provided
+        if self.keepSameSeedForDSshuffle:
+            print("--> setting same seed for DS seqNames shuffling")
+            randomstate = random.getstate()
+            random.seed(767543)  # set seed only for batching so that it is random but always same for same dataset
+                                 # so that capturing captures data for same audio across runs if same dataset provided
+        else:
+            print("--> using random seed for DS seqNames shuffling")
         random.shuffle(self.seqNames)
-        random.setstate(randomstate)  # restore random state so that other stuff changes with seed in args
+        if self.keepSameSeedForDSshuffle:
+            random.setstate(randomstate)  # restore random state so that other stuff changes with seed in args
         start_time = time.time()
 
         print("Checking length...")
@@ -437,7 +444,8 @@ def extractLength(couple):
     # what was returned with previous API described here: https://pytorch.org/audio/stable/backend.html#torchaudio.backend.sox_backend.info
     # [0] seems to be si --> SignalInfo, so for "sox" should take (num_frames*num_channels) instead of length
     # as it's written there; for "soundfile", would be just num_frames
-    # TODO bad thing is it doesn't crash either when * info.num_channels or without; with seems safer, sox seems default, and even if not channels should be 1 (?)
+    # it doesn't crash either when * info.num_channels or without; with seems safer, sox seems default, 
+    # and even if not channels should be 1
     info = torchaudio.info(str(locPath))  #[0]
     #print("--->", info.num_channels)
     return info.num_frames * info.num_channels  #info.length

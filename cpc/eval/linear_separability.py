@@ -93,7 +93,9 @@ def val_step(feature_maker, centerModel, segmentCostModel, criterion, data_loade
 
     return logs
 
-# TODO centerModel & segmentCostModel update
+# TODO(?) the regular linsep script run is not updated along with rest of the code in this branch and rather wouldn't work
+#         this is because the linsep automation during training has been made; it can also be used for
+#         one-time linsep of an already trained model with --only_classif_metric (best: copy ceckpoint into new dir and use --overrideArgsFile)
 def run(feature_maker,
         criterion,
         train_loader,

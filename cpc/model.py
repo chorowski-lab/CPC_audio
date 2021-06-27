@@ -102,6 +102,7 @@ class CPCEncoder(nn.Module):
         self.DOWNSAMPLING = 160
 
         self.noLastRelu = noLastRelu
+        print("CPCEncoder noLastRelu:", self.noLastRelu)
 
     def getDimOutput(self):
         return self.conv4.out_channels
@@ -112,9 +113,6 @@ class CPCEncoder(nn.Module):
         x = F.relu(self.batchNorm2(self.conv2(x)))
         x = F.relu(self.batchNorm3(self.conv3(x)))
         x = self.batchNorm4(self.conv4(x))
-        #print("lastRelu:", self.lastRelu)
-        #xlen = torch.sqrt(torch.clamp((x*x).sum(dim=-1), min=0))
-        #print(f"x len: {(xlen.min(), xlen.mean(), xlen.max())}")
         if not self.noLastRelu:
             x = F.relu(x)
         return x
@@ -341,7 +339,7 @@ class CPCModel(nn.Module):
         self.shrinkEncodingsLengthDims = False
         self.showLengthsInCtx = False
         if self.doMod:
-            self.modDebug = False   #True
+            self.modDebug = modSettings["modDebug"]
             self.shrinkEncodingsLengthDims = modSettings["shrinkEncodingsLengthDims"]
             self.showLengthsInCtx = modSettings["showLengthsInCtx"]
             self.modelLengthInARsimple = modSettings["modelLengthInARsimple"]
