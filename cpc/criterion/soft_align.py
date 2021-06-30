@@ -244,33 +244,41 @@ class TimeAlignedPredictionNetwork(nn.Module):
 
         # mappings; LSTM output is (-1,1)-restricted, so torch.sigmoid(predictedLengths) is limited to (0.27,0.73)
         # however limiting this may actually help, hence the params
-        predictedLengths = ((predictedLengths + 1.) / 2.) * (self.map01max - self.map01min) + self.map01min  #torch.sigmoid(predictedLengths)
+        if self.mode == "conv":
+            predictedLengths = torch.sigmoid(predictedLengths) * (self.map01max - self.map01min) + self.map01min
+        else:
+            predictedLengths = ((predictedLengths + 1.) / 2.) * (self.map01max - self.map01min) + self.map01min  #torch.sigmoid(predictedLengths)
 
         if self.debug:
-            print("predictedLengths", predictedLengths.shape, predictedLengths)
+            print("predictedLengths", predictedLengths.shape, predictedLengths if predictedLengths.numel() < 100 else "<tensor big>")
 
-        if self.mode == "simple":
+        if self.mode == "simple" or self.mode == "conv":
             # predictedLengths: B x N
             predictedLengthsSum = predictedLengths.cumsum(dim=1)
+            # predictedLengthsSum: B x N
             if self.debug:
-                print("predictedLengthsSum", predictedLengthsSum)
+                print("predictedLengthsSum", predictedLengthsSum.shape, predictedLengthsSum if predictedLengthsSum.numel() < 100 else "<tensor big>")
             if not self.teachOnlyLastFrameLength:
                 moreLengths = predictedLengthsSum.view(1,predictedLengthsSum.shape[0],predictedLengthsSum.shape[1]).cuda().repeat(self.nPredictions,1,1)
+                if self.debug:
+                    print("moreLengths", moreLengths.shape)
                 for i in range(1,self.nPredictions+1):  
                     moreLengths[i-1] = torch.roll(moreLengths[i-1], shifts=(0,-i), dims=(0,1)) - predictedLengthsSum
             else:
                 predictedLengthsSum = predictedLengths.detach().cumsum(dim=1)
+                # predictedLengthsSum: B x N
                 moreLengths = torch.zeros_like(predictedLengths).view(1,predictedLengths.shape[0],predictedLengths.shape[1]).cuda().repeat(self.nPredictions,1,1)
                 for i in range(1,self.nPredictions+1):  
                     moreLengths[i-1] = torch.roll(predictedLengthsSum, shifts=(0,-(i-1)), dims=(0,1)) - predictedLengthsSum \
                         + torch.roll(predictedLengths, shifts=(0,-i), dims=(0,1))
             moreLengths = moreLengths[:,:,:c.shape[1]]  # cut rubbish at the end which is not being predicted
             if self.debug:
-                print("moreLengths", moreLengths.shape, moreLengths)
+                print("moreLengths", moreLengths.shape, moreLengths if moreLengths.numel() < 100 else "<tensor big>")
             # moreLengths: predictions x B x (N-predictions)
 
             if self.debug:
                 print("shapes (c, lengthSum, lengths):", c.shape, predictedLengthsSum.shape, predictedLengths.shape)
+            
             if self.showDetachedLengthsCumsum:  # [!] needs to be before non-sum on last dim as it would spoil it
                 toPut = predictedLengthsSum[:,:c.shape[1]].detach()
                 c = torch.cat([c[:,:,:-2], toPut.view(toPut.shape[0], toPut.shape[1], 1).repeat(1,1,2)], dim=-1)
@@ -283,7 +291,7 @@ class TimeAlignedPredictionNetwork(nn.Module):
                 c = torch.cat([c[:,:,:-1], torch.zeros_like(c[:,:,-1:]).view(c.shape[0], c.shape[1], 1)], dim=-1)
             
             if self.debug:
-                print("c:", c.shape, c)
+                print("c:", c.shape, c if c.numel() < 100 else "<tensor big>")
 
             locCdimToCut = 2
 
@@ -304,7 +312,7 @@ class TimeAlignedPredictionNetwork(nn.Module):
                 moreLengths = moreLengths.detach().cumsum(dim=0) - moreLengths.detach() + moreLengths
             moreLengths = moreLengths[:,:,:c.shape[1]]
             if self.debug:
-                print("moreLengths", moreLengths.shape, moreLengths)
+                print("moreLengths", moreLengths.shape, moreLengths if moreLengths.numel() < 100 else "<tensor big>")
             # moreLengths: predictions x B x (N-predictions)
 
             if self.showDetachedLengths:
@@ -313,7 +321,7 @@ class TimeAlignedPredictionNetwork(nn.Module):
                 c = torch.cat([c[:,:,:-predictedLengths.shape[0]], torch.zeros_like(c[:,:,-predictedLengths.shape[0]:])], dim=-1)
             
             if self.debug:
-                print("c:", c.shape, c)
+                print("c:", c.shape, c if c.numel() < 100 else "<tensor big>")
 
             locCdimToCut = predictedLengths.shape[0]
 
@@ -333,7 +341,7 @@ class TimeAlignedPredictionNetwork(nn.Module):
                 moreLengths[i,:,:-(i+1)] = predictedLengths[i,:,(i+1):]  
             moreLengths = moreLengths[:,:,:c.shape[1]]
             if self.debug:
-                print("moreLengths", moreLengths.shape, moreLengths)
+                print("moreLengths", moreLengths.shape, moreLengths if moreLengths.numel() < 100 else "<tensor big>")
             # moreLengths: predictions x B x (N-predictions)
 
             if self.showDetachedLengths:
@@ -342,7 +350,7 @@ class TimeAlignedPredictionNetwork(nn.Module):
                 c = torch.cat([c[:,:,:-predictedLengths.shape[0]], torch.zeros_like(c[:,:,-predictedLengths.shape[0]:])], dim=-1)
             
             if self.debug:
-                print("c:", c.shape, c)
+                print("c:", c.shape, c if c.numel() < 100 else "<tensor big>")
                 
             locCdimToCut = predictedLengths.shape[0]
 
@@ -375,6 +383,9 @@ class TimeAlignedPredictionNetwork(nn.Module):
             normalsStdevs = torch.sqrt(torch.arange(1,self.nPredictions+1).to(moreLengths.device) * (self.modelFrameNormalsSigma)**2)
             # modifications assuming normal distributions of frame lengths; normalsStdevs are resulting standard devs for each prediciton lengths
 
+        assert not torch.any(torch.isnan(moreLengths)) 
+        assert not torch.any(torch.isinf(moreLengths))
+
         # for each nr of frames in future separately,
         # calc and switch last elements in c as lengths, and also get predictor choices
         toPredCenters = (torch.arange(len(self.predictors)).cuda()).view(1,1,1,-1)
@@ -393,8 +404,8 @@ class TimeAlignedPredictionNetwork(nn.Module):
             weights = torch.exp(-w*lengthsDists)
             weightsNorms = weights.sum(-1)
             if self.debug:
-                print("weightsUnnormed", weights)
-                print("weightNorms", weightsNorms)
+                print("weightsUnnormed", weights.shape, weights if weights.numel() < 100 else "<tensor big>")
+                print("weightNorms", weightsNorms.shape, weightsNorms if weightsNorms.numel() < 100 else "<tensor big>")
             weights = weights / weightsNorms.view(*(weightsNorms.shape),1)
         elif weightType == "doubleExp":
             if self.modelFrameNormalsSigma is not None:
@@ -402,8 +413,8 @@ class TimeAlignedPredictionNetwork(nn.Module):
             weights = torch.exp(1.-torch.exp(w*lengthsDists))
             weightsNorms = weights.sum(-1)
             if self.debug:
-                print("weightsUnnormed", weights)
-                print("weightNorms", weightsNorms)
+                print("weightsUnnormed", weights.shape, weights if weights.numel() < 100 else "<tensor big>")
+                print("weightNorms", weightsNorms.shape, weightsNorms if weightsNorms.numel() < 100 else "<tensor big>")
             weights = weights / weightsNorms.view(*(weightsNorms.shape),1)
         elif weightType == "bilin":  # bilinear
             if self.modelFrameNormalsSigma is not None:
@@ -418,8 +429,8 @@ class TimeAlignedPredictionNetwork(nn.Module):
             weights = torch.clamp(maxSeenDist - lengthsDists, min=0)
             weightsNorms = weights.sum(-1)
             if self.debug:
-                print("weightsUnnormed", weights)
-                print("weightNorms", weightsNorms)
+                print("weightsUnnormed", weights.shape, weights if weights.numel() < 100 else "<tensor big>")
+                print("weightNorms", weightsNorms.shape, weightsNorms if weightsNorms.numel() < 100 else "<tensor big>")
             weights = weights / weightsNorms.view(*(weightsNorms.shape),1)
         elif weightType == "normals":
             assert self.modelFrameNormalsSigma is not None
@@ -433,14 +444,14 @@ class TimeAlignedPredictionNetwork(nn.Module):
                 weights[i] = thisFrameNormal.cdf(stripeEnds[i]) - thisFrameNormal.cdf(stripeBegins[i])
             weightsNorms = weights.sum(-1)
             if self.debug:
-                print("weightsUnnormed", weights)
-                print("weightNorms", weightsNorms)
+                print("weightsUnnormed", weights.shape, weights if weights.numel() < 100 else "<tensor big>")
+                print("weightNorms", weightsNorms.shape, weightsNorms if weightsNorms.numel() < 100 else "<tensor big>")
             weights = weights / weightsNorms.view(*(weightsNorms.shape),1)  # need to normalize as not summing whole distribution mass
             # sometimes taking impossible things with <0 len, but ok - approximation
         else:
             assert False
         if self.debug:
-            print("weights", weights)
+            print("weights", weights.shape, weights if weights.numel() < 100 else "<tensor big>")
 
         ## weights: predictions x B x (N-predictions) x predictors
         
@@ -485,7 +496,7 @@ class TimeAlignedPredictionNetwork(nn.Module):
         ## now predsWeighted: predictions x B x (N-predictions) x Dim
 
         if self.debug:
-            print("predsWeighted", predsWeighted.shape, predsWeighted)
+            print("predsWeighted", predsWeighted.shape, predsWeighted if predsWeighted.numel() < 100 else "<tensor big>")
 
         for k in range(self.nPredictions):  
             # if isinstance(locC, tuple):
@@ -505,7 +516,7 @@ class TimeAlignedPredictionNetwork(nn.Module):
         res = torch.cat(out, 3)
 
         if self.debug:
-            print("res", res.shape, res)
+            print("res", res.shape, res if res.numel() < 100 else "<tensor big>")
 
         return res
 
@@ -560,6 +571,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
             self.modelLengthInARsimple = lengthInARsettings["modelLengthInARsimple"]
             self.modelLengthInARpredStartDep = lengthInARsettings["modelLengthInARpredStartDep"]
             self.modelLengthInARpredEndDep = lengthInARsettings["modelLengthInARpredEndDep"]
+            self.modelLengthInARconv = lengthInARsettings["modelLengthInARconv"]
             self.teachOnlyLastFrameLength = lengthInARsettings["teachOnlyLastFrameLength"]
             self.teachLongPredsUniformlyLess = lengthInARsettings["teachLongPredsUniformlyLess"]
             self.teachLongPredsSqrtLess = lengthInARsettings["teachLongPredsSqrtLess"]
@@ -579,6 +591,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
             self.modelLengthInARsimple = False
             self.modelLengthInARpredStartDep = None
             self.modelLengthInARpredEndDep = None
+            self.modelLengthInARconv = None
             self.teachOnlyLastFrameLength = False
             self.teachLongPredsUniformlyLess = False
             self.teachLongPredsSqrtLess = False
@@ -595,13 +608,15 @@ class CPCUnsupersivedCriterion(BaseCriterion):
             self.map01range = None
         print(f"lengthNoise stdev: {self.lengthNoise}")
 
-        if not self.modelLengthInARsimple and self.modelLengthInARpredStartDep is None and self.modelLengthInARpredEndDep is None:
+        if not self.modelLengthInARsimple and self.modelLengthInARconv is None and self.modelLengthInARpredStartDep is None and self.modelLengthInARpredEndDep is None:
             self.wPrediction = PredictionNetwork(
                 nPredicts, dimOutputAR, dimOutputEncoder, rnnMode=rnnMode,
                 dropout=dropout, sizeInputSeq=sizeInputSeq - nMatched)  #nPredicts)
-        elif self.modelLengthInARsimple or self.modelLengthInARpredStartDep is not None or self.modelLengthInARpredEndDep is not None:
+        elif self.modelLengthInARsimple or self.modelLengthInARconv is not None or self.modelLengthInARpredStartDep is not None or self.modelLengthInARpredEndDep is not None:
             if self.modelLengthInARsimple:
                 lengthMode = "simple"
+            elif self.modelLengthInARconv is not None:
+                lengthMode = "conv"
             elif self.modelLengthInARpredStartDep is not None:
                 lengthMode = "predStartDep"
             elif self.modelLengthInARpredEndDep is not None:
@@ -752,7 +767,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
             cFeature = torch.cat([cFeature, embeddedSpeaker], dim=2)
 
         # Predictions, BS x Len x D x nPreds
-        if self.modelLengthInARsimple or self.modelLengthInARpredStartDep is not None or self.modelLengthInARpredEndDep is not None:
+        if self.modelLengthInARsimple or self.modelLengthInARconv is not None or self.modelLengthInARpredStartDep is not None or self.modelLengthInARpredEndDep is not None:
             predictions = self.wPrediction(cFeature, predictedFrameLengths)
         else:
             predictions = self.wPrediction(cFeature)

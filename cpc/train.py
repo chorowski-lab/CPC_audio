@@ -42,6 +42,7 @@ def getCriterion(args, downsampling, nSpeakers, nPhones):
             lengthInARsettings = {
                 "nPredictorsTimeAligned": args.nPredictorsTimeAligned,
                 "modelLengthInARsimple": args.modelLengthInARsimple,
+                "modelLengthInARconv": args.modelLengthInARconv,
                 "modelLengthInARpredStartDep": args.nPredicts if args.modelLengthInARpredStartDep else None,
                 "modelLengthInARpredEndDep": args.nPredicts if args.modelLengthInARpredEndDep else None,
                 "teachOnlyLastFrameLength": args.ARteachOnlyLastFrameLength,
@@ -751,7 +752,7 @@ def main(args):
                                     len(speakers),
                                     nProcessLoader=args.n_process_loader,
                                     MAX_SIZE_LOADED=args.max_size_loaded,
-                                    keepSameSeedForDSshuffle=not args.randomizeDSshuffleSeed)
+                                    keepSameSeedForDSshuffle=args.fixedDSshuffleSeed)
         print("Training dataset loaded")
         print("")
 
@@ -762,7 +763,7 @@ def main(args):
                                     (phoneLabels, nPhones),
                                     len(speakers),
                                     nProcessLoader=args.n_process_loader,
-                                    keepSameSeedForDSshuffle=not args.randomizeDSshuffleSeed)
+                                    keepSameSeedForDSshuffle=args.fixedDSshuffleSeed)
         print("Validation dataset loaded")
         print("")
     else:
@@ -798,7 +799,7 @@ def main(args):
         captureDataset = None
         captureSetStatsCollector = None
 
-    assert not args.modelLengthInARsimple or not args.modelLengthInARpredStartDep
+    assert not args.modelLengthInARsimple or not not args.modelLengthInARconv or not args.modelLengthInARpredStartDep or not args.modelLengthInARpredEndDep
     if args.modSettings:
         if args.modelLengthInARpredStartDep or args.modelLengthInARpredEndDep:
             modelLengthInARpredDep = args.nPredicts
@@ -824,6 +825,7 @@ def main(args):
             "hierARgradualStart": args.modHierARgradualStart,
             "hierARmergePrior": args.modHierARmergePrior,
             "modelLengthInARsimple": args.modelLengthInARsimple,
+            "modelLengthInARconv": args.modelLengthInARconv,
             "modelLengthInARpredDep": modelLengthInARpredDep,
             "showLengthsInCtx": args.linsepShowARlengthsInCtx,
             "shrinkEncodingsLengthDims": args.shrinkEncodingsLengthDims
@@ -1227,9 +1229,9 @@ def parseArgs(argv):
     group_db.add_argument('--pathVal', type=str, default=None,
                           help='Path to a .txt file containing the list of the '
                           'validation sequences.')
-    group_db.add_argument('--randomizeDSshuffleSeed', action='store_true',
-                          help="if not set, will always shuffle train & val DS same way (with same seed); "
-                          "if set, will use randomized seed used for other stuff also for this")
+    group_db.add_argument('--fixedDSshuffleSeed', action='store_true',
+                          help="if set, will always shuffle train & val DS same way (with same seed); "
+                          "if not set, will use randomized seed used for other stuff also for this")
     # stuff below for capturing data  
     group_db.add_argument('--onlyCapture', action='store_true',
                           help='Only capture data from learned model for one epoch, ignore training; '
@@ -1408,6 +1410,7 @@ def parseArgs(argv):
 
     group_mod.add_argument('--nPredictorsTimeAligned',  type=int, default=None)
     group_mod.add_argument('--modelLengthInARsimple', action='store_true')
+    group_mod.add_argument('--modelLengthInARconv', type=int, default=None)
     group_mod.add_argument('--modelLengthInARpredStartDep', action='store_true')
     group_mod.add_argument('--modelLengthInARpredEndDep', action='store_true')
     group_mod.add_argument('--ARteachOnlyLastFrameLength', action='store_true')
@@ -1419,7 +1422,7 @@ def parseArgs(argv):
     group_mod.add_argument('--ARlengthFirstPredID', action='store_true')
     group_mod.add_argument('--ARlengthPredNoise',  type=float, default=None)
     group_mod.add_argument('--ARmodelFrameNormalsSigma',  type=float, default=None)
-    group_mod.add_argument('--ARmodelFrameNormalsDistMult',  type=float, default=None)
+    group_mod.add_argument('--ARmodelFrameNormalsDistMult',  type=float, default=1.)
     group_mod.add_argument('--predShowDetachedLengths', action='store_true')
     group_mod.add_argument('--predShowDetachedLengthsCumsum', action='store_true')
     group_mod.add_argument('--linsepShowARlengthsInCtx', action='store_true')

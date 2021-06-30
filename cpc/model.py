@@ -344,6 +344,7 @@ class CPCModel(nn.Module):
             self.showLengthsInCtx = modSettings["showLengthsInCtx"]
             self.modelLengthInARsimple = modSettings["modelLengthInARsimple"]
             self.modelLengthInARpredDep = modSettings["modelLengthInARpredDep"]  # num predicted frames if do
+            self.modelLengthInARconv = modSettings["modelLengthInARconv"]
             self.hierARshorten = modSettings["hierARshorten"]
             self.hierARgradualStart = modSettings["hierARgradualStart"]
             self.hierARmergePrior = modSettings["hierARmergePrior"]
@@ -370,8 +371,12 @@ class CPCModel(nn.Module):
                 self.doing_push_loss_or_push_after = True  # to be used in train
             else:
                 self.doing_push_loss_or_push_after = False 
-            
-            self.reprDim = encoder.getDimOutput()
+            if self.modelLengthInARconv is not None:
+                assert self.modelLengthInARconv % 2 == 1
+                self.lengthModelConv = nn.Conv1d(AR.getDimOutput(), 1, self.modelLengthInARconv)
+                print(f"---> using kernel of shape {(self.modelLengthInARconv, AR.getDimOutput())} for length predicitons")
+                
+        self.reprDim = encoder.getDimOutput()
             
 
     # epochNrs: (current, total)
@@ -391,7 +396,7 @@ class CPCModel(nn.Module):
             encodedData = self.gEncoder(batchData).permute(0, 2, 1)
 
             if self.shrinkEncodingsLengthDims:
-                if self.modelLengthInARsimple:
+                if self.modelLengthInARsimple or self.modelLengthInARconv is not None:
                     encodedData = encodedData[:,:,:-2]
                 elif self.modelLengthInARpredDep is not None:
                     encodedData = encodedData[:,:,:-self.modelLengthInARpredDep]
@@ -442,7 +447,7 @@ class CPCModel(nn.Module):
                     else self.VQpushEncCenterWeightOnlyAR*(max(epochNow_-self.VQgradualStart, 0.)/max(epochAll_-self.VQgradualStart,1.))
                 encForCfeature = self._centerPushing(encForCfeature, givenCenters, None, None, coeffOnlyAR)
             if self.shrinkEncodingsLengthDims:
-                if self.modelLengthInARsimple:
+                if self.modelLengthInARsimple or self.modelLengthInARconv is not None:
                     encForCfeature = torch.cat([encForCfeature, torch.zeros(1,1,1).cuda().repeat(encForCfeature.shape[0], encForCfeature.shape[1], 2)], dim=-1)  # append 0s at the end to make dim ok
                     # at the end will do same with encodedData
                 elif self.modelLengthInARpredDep is not None:
@@ -471,6 +476,28 @@ class CPCModel(nn.Module):
                     pass  # length already in ctx
                 else:
                     cFeature = torch.cat([cFeature[:,:,:-self.modelLengthInARpredDep], predictedLengths], dim=-1)
+            elif self.modelLengthInARconv:  # kernel width; need to set it as odd number
+                # zero last element so that it isn't like it's important but we replace it with lengths for linsep 
+                # or for criterion; training just 2 less of 256 inputs doesn't matter
+                cFeature = torch.cat([cFeature[:,:,:-2], torch.zeros_like(cFeature[:,:,-2:])], dim=-1)
+                cFeaturePadded = F.pad(cFeature.view(1, *(cFeature.shape)), (0, 0, self.modelLengthInARconv//2, self.modelLengthInARconv//2), "replicate")  #nn.ReplicationPad1d((self.modelLengthInARconv//2, self.modelLengthInARconv//2))(cFeature)
+                cFeaturePadded = cFeaturePadded.view(*(cFeaturePadded.shape[1:]))
+                if self.modDebug:
+                    print(f"shape feature padded for conv length prediction: {cFeaturePadded.shape}")
+                # cFeaturePadded: B x W x C  --> permute to B x C x W
+                # cFeaturePadded: B x C x W  --> permute to B x W x C
+                predictedLengths = self.lengthModelConv(cFeaturePadded.permute(0,2,1)).permute(0,2,1)
+                predictedLengths = predictedLengths.view(*(predictedLengths.shape[:2]))
+                assert not torch.any(torch.isnan(predictedLengths))
+                assert not torch.any(torch.isinf(predictedLengths))
+                if self.modDebug:
+                    print(f"shape conv predicted lengths: {predictedLengths.shape}")
+                if self.showLengthsInCtx:  # put lengths into previously zeroed element
+                    cFeature = torch.cat([
+                            cFeature[:,:,:-1], 
+                            predictedLengths.view(cFeature.shape[0], cFeature.shape[1], 1)],
+                        dim=-1)
+
             if self.hierARshorten is not None:
                 if self.modDebug:
                     t0 = time.time()
@@ -510,7 +537,7 @@ class CPCModel(nn.Module):
                 print(f"time lost because of DataParallel-needed shape conversions: {t02-t01}")
 
             if self.shrinkEncodingsLengthDims:
-                if self.modelLengthInARsimple:
+                if self.modelLengthInARsimple or self.modelLengthInARconv is not None:
                     encodedData = torch.cat([encodedData, torch.zeros(1,1,1).cuda().repeat(encodedData.shape[0], encodedData.shape[1], 2)], dim=-1)  # append 0s at the end to make dim ok
                 elif self.modelLengthInARpredDep is not None:
                     encodedData = torch.cat([encodedData, torch.zeros(1,1,1).cuda().repeat(encodedData.shape[0], encodedData.shape[1], self.modelLengthInARpredDep)], dim=-1)  # append 0s at the end to make dim ok
