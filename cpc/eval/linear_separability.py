@@ -281,6 +281,10 @@ def parse_args(argv):
     parser.add_argument('--max_size_loaded', type=int, default=4000000000,
                           help='Maximal amount of data (in byte) a dataset '
                           'can hold in memory at any given time')
+    parser.add_argument('--n_layers', type=int, default=1,
+                          help='Number of layers in the criterion')
+    parser.add_argument('--dim_classifier', type=int, default=None,
+                          help='The dimension inbetween embeddings and classifier. Different from dim_inter. Dim_classifier makes it (dim_embeddings x dim_classifier) x (dim_classifier x dim_classifier)^(n_layer-1) x (dim_classifier x n_speakers or n_phones)')
     parser.add_argument("--model", type=str, default="cpc",
                           help="Pre-trained model architecture ('cpc' [default] or 'wav2vec2').")
     parser.add_argument("--path_fairseq", type=str, default="/pio/scratch/1/i273233/fairseq",
@@ -407,7 +411,7 @@ def main(argv):
         if not args.CTC:
             print(f"Running phone separability with aligned phones")
             criterion = cr.PhoneCriterion(dim_features,
-                                          n_phones, args.get_encoded)
+                                          n_phones, args.get_encoded, nLayers=args.n_layers, dimClassifier=args.dim_classifier)
         else:
             print(f"Running phone separability with CTC loss")
             criterion = cr.CTCPhoneCriterion(dim_features,
@@ -418,10 +422,12 @@ def main(argv):
         if args.mode == "speakers_factorized":
             criterion = cr.SpeakerDoubleCriterion(dim_features, dim_inter, len(speakers))
         else:
-            criterion = cr.SpeakerCriterion(dim_features, len(speakers))
+            criterion = cr.SpeakerCriterion(dim_features, len(speakers), nLayers=args.n_layers, dimClassifier=args.dim_classifier)
     criterion.cuda()
     criterion = torch.nn.DataParallel(criterion, device_ids=range(args.nGPU))
 
+    if args.mode != "phonemes_nullspace" and args.mode != "speakers_nullspace":
+        model.disableSmartaveragingLossParameter()
     model.cuda()
     model = torch.nn.DataParallel(model, device_ids=range(args.nGPU))
 

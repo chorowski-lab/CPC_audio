@@ -37,6 +37,31 @@ def set_default_cpc_config(parser):
     group.add_argument('--limitNegsInBatch', type=int, default=0,
                        help='Limit the number of different seqs from whithc neg samples are taken.')
 
+    group.add_argument('--smartpoolingLayer', type=int, default=4, 
+                       help='Which layers of the encoder should be replaced with smartpooling. Available layers: 3, 4, 5 (smart averaging)')
+    group.add_argument('--smartpoolingNoPadding', action='store_true', 
+                       help='No padding is added to encoder conv layer')
+    group.add_argument('--smartpoolingDimMlp', type=int, default=2048, 
+                       help='Dimension of the mlp responsible for assigning importance to frames.')
+    group.add_argument('--smartpoolingUseDifferences', action='store_true',
+                       help='Whether to not use mlp for importance and use abs of differences of consecutive values')                   
+    group.add_argument('--smartpoolingTemperature', type=float, default=1e-5, 
+                       help='Temperature added to frame importance. Larger temperature means the importance is going to be smoother')   
+    group.add_argument('--smartaveragingWindowSize', type=int, default=None, 
+                       help='How large the smart averaging window should be') 
+    group.add_argument('--smartaveragingHardcodedWeights', action='store_true', 
+                       help='Make the MLP output some hardcoded averaging weights')
+    group.add_argument('--smartaveragingHardcodedWindowSize', type=int, default=None, 
+                       help='How large the smart averaging HARDCODED window should be') 
+
+    group.add_argument('--smartpoolingInAR', action='store_true',
+                       help='Put smart averaging in AR. So archtecture is encoder -> (smart averaging -> AR) instead of (encoder -> smart averaging) -> AR') 
+    group.add_argument('--smartpoolingInARUnfreezeEpoch', type=int, default=None, 
+                       help='Which epoch to unfreeze the smartpooling in the AR. 0 means it is unfrozen from the start')
+    group.add_argument('--smartaveragingLossParameter', type=float, default=None, 
+                       help='The hyperparameter to scale the smart averaging loss. None means that the loss is not applied')
+    group.add_argument('--smartaveragingLossAverage', type=float, default=None, 
+                       help='Which value should the average aim towards')
     
     group.add_argument('--negativeSamplingExt', type=int, default=128,
                        help='Number of negative samples to take.')
@@ -70,7 +95,7 @@ def set_default_cpc_config(parser):
                        choices=['reverse', 'none'],
                        help='Some variations on CPC.')
     group.add_argument('--encoder_type', type=str,
-                       choices=['cpc', 'mfcc', 'lfb'],
+                       choices=['cpc', 'mfcc', 'lfb', 'smart'],
                        default='cpc',
                        help='Replace the encoder network by mfcc features '
                        'or learned filter banks')
