@@ -145,6 +145,9 @@ def getEncoder(args):
     elif args.encoder_type == 'lfb':
         from .model import LFBEnconder
         return LFBEnconder(args.hiddenEncoder)
+    elif args.encoder_type == 'smart' and not args.smartpoolingInAR:
+        from .model import CPCSmartpoolEncoder
+        return CPCSmartpoolEncoder(args.hiddenEncoder, args.normMode, smartpoolingLayer=args.smartpoolingLayer, noPadding=args.smartpoolingNoPadding, dimMlp=args.smartpoolingDimMlp, useDifferences=args.smartpoolingUseDifferences, temperature=args.smartpoolingTemperature, smartaveragingHardcodedWeights=args.smartaveragingHardcodedWeights, smartaveragingWindowSize=args.smartaveragingWindowSize, smartaveragingLossParameter=args.smartaveragingLossParameter, smartaveragingHardcodedWindowSize=args.smartaveragingHardcodedWindowSize)
     else:
         from .model import CPCEncoder
         return CPCEncoder(args.hiddenEncoder, args.normMode)
@@ -161,11 +164,13 @@ def getAR(args):
         arNet = NoAr()
     else:
         from .model import CPCAR
+        smartpoolingConfig = (args.smartpoolingDimMlp, args.smartpoolingUseDifferences, args.smartpoolingTemperature, args.smartaveragingHardcodedWeights, args.smartaveragingWindowSize, args.smartaveragingLossParameter is not None, args.smartaveragingHardcodedWindowSize) if args.smartpoolingInAR else None
         arNet = CPCAR(args.hiddenEncoder, args.hiddenGar,
                       args.samplingType == "sequential",
                       args.nLevelsGRU,
                       mode=args.arMode,
-                      reverse=args.cpc_mode == "reverse")
+                      reverse=args.cpc_mode == "reverse",
+                      smartpoolingConfig=smartpoolingConfig)
     return arNet
 
 
@@ -213,6 +218,9 @@ def loadModel(pathCheckpoints, loadStateDict=True, load_nullspace=False, updateC
             else:
                 m_.load_state_dict(state_dict["best"], strict=False)
 
+            if locArgs.smartaveragingLossParameter is not None:
+                m_.smartaveragingLossParameter = locArgs.smartaveragingLossParameter
+                m_.smartpoolingInAR = locArgs.smartpoolingInAR
 
         if not doLoad:
             hiddenGar += locArgs.hiddenGar

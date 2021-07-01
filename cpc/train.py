@@ -10,6 +10,7 @@ import torch
 import time
 from copy import deepcopy
 import random
+from PIL import Image, ImageDraw
 import psutil
 import sys
 #import torchaudio
@@ -21,7 +22,7 @@ import cpc.utils.misc as utils
 import cpc.feature_loader as fl
 import cpc.eval.linear_separability as linsep
 from cpc.cpc_default_config import set_default_cpc_config
-from cpc.dataset import AudioBatchData, findAllSeqs, filterSeqs, parseSeqLabels
+from cpc.dataset import AudioBatchData, findAllSeqs, filterSeqs, parseSeqLabels, parseSeqLabelsAlternate
 import cpc.stats.stat_utils as statutil
 
 
@@ -88,13 +89,17 @@ def loadCriterion(pathCheckpoint, downsampling, nSpeakers, nPhones):
     criterion.load_state_dict(state_dict["cpcCriterion"])
     return criterion
 
-
+def computeSmartaveragingLoss(importance, average=0.5):
+    return (importance - average)**2
+    
 def trainStep(dataLoader,
               cpcModel,
               cpcCriterion,
               optimizer,
               scheduler,
-              loggingStep):
+              loggingStep,
+              smartaveragingLossParameter=None,
+              smartaveragingLossAverage=None):
 
     cpcModel.train()
     cpcCriterion.train()
@@ -109,9 +114,16 @@ def trainStep(dataLoader,
         n_examples += batchData.size(0)
         batchData = batchData.cuda(non_blocking=True)
         label = label.cuda(non_blocking=True)
-        c_feature, encoded_data, label = cpcModel(batchData, label)
+        if smartaveragingLossParameter is not None:
+            c_feature, encoded_data, label, importance = cpcModel(batchData, label)
+        else:
+            c_feature, encoded_data, label = cpcModel(batchData, label)
         allLosses, allAcc, _ = cpcCriterion(c_feature, encoded_data, label, None)
         totLoss = allLosses.sum()
+
+        if smartaveragingLossParameter is not None:
+            smartaveragingLoss = smartaveragingLossParameter * computeSmartaveragingLoss(importance, average=smartaveragingLossAverage)
+            totLoss += smartaveragingLoss.sum()
 
         totLoss.backward()
 
@@ -123,9 +135,14 @@ def trainStep(dataLoader,
             logs["locLoss_train"] = np.zeros(allLosses.size(1))
             logs["locAcc_train"] = np.zeros(allLosses.size(1))
 
+        if smartaveragingLossParameter and "smartaveragingLoss_train" not in logs:
+            logs["smartaveragingLoss_train"] = 0
+
         iter += 1
         logs["locLoss_train"] += (allLosses.mean(dim=0)).detach().cpu().numpy()
         logs["locAcc_train"] += (allAcc.mean(dim=0)).cpu().numpy()
+        if smartaveragingLossParameter:
+            logs["smartaveragingLoss_train"] += np.asarray([smartaveragingLoss.mean().item()])
 
         if (step + 1) % loggingStep == 0:
             new_time = time.perf_counter()
@@ -150,7 +167,9 @@ def trainStep(dataLoader,
 
 def valStep(dataLoader,
             cpcModel,
-            cpcCriterion):
+            cpcCriterion,
+            smartaveragingLossParameter=None,
+            smartaveragingLossAverage=None):
 
     cpcCriterion.eval()
     cpcModel.eval()
@@ -168,16 +187,27 @@ def valStep(dataLoader,
         label = label.cuda(non_blocking=True)
 
         with torch.no_grad():
-            c_feature, encoded_data, label = cpcModel(batchData, label)
+            if smartaveragingLossParameter is not None:
+                c_feature, encoded_data, label, importance = cpcModel(batchData, label)
+            else:
+                c_feature, encoded_data, label = cpcModel(batchData, label)
             allLosses, allAcc, _ = cpcCriterion(c_feature, encoded_data, label, None)
+
+            if smartaveragingLossParameter is not None:
+                smartaveragingLoss = smartaveragingLossParameter * computeSmartaveragingLoss(importance, smartaveragingLossAverage)
 
         if "locLoss_val" not in logs:
             logs["locLoss_val"] = np.zeros(allLosses.size(1))
             logs["locAcc_val"] = np.zeros(allLosses.size(1))
 
+        if smartaveragingLossParameter and "smartaveragingLoss_val" not in logs:
+            logs["smartaveragingLoss_val"] = 0
+
         iter += 1
         logs["locLoss_val"] += allLosses.mean(dim=0).cpu().numpy()
         logs["locAcc_val"] += allAcc.mean(dim=0).cpu().numpy()
+        if smartaveragingLossParameter:
+            logs["smartaveragingLoss_val"] += np.asarray([smartaveragingLoss.mean().item()])
 
     logs = utils.update_logs(logs, iter)
     logs["iter"] = iter
@@ -191,7 +221,8 @@ def captureStep(
             cpcCriterion,
             captureOptions,
             captureStatsCollector,
-            epochNr):
+            epochNr,
+            smartaveragingLossParameter=None):
 
     cpcCriterion.eval()
     cpcModel.eval()
@@ -236,7 +267,10 @@ def captureStep(
 
         with torch.no_grad():
 
-            c_feature, encoded_data, labelSpeaker = cpcModel(batchData, labelSpeaker)
+            if smartaveragingLossParameter is not None:
+                c_feature, encoded_data, labelSpeaker, importance = cpcModel(batchData, labelSpeaker)
+            else:
+                c_feature, encoded_data, labelSpeaker = cpcModel(batchData, labelSpeaker)
             allLosses, allAcc, captured = cpcCriterion(c_feature, encoded_data, labelSpeaker, cpcCaptureOpts)
         
             # saving it with IDs like that assumes deterministic order of elements
@@ -253,6 +287,15 @@ def captureStep(
             if 'phone_align' in whatToSave:
                 # phone alignment data shape: batch_size x len
                 torch.save(labelData['phone'].cpu(), os.path.join(epochDir, 'phone_align', f'phone_align_batch{batchBegin}-{batchEnd}.pt'))
+            if 'smartpooling_importance' in whatToSave:
+                    importance = cpcModel.module.gEncoder.visualize(batchData)
+                    torch.save(importance.cpu(), os.path.join(epochDir, 'smartpooling_importance', f'smartpooling_importance_batch{batchBegin}-{batchEnd}.pt'))
+                    torch.save(batchData.cpu(), os.path.join(epochDir, 'smartpooling_importance', f'batchData_batch{batchBegin}-{batchEnd}.pt'))
+            if 'smartpooling_importance_ar' in whatToSave:
+                    importance = cpcModel.module.gAR.visualize(encoded_data)
+                    torch.save(importance.cpu(), os.path.join(epochDir, 'smartpooling_importance_ar', f'smartpooling_importance_ar_batch{batchBegin}-{batchEnd}.pt'))
+                    torch.save(batchData.cpu(), os.path.join(epochDir, 'smartpooling_importance_ar', f'batchData_batch{batchBegin}-{batchEnd}.pt'))
+
             for cpcCaptureThing in cpcCaptureOpts:
                 # pred shape (CPC-CTC): batch_size x (len - num_matched) x repr_dim x num_predicts (or num_predicts +1 if self loop allowed)
                 # cpcctc_align shape (CPC-CTC): batch_size x (len - num_matched) x num_matched
@@ -294,7 +337,10 @@ def run(trainDataset,
         pathCheckpoint,
         optimizer,
         scheduler,
-        logs):
+        logs,
+        smartpoolingInARUnfreezeEpoch=None,
+        smartaveragingLossParameter=None,
+        smartaveragingLossAverage=None):
 
     startEpoch = len(logs["epoch"])
     print(f"Running {nEpoch} epochs, now at {startEpoch}")
@@ -331,14 +377,17 @@ def run(trainDataset,
         print("Training dataset %d batches, Validation dataset %d batches, batch size %d" %
             (len(trainLoader), len(valLoader), batchSize))
 
-        locLogsTrain = trainStep(trainLoader, cpcModel, cpcCriterion,
-                                optimizer, scheduler, logs["logging_step"])
+        if smartpoolingInARUnfreezeEpoch is not None:
+            cpcModel.module.gAR.is_conv5_frozen = True if epoch < smartpoolingInARUnfreezeEpoch else False
 
-        locLogsVal = valStep(valLoader, cpcModel, cpcCriterion)
+        locLogsTrain = trainStep(trainLoader, cpcModel, cpcCriterion,
+                                optimizer, scheduler, logs["logging_step"], smartaveragingLossParameter=smartaveragingLossParameter, smartaveragingLossAverage=smartaveragingLossAverage)
+
+        locLogsVal = valStep(valLoader, cpcModel, cpcCriterion, smartaveragingLossParameter=smartaveragingLossParameter, smartaveragingLossAverage=smartaveragingLossAverage)
 
         if captureDataset is not None and epoch % captureEachEpochs == 0:
             print(f"Capturing data for epoch {epoch}")
-            captureStep(captureLoader, cpcModel, cpcCriterion, captureOptions, captureStatsCollector, epoch)
+            captureStep(captureLoader, cpcModel, cpcCriterion, captureOptions, captureStatsCollector, epoch, smartaveragingLossParameter=smartaveragingLossParameter)
 
         currentAccuracy = float(locLogsVal["locAcc_val"].mean())
         if currentAccuracy > bestAcc:
@@ -468,8 +517,10 @@ def main(args):
                                     args.capturePhoneAlign,
                                     args.capturePred,
                                     args.captureCPCCTCalign,
-                                    args.captureCPCCTClogScores], 
-                                    ['conv_repr', 'ctx_repr', 'speaker_align', 'phone_align', 'pred', 'cpcctc_align', 'cpcctc_log_scores']):
+                                    args.captureCPCCTClogScores,
+                                    args.captureSmartpoolingImportance and not args.smartpoolingInAR,
+                                    args.captureSmartpoolingImportance and args.smartpoolingInAR], 
+                                    ['conv_repr', 'ctx_repr', 'speaker_align', 'phone_align', 'pred', 'cpcctc_align', 'cpcctc_log_scores', 'smartpooling_importance', 'smartpooling_importance_ar']):
                 if argVal:
                     whatToSave.append(name)
         ###assert len(whatToSave) > 0
@@ -528,6 +579,12 @@ def main(args):
         if args.path_phone_data:
             print("Loading the phone labels at " + args.path_phone_data)
             phoneLabelsForCapture, _ = parseSeqLabels(args.path_phone_data)
+            if args.alternate_path_phone_data:
+                alternatePhoneLabelsForCapture, labelsToIdDict = parseSeqLabelsAlternate(args.alternate_path_phone_data, phoneLabelsForCapture)
+                phoneLabelsForCapture = alternatePhoneLabelsForCapture
+                if not os.path.exists(args.pathCaptureSave):
+                    os.makedirs(args.pathCaptureSave)
+                torch.save(labelsToIdDict, os.path.join(args.pathCaptureSave, "labelsToIdDict.pt"))
         else:
             assert not args.capturePhoneAlign
             phoneLabelsForCapture = None
@@ -582,7 +639,7 @@ def main(args):
         # AR Network
         arNet = fl.getAR(args)
 
-        cpcModel = model.CPCModel(encoderNet, arNet)
+        cpcModel = model.CPCModel(encoderNet, arNet, smartpoolingInAR=args.smartpoolingInAR, smartaveragingLossParameter=args.smartaveragingLossParameter is not None)
 
         CPChiddenGar, CPChiddenEncoder = cpcModel.gAR.getDimOutput(), cpcModel.gEncoder.getDimOutput()
 
@@ -800,7 +857,10 @@ def main(args):
             args.pathCheckpoint,
             optimizer,
             scheduler,
-            logs)
+            logs,
+            smartpoolingInARUnfreezeEpoch=args.smartpoolingInARUnfreezeEpoch,
+            smartaveragingLossParameter=args.smartaveragingLossParameter,
+            smartaveragingLossAverage=args.smartaveragingLossAverage)
     if args.onlyCapture:  
     # caution [!] - will capture for last checkpoint (last saved state) if checkpoint directory given
     #               to use specific checkpoint provide full checkpoint file path
@@ -886,6 +946,9 @@ def parseArgs(argv):
     group_supervised_data.add_argument('--path_phone_data', type=str, default=None,
                         help="Path to the phone labels. If given, with --supervised_classif_metric will be able "
                         'to learn phone classification, with capturing will be able to capture phone alignments')
+    group_supervised_data.add_argument('--alternate_path_phone_data', type=str, default=None,
+                        help="Path to the alternate phone labels. If given, with --supervised_classif_metric will be able "
+                        'to learn phone classification, with capturing will be able to capture phone alignments')
 
     group_supervised_metric = parser.add_argument_group(
         'Mode with computing additional supervised phoneme classification accuracy, withou influencing CPC training')
@@ -953,6 +1016,7 @@ def parseArgs(argv):
     group_save.add_argument('--captureCtxRepr', action='store_true', help='if to save LSTM-based contexts produced in CPC model')
     group_save.add_argument('--captureSpeakerAlign', action='store_true', help='if to save speaker alignments')
     group_save.add_argument('--capturePhoneAlign', action='store_true', help='if to save phone alignments')
+    group_save.add_argument('--captureSmartpoolingImportance', action='store_true', help='if to save importances produced by smart pooling')
     group_save.add_argument('--captureEverything', action='store_true', help='save everything valid in this config')
     # below ONLY for CPC-CTC
     group_save.add_argument('--capturePred', action='store_true', help='if to save CPC predictions')

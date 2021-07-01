@@ -2,6 +2,7 @@
 
 import logging
 import os
+from posixpath import join
 import sys
 import argparse
 from itertools import chain
@@ -29,20 +30,15 @@ def parse_args():
     # Run parameters
     parser = argparse.ArgumentParser()
     parser.add_argument("path_checkpoint", type=str,
-                        help="Path to the trained fairseq wav2vec2.0 model.")
+                        help="Path to the trained model checkpoint.")
     parser.add_argument("path_data", type=str,
                         help="Path to the dataset that we want to compute ABX for.")
     parser.add_argument("path_output_dir", type=str,
                         help="Path to the output directory.")
-    parser.add_argument("--debug", action="store_true",
-                        help="Load only a very small amount of files for "
-                        "debugging purposes.")
     parser.add_argument("--cpu", action="store_true",
                         help="Run on a cpu machine.")
     parser.add_argument("--file_extension", type=str, default="wav",
                           help="Extension of the audio files in the dataset (default: wav).")
-    parser.add_argument("--no_test", action="store_true",
-                        help="Don't compute embeddings for test-* parts of dataset")
     parser.add_argument('--gru_level', type=int, default=-1,
                         help='Hidden level of the LSTM autoregressive model to be taken'
                         '(default: -1, last layer).')
@@ -102,29 +98,20 @@ def main():
     print(model)
 
     # Extract values from chosen layers and save them to files
-    phonetic = "phonetic"
-    datasets_path = os.path.join(args.path_data, phonetic)
-    datasets = os.listdir(datasets_path)
-    datasets = [dataset for dataset in datasets if not args.no_test or not dataset.startswith("test")]
-    print(datasets)
+    filenames = [os.path.join(root, file) for root, dirs, files in os.walk(args.path_data) for file in files if file.endswith(args.file_extension)]
 
     with torch.no_grad():     
-        for dataset in datasets:
-            print("> {}".format(dataset))
-            dataset_path = os.path.join(datasets_path, dataset)
-            files = [f for f in os.listdir(dataset_path) if f.endswith(args.file_extension)]
-            for i, f in enumerate(files):
-                print("Progress {:2.1%}".format(i / len(files)), end="\r")
-                input_f = os.path.join(dataset_path, f)
-                x, sample_rate = sf.read(input_f)
-                x = torch.tensor(x).float().reshape(1,1,-1).to(device)
-                output = model(x, None)[0]
+        for i, f in enumerate(filenames):
+            print("Progress {:2.1%}".format(i / len(filenames)), end="\r")
+            input_f = os.path.join(args.path_data, f)
+            x, sample_rate = sf.read(input_f)
+            x = torch.tensor(x).float().reshape(1,1,-1).to(device)
+            output = model(x, None)[0]
 
-                for layer_name, value in layer_outputs.items():
-                    output_dir = os.path.join(args.path_output_dir, layer_name, phonetic, dataset)
-                    Path(output_dir).mkdir(parents=True, exist_ok=True)
-                    out_f = os.path.join(output_dir, os.path.splitext(f)[0] + ".txt")
-                    np.savetxt(out_f, value)
+            for layer_name, value in layer_outputs.items():
+                Path(args.path_output_dir).mkdir(parents=True, exist_ok=True)
+                out_f = os.path.join(args.path_output_dir, os.path.splitext(os.path.basename(f))[0] + ".npy")
+                np.save(out_f, value)
 
 if __name__ == "__main__":
     #import ptvsd

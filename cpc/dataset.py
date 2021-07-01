@@ -27,7 +27,8 @@ class AudioBatchData(Dataset):
                  phoneLabelsDict,
                  nSpeakers,
                  nProcessLoader=50,
-                 MAX_SIZE_LOADED=4000000000):
+                 MAX_SIZE_LOADED=4000000000,
+                 alternatePhoneLabelsDict=None):
         """
         Args:
             - path (string): path to the training dataset
@@ -427,6 +428,8 @@ def extractLength(couple):
     speaker, locPath = couple
     info = torchaudio.info(str(locPath))[0]
     return info.length
+    #info = torchaudio.info(str(locPath))
+    #return info.num_frames
 
 
 def findAllSeqs(dirName,
@@ -516,6 +519,50 @@ def parseSeqLabels(pathLabels):
         output[data[0]] = [int(x) for x in data[1:]]
         maxPhone = max(maxPhone, max(output[data[0]]))
     return output, maxPhone + 1
+
+def parseSeqLabelsAlternate(pathLabels, phoneLabels):
+    files = [(filename, dirname) for dirname, _, files in os.walk(pathLabels, followlinks=True) for filename in files if filename.endswith(".csv")]
+    
+    output = {"step": 160}  # Step in librispeech dataset is 160bits
+    phones = set()
+    maxPhone = 0
+    for filename, dirname in files:
+        with open(os.path.join(dirname, filename), 'r') as f:
+            filename = filename[:-len(".csv")]
+            if filename not in phoneLabels:
+                continue
+
+            output[filename] = []
+            lines = f.readlines()
+            for line in lines:
+                data = line.rstrip().split(",")
+                start_time = float(data[0])
+                end_time = float(data[1])
+                phone = data[2]
+                mode = data[3]
+                if mode == "words":
+                    continue
+                output[filename].append((start_time, end_time, phone))
+
+            phones.update([data[2] for data in output[filename]])
+
+    phones = {phone : counter for counter, phone in enumerate(sorted(phones))}
+
+    for filename in output:
+        if filename == "step":
+            continue
+
+        data = output[filename]
+        total_time = data[-1][1]
+        total_frames = len(phoneLabels[filename])
+        output[filename] = [-1] * total_frames
+
+        for start_time, end_time, phone in data:
+            start_frame = int(start_time / total_time * total_frames)
+            end_frame = int(end_time / total_time * total_frames)
+            output[filename][start_frame : end_frame] = [phones[phone]] * (end_frame - start_frame)
+ 
+    return output, phones
 
 
 def filterSeqs(pathTxt, seqCouples, percentage=None, totalNum=None):

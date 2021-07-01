@@ -269,7 +269,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
 
 class SpeakerCriterion(BaseCriterion):
 
-    def __init__(self, dimEncoder, nSpeakers, nLayers=1):
+    def __init__(self, dimEncoder, nSpeakers, nLayers=1, dimClassifier=None):
 
         super(SpeakerCriterion, self).__init__()
         # self.linearSpeakerClassifier = nn.Linear(
@@ -277,10 +277,14 @@ class SpeakerCriterion(BaseCriterion):
         if nLayers == 1:
             self.linearSpeakerClassifier = nn.Linear(dimEncoder, nSpeakers)
         else:
-            outLayers = [nn.Linear(dimEncoder, nSpeakers)]
-            for l in range(nLayers - 1):
+            if dimClassifier is None:
+                dimClassifier = nSpeakers
+            outLayers = [nn.Linear(dimEncoder, dimClassifier)]
+            for l in range(0, nLayers - 2):
                 outLayers.append(nn.ReLU())
-                outLayers.append(nn.Linear(nSpeakers, nSpeakers))
+                outLayers.append(nn.Linear(dimClassifier, dimClassifier))
+            outLayers.append(nn.ReLU())
+            outLayers.append(nn.Linear(dimClassifier, nSpeakers))
             self.linearSpeakerClassifier = nn.Sequential(*outLayers)
         self.lossCriterion = nn.CrossEntropyLoss()
         self.entropyCriterion = nn.LogSoftmax(dim=1)
@@ -325,16 +329,20 @@ class SpeakerDoubleCriterion(BaseCriterion):
 class PhoneCriterion(BaseCriterion):
 
     def __init__(self, dimEncoder, nPhones, onEncoder,
-                 nLayers=1):
+                 nLayers=1, dimClassifier=None):
 
         super(PhoneCriterion, self).__init__()
         if nLayers == 1:
             self.PhoneCriterionClassifier = nn.Linear(dimEncoder, nPhones)
         else:
-            outLayers = [nn.Linear(dimEncoder, nPhones)]
-            for l in range(nLayers - 1):
+            if dimClassifier is None:
+                dimClassifier = nPhones
+            outLayers = [nn.Linear(dimEncoder, dimClassifier)]
+            for l in range(nLayers - 2):
                 outLayers.append(nn.ReLU())
-                outLayers.append(nn.Linear(nPhones, nPhones))
+                outLayers.append(nn.Linear(dimClassifier, dimClassifier))
+            outLayers.append(nn.ReLU())
+            outLayers.append(nn.Linear(dimClassifier, nPhones))
             self.PhoneCriterionClassifier = nn.Sequential(*outLayers)
 
         self.lossCriterion = nn.CrossEntropyLoss()

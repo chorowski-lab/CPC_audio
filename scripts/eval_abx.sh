@@ -10,6 +10,7 @@ CHECKPOINT_PATH=false
 SAVE_DIR=false
 NULLSPACE=false
 NO_TEST=false
+FORCE_CPU=false
 
 print_usage() {
   echo -e "Usage: ./eval_abx.sh"
@@ -25,7 +26,7 @@ print_usage() {
   echo -e "\t-t (Do not compute embeddings for test set)"
 }
 
-while getopts 'd:r:c:o:na:e:z:t' flag; do
+while getopts 'd:r:c:o:na:e:z:tf' flag; do
     case "${flag}" in
         d) DATASET_PATH="${OPTARG}" ;;
         r) ZEROSPEECH_DATASET_PATH="${OPTARG}" ;;
@@ -36,6 +37,7 @@ while getopts 'd:r:c:o:na:e:z:t' flag; do
         e) CPC_ENVIRONMENT="${OPTARG}" ;;
         z) ZEROSPEECH_EVAL_ENVIRONMENT="${OPTARG}" ;;
         t) NO_TEST=true ;;
+        f) FORCE_CPU=true ;;
         *) print_usage
            exit 1 ;;
     esac
@@ -106,6 +108,7 @@ frame_shift="0.01"
 echo "Frame shift is ${frame_shift}s"
 
 metrics=("cosine" "euclidean")
+#metrics=("cosine")
 for metric in ${metrics[@]}
 do
     cat > $embeddings/$metric.yaml << EOF
@@ -128,8 +131,12 @@ EOF
         cp $embeddings/$metric.yaml $embeddings/$i/meta.yaml
         #zerospeech2021-evaluate -j 12 -o $results/$metric/$i --no-lexical --no-syntactic --no-semantic $DATASET_PATH $embeddings/$i
         #zerospeech2021-evaluate -j 12 -o $results/$metric/$i --force-cpu --no-lexical --no-syntactic --no-semantic $ZEROSPEECH_DATASET_PATH $embeddings/$i
-        #zerospeech2021-evaluate -j 20 -o $results/$metric/$i --force-cpu --no-lexical --no-syntactic --no-semantic $ZEROSPEECH_DATASET_PATH $embeddings/$i
-        zerospeech2021-evaluate -j 20 -o $results/$metric/$i --no-lexical --no-syntactic --no-semantic $ZEROSPEECH_DATASET_PATH $embeddings/$i
+        if [[ $FORCE_CPU == true ]]
+        then
+            zerospeech2021-evaluate -j 20 -o $results/$metric/$i --force-cpu --no-lexical --no-syntactic --no-semantic $ZEROSPEECH_DATASET_PATH $embeddings/$i
+        else
+            zerospeech2021-evaluate -j 20 -o $results/$metric/$i --no-lexical --no-syntactic --no-semantic $ZEROSPEECH_DATASET_PATH $embeddings/$i
+        fi
     done
 done
 
