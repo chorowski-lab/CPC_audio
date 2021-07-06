@@ -191,9 +191,10 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         self.loss_temp = loss_temp
         self.nMatched = nMatched
         self.no_negs_in_match_window = no_negs_in_match_window
-        self.wPrediction = PredictionNetwork(
-            nPredicts, dimOutputAR, dimOutputEncoder, rnnMode=rnnMode,
-            dropout=dropout, sizeInputSeq=sizeInputSeq - nMatched)
+        self.wPredictions = []
+        for l in range(numLevels):
+            self.wPredictions.append(PredictionNetwork(nPredicts, dimOutputAR, dimOutputEncoder, rnnMode=rnnMode, dropout=dropout, 
+                                                       sizeInputSeq=sizeInputSeq // (reductionFactor ** l) - nMatched))
         self.learn_blank = learn_blank
         if learn_blank:
             self.blank_proto = torch.nn.Parameter(torch.zeros(1, 1, dimOutputEncoder, 1))
@@ -293,7 +294,9 @@ class CPCUnsupersivedCriterion(BaseCriterion):
 
         # return outputs, labelLoss
 
-    def applyCPCHead(self, cFeature, encodedData, label, windowSize, batchSize):
+    def applyCPCHead(self, cFeature, encodedData, label, wPrediction):
+        batchSize = cFeature.size(0)
+        windowSize = cFeature.size(1)        
         # sampledData, labelLoss = self.sampleClean(encodedData, windowSize)
         # negatives: BS x Len x NumNegs x D
         sampledNegs = self.sampleClean(encodedData, windowSize).permute(0, 2, 1, 3)
@@ -304,7 +307,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
             cFeature = torch.cat([cFeature, embeddedSpeaker], dim=2)
 
         # Predictions, BS x Len x D x nPreds
-        predictions = self.wPrediction(cFeature)
+        predictions = wPrediction(cFeature)
         nPredicts = self.nPredicts
 
         extra_preds = []
@@ -390,7 +393,10 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         for l in range(self.numLevels):
             cFeature = cFeatures[l]
             if l > 0:
-                encodedData = encodedData[:, ::self.reductionFactor, :]
+                # Random pooling
+                encodedData = encodedData.view(encodedData.size(0), encodedData.size(1) // self.reductionFactor, self.reductionFactor)
+                pickedIdxs = torch.randint(encodedData.size(2), size=(encodedData.size(1),))
+                encodedData = encodedData[:, torch.arange(encodedData.size(1)), pickedIdxs, :]
             
             if self.mode == "reverse":
                 encodedData = torch.flip(encodedData, [1])
@@ -404,7 +410,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
             if self.normalize_enc:
                 encodedData = F.layer_norm(encodedData, (encodedData.size(-1),))
 
-            lossesAtLevel, outAccAtLevel, alignsAtLevel, predictionsAtLevel, logScoresAtLevel = self.applyCPCHead(cFeature, encodedData, label, windowSize, batchSize)
+            lossesAtLevel, outAccAtLevel, alignsAtLevel, predictionsAtLevel, logScoresAtLevel = self.applyCPCHead(cFeature, encodedData, label, self.wPredictions[l])
             losses.append(lossesAtLevel)
             outAcc.append(outAccAtLevel)
             aligns.append(alignsAtLevel.detach().view(batchSize, windowSize, self.nMatched))

@@ -165,7 +165,7 @@ def getAR(args):
                       args.samplingType == "sequential",
                       args.nLevelsGRU,
                       mode=args.arMode,
-                      reverse=args.cpc_mode == "reverse")
+                      reverse=args.cpc_mode == "reverse", numLevels=args.CPCCTCNumLevels, reductionFactor=args.CPCCTCReductionFactor)
     return arNet
 
 

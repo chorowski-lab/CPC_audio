@@ -189,6 +189,7 @@ class CPCAR(nn.Module):
         return self.baseNet.hidden_size
 
     def forward(self, x):
+        assert x.size(1) % self.reductionFactor == 0
 
         if self.reverse:
             x = torch.flip(x, [1])
@@ -207,13 +208,17 @@ class CPCAR(nn.Module):
         hs.append(h)
 
         for l in range(1, self.numLevels):
-            x = x[:, ::self.reductionFactor, :]
+            # Random pooling
+            x = x.view(x.size(0), x.size(1) // self.reductionFactor, self.reductionFactor)
+            pickedIdxs = torch.randint(x.size(2), size=(x.size(1),))
+            x = x[:, torch.arange(x.size(1)), pickedIdxs, :]
+            
             o, h = self.heads[l](x, self.hidden[l])
             outs.append(o)
             hs.append(h)
 
         if self.keepHidden:
-            for l in range(1, self.numLevels):
+            for l in range(self.numLevels):
                 if isinstance(hs[l], tuple):
                     self.hidden[l] = tuple(x.detach() for x in hs[l])
                 else:
@@ -222,7 +227,7 @@ class CPCAR(nn.Module):
         # For better modularity, a sequence's order should be preserved
         # by each module
         if self.reverse:
-            for l in range(1, self.numLevels):
+            for l in range(self.numLevels):
                 outs[l] = torch.flip(outs[l], [1])
         return outs
 

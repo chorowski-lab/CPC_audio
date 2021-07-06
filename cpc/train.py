@@ -53,7 +53,9 @@ def getCriterion(args, downsampling, nSpeakers, nPhones):
                                                         dropout=args.dropout,
                                                         nSpeakers=nSpeakers,
                                                         speakerEmbedding=args.speakerEmbedding,
-                                                        sizeInputSeq=sizeInputSeq)
+                                                        sizeInputSeq=sizeInputSeq,
+                                                        numLevels=args.CPCCTCNumLevels,
+                                                        reductionFactor=args.CPCCTCReductionFactor)
 
             else:
                 cpcCriterion = cr.CPCUnsupersivedCriterion(args.nPredicts,
@@ -111,7 +113,7 @@ def trainStep(dataLoader,
         label = label.cuda(non_blocking=True)
         c_feature, encoded_data, label = cpcModel(batchData, label)
         allLosses, allAcc, _ = cpcCriterion(c_feature, encoded_data, label, None)
-        totLoss = allLosses.sum()
+        totLoss = torch.sum(torch.stack(allLosses))
 
         totLoss.backward()
 
@@ -119,25 +121,26 @@ def trainStep(dataLoader,
         optimizer.step()
         optimizer.zero_grad()
 
-        if "locLoss_train" not in logs:
-            logs["locLoss_train"] = np.zeros(allLosses.size(1))
-            logs["locAcc_train"] = np.zeros(allLosses.size(1))
+        for headId in range(len(allLosses)):   
+            if f"locLoss_train_head{headId}" not in logs:
+                logs[f"locLoss_train_head{headId}"] = np.zeros(allLosses[headId].size(1))
+                logs[f"locAcc_train_head{headId}"] = np.zeros(allLosses[headId].size(1))
 
-        iter += 1
-        logs["locLoss_train"] += (allLosses.mean(dim=0)).detach().cpu().numpy()
-        logs["locAcc_train"] += (allAcc.mean(dim=0)).cpu().numpy()
+            iter += 1
+            logs[f"locLoss_train_head{headId}"] += (allLosses[headId].mean(dim=0)).detach().cpu().numpy()
+            logs[f"locAcc_train_head{headId}"] += (allAcc[headId].mean(dim=0)).cpu().numpy()
 
-        if (step + 1) % loggingStep == 0:
-            new_time = time.perf_counter()
-            elapsed = new_time - start_time
-            print(f"Update {step + 1}")
-            print(f"elapsed: {elapsed:.1f} s")
-            print(
-                f"{1000.0 * elapsed / loggingStep:.1f} ms per batch, {1000.0 * elapsed / n_examples:.1f} ms / example")
-            locLogs = utils.update_logs(logs, loggingStep, lastlogs)
-            lastlogs = deepcopy(logs)
-            utils.show_logs("Training loss", locLogs)
-            start_time, n_examples = new_time, 0
+            if (step + 1) % loggingStep == 0:
+                new_time = time.perf_counter()
+                elapsed = new_time - start_time
+                print(f"Update {step + 1}")
+                print(f"elapsed: {elapsed:.1f} s")
+                print(
+                    f"{1000.0 * elapsed / loggingStep:.1f} ms per batch, {1000.0 * elapsed / n_examples:.1f} ms / example")
+                locLogs = utils.update_logs(logs, loggingStep, lastlogs)
+                lastlogs = deepcopy(logs)
+                utils.show_logs(f"Training loss for head {headId}", locLogs)
+                start_time, n_examples = new_time, 0
 
     if scheduler is not None:
         scheduler.step()
@@ -171,13 +174,14 @@ def valStep(dataLoader,
             c_feature, encoded_data, label = cpcModel(batchData, label)
             allLosses, allAcc, _ = cpcCriterion(c_feature, encoded_data, label, None)
 
-        if "locLoss_val" not in logs:
-            logs["locLoss_val"] = np.zeros(allLosses.size(1))
-            logs["locAcc_val"] = np.zeros(allLosses.size(1))
+        for headId in range(len(allLosses)):
+            if f"locLoss_val_head{headId}" not in logs:
+                logs[f"locLoss_val_head{headId}"] = np.zeros(allLosses[headId].size(1))
+                logs[f"locAcc_val_head{headId}"] = np.zeros(allLosses[headId].size(1))
 
-        iter += 1
-        logs["locLoss_val"] += allLosses.mean(dim=0).cpu().numpy()
-        logs["locAcc_val"] += allAcc.mean(dim=0).cpu().numpy()
+            iter += 1
+            logs[f"locLoss_val_head{headId}"] += allLosses[headId].mean(dim=0).cpu().numpy()
+            logs[f"locAcc_val_head{headId}"] += allAcc[headId].mean(dim=0).cpu().numpy()
 
     logs = utils.update_logs(logs, iter)
     logs["iter"] = iter
@@ -430,6 +434,8 @@ def main(args):
 
     print(f'CONFIG:\n{json.dumps(vars(args), indent=4, sort_keys=True)}')
     print('-' * 50)
+
+    assert False
 
     seqNames, speakers = findAllSeqs(args.pathDB,
                                      extension=args.file_extension,
