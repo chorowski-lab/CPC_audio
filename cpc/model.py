@@ -160,24 +160,30 @@ class CPCAR(nn.Module):
                  keepHidden,
                  nLevelsGRU,
                  mode="GRU",
-                 reverse=False):
+                 reverse=False,
+                 reductionFactor=2,
+                 numLevels=2):
 
         super(CPCAR, self).__init__()
         self.RESIDUAL_STD = 0.1
 
-        if mode == "LSTM":
-            self.baseNet = nn.LSTM(dimEncoded, dimOutput,
-                                   num_layers=nLevelsGRU, batch_first=True)
-        elif mode == "RNN":
-            self.baseNet = nn.RNN(dimEncoded, dimOutput,
-                                  num_layers=nLevelsGRU, batch_first=True)
-        else:
-            self.baseNet = nn.GRU(dimEncoded, dimOutput,
-                                  num_layers=nLevelsGRU, batch_first=True)
+        self.heads = []
 
-        self.hidden = None
+        if mode == "LSTM":
+            baseNet = nn.LSTM
+        elif mode == "RNN":
+            baseNet = nn.RNN
+        else:
+            baseNet = nn.GRU
+        
+        for _ in range(numLevels):
+                self.heads.append(baseNet(dimEncoded, dimOutput, num_layers=nLevelsGRU, batch_first=True))
+
+        self.hidden = [None] * numLevels
         self.keepHidden = keepHidden
         self.reverse = reverse
+        self.reductionFactor = reductionFactor
+        self.numLevels = numLevels
 
     def getDimOutput(self):
         return self.baseNet.hidden_size
@@ -187,21 +193,38 @@ class CPCAR(nn.Module):
         if self.reverse:
             x = torch.flip(x, [1])
         try:
-            self.baseNet.flatten_parameters()
+            for head in self.heads:
+                head.flatten_parameters()
         except RuntimeError:
             pass
-        x, h = self.baseNet(x, self.hidden)
+        
+        outs = []
+        hs = []
+
+        o, h = self.heads[0](x, self.hidden[0])
+        
+        outs.append(o)
+        hs.append(h)
+
+        for l in range(1, self.numLevels):
+            x = x[:, ::self.reductionFactor, :]
+            o, h = self.heads[l](x, self.hidden[l])
+            outs.append(o)
+            hs.append(h)
+
         if self.keepHidden:
-            if isinstance(h, tuple):
-                self.hidden = tuple(x.detach() for x in h)
-            else:
-                self.hidden = h.detach()
+            for l in range(1, self.numLevels):
+                if isinstance(hs[l], tuple):
+                    self.hidden[l] = tuple(x.detach() for x in hs[l])
+                else:
+                    self.hidden[l] = hs[l].detach()
 
         # For better modularity, a sequence's order should be preserved
         # by each module
         if self.reverse:
-            x = torch.flip(x, [1])
-        return x
+            for l in range(1, self.numLevels):
+                outs[l] = torch.flip(outs[l], [1])
+        return outs
 
 
 class NoAr(nn.Module):

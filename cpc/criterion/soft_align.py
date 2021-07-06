@@ -171,7 +171,9 @@ class CPCUnsupersivedCriterion(BaseCriterion):
                  dropout=False,
                  speakerEmbedding=0,
                  nSpeakers=0,
-                 sizeInputSeq=128):
+                 sizeInputSeq=128,
+                 reductionFactor=2,
+                 numLevels=2):
 
         print ("!!!!!!!!!USING CPCCTC!!!!!!!!!!!!")
 
@@ -222,6 +224,8 @@ class CPCUnsupersivedCriterion(BaseCriterion):
             raise ValueError("Invalid mode")
 
         self.mode = mode
+        self.reductionFactor = reductionFactor
+        self.numLevels = numLevels
 
     def sampleClean(self, encodedData, windowSize):
 
@@ -289,21 +293,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
 
         # return outputs, labelLoss
 
-    def forward(self, cFeature, encodedData, label, captureOptions=None):
-
-
-        if self.mode == "reverse":
-            encodedData = torch.flip(encodedData, [1])
-            cFeature = torch.flip(cFeature, [1])
-
-        batchSize, seqSize, dimAR = cFeature.size()
-        windowSize = seqSize - self.nMatched
-
-        cFeature = cFeature[:, :windowSize]
-
-        if self.normalize_enc:
-            encodedData = F.layer_norm(encodedData, (encodedData.size(-1),))
-
+    def applyCPCHead(self, cFeature, encodedData, label, windowSize, batchSize):
         # sampledData, labelLoss = self.sampleClean(encodedData, windowSize)
         # negatives: BS x Len x NumNegs x D
         sampledNegs = self.sampleClean(encodedData, windowSize).permute(0, 2, 1, 3)
@@ -387,6 +377,40 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         outLossesD = outLosses.detach()
         losses = losses.mean() / outLossesD.sum() * outLossesD
 
+        return losses, outAcc, aligns, predictions, log_scores
+        
+    def forward(self, cFeatures, encodedData, label, captureOptions=None):
+
+        losses = []
+        outAcc = []
+        aligns = []
+        predictions = []
+        logScores = []
+
+        for l in range(self.numLevels):
+            cFeature = cFeatures[l]
+            if l > 0:
+                encodedData = encodedData[:, ::self.reductionFactor, :]
+            
+            if self.mode == "reverse":
+                encodedData = torch.flip(encodedData, [1])
+                cFeature = torch.flip(cFeature, [1])
+
+            batchSize, seqSize, dimAR = cFeature.size()
+            windowSize = seqSize - self.nMatched
+
+            cFeature = cFeature[:, :windowSize]
+
+            if self.normalize_enc:
+                encodedData = F.layer_norm(encodedData, (encodedData.size(-1),))
+
+            lossesAtLevel, outAccAtLevel, alignsAtLevel, predictionsAtLevel, logScoresAtLevel = self.applyCPCHead(cFeature, encodedData, label, windowSize, batchSize)
+            losses.append(lossesAtLevel)
+            outAcc.append(outAccAtLevel)
+            aligns.append(alignsAtLevel.detach().view(batchSize, windowSize, self.nMatched))
+            predictions.append(predictionsAtLevel)
+            logScores.append(logScoresAtLevel.detach().view(batchSize, windowSize, self.nMatched, -1))
+
         captureRes = None
         if captureOptions != None:
             for o in captureOptions:
@@ -396,14 +420,10 @@ class CPCUnsupersivedCriterion(BaseCriterion):
                 # 1st sting in last dim can be self loop - need to keep as it's also being aligned
                 captureRes['pred'] = predictions
             if 'cpcctc_align' in captureOptions:
-                readableAligns = aligns.detach().view(batchSize, windowSize, self.nMatched)
-                captureRes['cpcctc_align'] = readableAligns
+                captureRes['cpcctc_align'] = aligns
             if 'cpcctc_log_scores' in captureOptions:
-                captureRes['cpcctc_log_scores'] = log_scores.detach().view(batchSize, windowSize, self.nMatched, -1)
+                captureRes['cpcctc_log_scores'] = logScores
             if 'locals' in captureOptions:
                 captureRes['locals'] = locals()
 
         return losses, outAcc, captureRes
-
-
-
