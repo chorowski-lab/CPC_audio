@@ -427,8 +427,8 @@ def extractLength(couple):
     speaker, locPath = couple
     info = torchaudio.info(str(locPath))
     # info = torchaudio.info(str(locPath)) [0]
-    return info.length
-    # return info.num_frames
+    # return info.length
+    return info.num_frames
 
 
 def findAllSeqs(dirName,

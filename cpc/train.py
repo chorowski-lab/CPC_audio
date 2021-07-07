@@ -126,9 +126,9 @@ def trainStep(dataLoader,
                 logs[f"locLoss_train_head{headId}"] = np.zeros(allLosses[headId].size(1))
                 logs[f"locAcc_train_head{headId}"] = np.zeros(allLosses[headId].size(1))
 
-            iter += 1
             logs[f"locLoss_train_head{headId}"] += (allLosses[headId].mean(dim=0)).detach().cpu().numpy()
             logs[f"locAcc_train_head{headId}"] += (allAcc[headId].mean(dim=0)).cpu().numpy()
+        iter += 1
 
         if (step + 1) % loggingStep == 0:
             new_time = time.perf_counter()
@@ -179,9 +179,9 @@ def valStep(dataLoader,
                 logs[f"locLoss_val_head{headId}"] = np.zeros(allLosses[headId].size(1))
                 logs[f"locAcc_val_head{headId}"] = np.zeros(allLosses[headId].size(1))
 
-            iter += 1
             logs[f"locLoss_val_head{headId}"] += allLosses[headId].mean(dim=0).cpu().numpy()
             logs[f"locAcc_val_head{headId}"] += allAcc[headId].mean(dim=0).cpu().numpy()
+        iter += 1
 
     logs = utils.update_logs(logs, iter)
     logs["iter"] = iter
@@ -344,7 +344,7 @@ def run(trainDataset,
             print(f"Capturing data for epoch {epoch}")
             captureStep(captureLoader, cpcModel, cpcCriterion, captureOptions, captureStatsCollector, epoch)
 
-        currentAccuracy = float(locLogsVal["locAcc_val"].mean())
+        currentAccuracy = (float(locLogsVal["locAcc_val_head0"].mean()) + float(locLogsVal["locAcc_val_head1"].mean())) / 2
         if currentAccuracy > bestAcc:
             bestStateDict = deepcopy(fl.get_module(cpcModel).state_dict())  
 

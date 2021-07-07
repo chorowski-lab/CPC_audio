@@ -45,7 +45,7 @@ exec python -u cpc/train.py \
 --CPCCTCNumMatched 12 \
 --limitNegsInBatch 8 \
 --nEpoch 50 \
---nGPU 1 \
+--nGPU 2 \
 --nLevelsGRU 2 \
 --schedulerRamp 10 \
     "$@" 2>&1 | tee -ai ${SAVE_DIR}/out.txt
