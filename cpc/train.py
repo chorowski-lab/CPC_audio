@@ -130,17 +130,17 @@ def trainStep(dataLoader,
             logs[f"locLoss_train_head{headId}"] += (allLosses[headId].mean(dim=0)).detach().cpu().numpy()
             logs[f"locAcc_train_head{headId}"] += (allAcc[headId].mean(dim=0)).cpu().numpy()
 
-            if (step + 1) % loggingStep == 0:
-                new_time = time.perf_counter()
-                elapsed = new_time - start_time
-                print(f"Update {step + 1}")
-                print(f"elapsed: {elapsed:.1f} s")
-                print(
-                    f"{1000.0 * elapsed / loggingStep:.1f} ms per batch, {1000.0 * elapsed / n_examples:.1f} ms / example")
-                locLogs = utils.update_logs(logs, loggingStep, lastlogs)
-                lastlogs = deepcopy(logs)
-                utils.show_logs(f"Training loss for head {headId}", locLogs)
-                start_time, n_examples = new_time, 0
+        if (step + 1) % loggingStep == 0:
+            new_time = time.perf_counter()
+            elapsed = new_time - start_time
+            print(f"Update {step + 1}")
+            print(f"elapsed: {elapsed:.1f} s")
+            print(
+                f"{1000.0 * elapsed / loggingStep:.1f} ms per batch, {1000.0 * elapsed / n_examples:.1f} ms / example")
+            locLogs = utils.update_logs(logs, loggingStep, lastlogs)
+            lastlogs = deepcopy(logs)
+            utils.show_logs("Training loss", locLogs)
+            start_time, n_examples = new_time, 0
 
     if scheduler is not None:
         scheduler.step()
@@ -434,8 +434,6 @@ def main(args):
 
     print(f'CONFIG:\n{json.dumps(vars(args), indent=4, sort_keys=True)}')
     print('-' * 50)
-
-    assert False
 
     seqNames, speakers = findAllSeqs(args.pathDB,
                                      extension=args.file_extension,

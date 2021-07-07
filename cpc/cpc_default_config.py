@@ -37,6 +37,9 @@ def set_default_cpc_config(parser):
     group.add_argument('--limitNegsInBatch', type=int, default=0,
                        help='Limit the number of different seqs from whithc neg samples are taken.')
 
+    group.add_argument('--CPCCTCNumLevels', type=int, default=2)
+    group.add_argument('--CPCCTCReductionFactor', type=int, default=4)
+
     
     group.add_argument('--negativeSamplingExt', type=int, default=128,
                        help='Number of negative samples to take.')

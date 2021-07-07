@@ -167,7 +167,7 @@ class CPCAR(nn.Module):
         super(CPCAR, self).__init__()
         self.RESIDUAL_STD = 0.1
 
-        self.heads = []
+        self.heads = nn.ModuleList()
 
         if mode == "LSTM":
             baseNet = nn.LSTM
@@ -186,7 +186,7 @@ class CPCAR(nn.Module):
         self.numLevels = numLevels
 
     def getDimOutput(self):
-        return self.baseNet.hidden_size
+        return self.heads[0].hidden_size
 
     def forward(self, x):
         assert x.size(1) % self.reductionFactor == 0
@@ -209,7 +209,7 @@ class CPCAR(nn.Module):
 
         for l in range(1, self.numLevels):
             # Random pooling
-            x = x.view(x.size(0), x.size(1) // self.reductionFactor, self.reductionFactor)
+            x = x.view(x.size(0), x.size(1) // self.reductionFactor, self.reductionFactor, x.size(2))
             pickedIdxs = torch.randint(x.size(2), size=(x.size(1),))
             x = x[:, torch.arange(x.size(1)), pickedIdxs, :]
             

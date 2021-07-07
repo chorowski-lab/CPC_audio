@@ -191,7 +191,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         self.loss_temp = loss_temp
         self.nMatched = nMatched
         self.no_negs_in_match_window = no_negs_in_match_window
-        self.wPredictions = []
+        self.wPredictions = nn.ModuleList()
         for l in range(numLevels):
             self.wPredictions.append(PredictionNetwork(nPredicts, dimOutputAR, dimOutputEncoder, rnnMode=rnnMode, dropout=dropout, 
                                                        sizeInputSeq=sizeInputSeq // (reductionFactor ** l) - nMatched))
@@ -394,7 +394,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
             cFeature = cFeatures[l]
             if l > 0:
                 # Random pooling
-                encodedData = encodedData.view(encodedData.size(0), encodedData.size(1) // self.reductionFactor, self.reductionFactor)
+                encodedData = encodedData.view(encodedData.size(0), encodedData.size(1) // self.reductionFactor, self.reductionFactor, encodedData.size(2))
                 pickedIdxs = torch.randint(encodedData.size(2), size=(encodedData.size(1),))
                 encodedData = encodedData[:, torch.arange(encodedData.size(1)), pickedIdxs, :]
             
