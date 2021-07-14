@@ -1,3 +1,7 @@
 __pycache__
 *.pyc
 .idea
+*-info
+cpc/eval/ABX/*so
+cpc/eval/ABX/*.c
+build/

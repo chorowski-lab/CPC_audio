@@ -156,6 +156,8 @@ class CPCUnsupersivedCriterion(BaseCriterion):
                  dimOutputAR,           # Dimension of G_ar
                  dimOutputEncoder,      # Dimension of the convolutional net
                  negativeSamplingExt,   # Number of negative samples to draw
+                 reductionFactor,       # Subsampling factor at each CPC head
+                 numLevels,             # Number of CPC heads
                  allowed_skips_beg=0,     # number of predictions that we can skip at the beginning
                  allowed_skips_end=0,     # number of predictions that we can skip at the end
                  predict_self_loop=False, # always predict a repetition of the first symbol
@@ -171,9 +173,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
                  dropout=False,
                  speakerEmbedding=0,
                  nSpeakers=0,
-                 sizeInputSeq=128,
-                 reductionFactor=2,
-                 numLevels=2):
+                 sizeInputSeq=128):
 
         print ("!!!!!!!!!USING CPCCTC!!!!!!!!!!!!")
 
@@ -189,18 +189,22 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         self.normalize_enc = normalize_enc
         self.normalize_preds = normalize_preds
         self.loss_temp = loss_temp
-        self.nMatched = nMatched
+        self.nMatched = [nMatched]
         self.no_negs_in_match_window = no_negs_in_match_window
         self.wPredictions = nn.ModuleList()
-        for l in range(numLevels):
-            self.wPredictions.append(PredictionNetwork(nPredicts, dimOutputAR, dimOutputEncoder, rnnMode=rnnMode, dropout=dropout, 
+        self.wPredictions.append(PredictionNetwork(nPredicts, dimOutputAR, dimOutputEncoder, rnnMode=rnnMode, dropout=dropout, 
+                                                   sizeInputSeq=sizeInputSeq - nMatched))
+        for l in range(1, numLevels):
+            nMatched = max(1, int(round(2* nMatched / reductionFactor)))
+            self.wPredictions.append(PredictionNetwork(nMatched, dimOutputAR, dimOutputEncoder, rnnMode=rnnMode, dropout=dropout, 
                                                        sizeInputSeq=sizeInputSeq // (reductionFactor ** l) - nMatched))
+            self.nMatched.append(nMatched)
         self.learn_blank = learn_blank
         if learn_blank:
             self.blank_proto = torch.nn.Parameter(torch.zeros(1, 1, dimOutputEncoder, 1))
         else:
             self.register_parameter('blank_proto', None)
-        self.nPredicts = nPredicts
+        # self.nPredicts = nPredicts
         self.negativeSamplingExt = negativeSamplingExt
         self.allowed_skips_beg = allowed_skips_beg
         self.allowed_skips_end = allowed_skips_end
@@ -212,6 +216,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         self.limit_negs_in_batch = limit_negs_in_batch
 
         if masq_rules:
+            raise NotImplementedError
             masq_buffer = torch.zeros(self.nMatched, self.nPredicts)
             for rule in masq_rules.split(','):
                 a,b,c,d = [int(a) if a.lower() != "none" else None for a in rule.split(':')]
@@ -228,7 +233,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         self.reductionFactor = reductionFactor
         self.numLevels = numLevels
 
-    def sampleClean(self, encodedData, windowSize):
+    def sampleClean(self, encodedData, windowSize, level):
 
         batchSize, nNegativeExt, dimEncoded = encodedData.size()
         outputs = []
@@ -254,7 +259,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         batchIdx = batchIdx.contiguous().view(-1)
 
         if self.no_negs_in_match_window:
-            idx_low = self.nMatched  # forbid sampling negatives in the prediction window
+            idx_low = self.nMatched[level]  # forbid sampling negatives in the prediction window
         else:
             idx_low = 1  # just forbid sampling own index for negative
         seqIdx = torch.randint(low=idx_low, high=nNegativeExt,
@@ -294,12 +299,12 @@ class CPCUnsupersivedCriterion(BaseCriterion):
 
         # return outputs, labelLoss
 
-    def applyCPCHead(self, cFeature, encodedData, label, wPrediction):
+    def applyCPCHead(self, cFeature, encodedData, label, level):
         batchSize = cFeature.size(0)
         windowSize = cFeature.size(1)        
         # sampledData, labelLoss = self.sampleClean(encodedData, windowSize)
         # negatives: BS x Len x NumNegs x D
-        sampledNegs = self.sampleClean(encodedData, windowSize).permute(0, 2, 1, 3)
+        sampledNegs = self.sampleClean(encodedData, windowSize, level).permute(0, 2, 1, 3)
 
         if self.speakerEmb is not None:
             l_ = label.view(batchSize, 1).expand(batchSize, windowSize)
@@ -307,8 +312,8 @@ class CPCUnsupersivedCriterion(BaseCriterion):
             cFeature = torch.cat([cFeature, embeddedSpeaker], dim=2)
 
         # Predictions, BS x Len x D x nPreds
-        predictions = wPrediction(cFeature)
-        nPredicts = self.nPredicts
+        predictions = self.wPredictions[level](cFeature)
+        nPredicts = len(self.wPredictions[level].predictors)
 
         extra_preds = []
 
@@ -337,7 +342,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         # predictions = torch.cat(predictions, 1)
 
         # Positive examples in the window, BS x Len x W x D
-        positives = encodedData[:,1:].unfold(1, self.nMatched, 1).permute(0,1,3,2)
+        positives = encodedData[:,1:].unfold(1, self.nMatched[level], 1).permute(0,1,3,2)
         # gt_and_neg = torch.cat((pred_windows, sampledData.permute(0, 2, 3, 1)), 3)
 
         # BS x L x NumNegs x NumPreds
@@ -360,7 +365,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
                          neg_log_tot_scores.expand_as(pos_log_scores)), 0), 
             dim=0)[0]
         
-        log_scores = log_scores.view(batchSize*windowSize, self.nMatched, nPredicts)
+        log_scores = log_scores.view(batchSize*windowSize, self.nMatched[level], nPredicts)
         # print('ls-stats', log_scores.mean().item(), log_scores.std().item())
         if self.masq_buffer is not None:
             masq_buffer = self.masq_buffer
@@ -370,7 +375,7 @@ class CPCUnsupersivedCriterion(BaseCriterion):
         losses, aligns = soft_align(log_scores / self.loss_temp, self.allowed_skips_beg, self.allowed_skips_end, not self.learn_blank)
         losses = losses * self.loss_temp
 
-        pos_is_selected = (pos_log_scores > neg_log_scores.max(2, keepdim=True)[0]).view(batchSize*windowSize, self.nMatched, nPredicts)
+        pos_is_selected = (pos_log_scores > neg_log_scores.max(2, keepdim=True)[0]).view(batchSize*windowSize, self.nMatched[level], nPredicts)
 
         # This is approximate Viterbi alignment loss and accurracy
         outLosses = -torch.gather(log_scores, 2, aligns.unsqueeze(-1)).squeeze(-1).float().mean(0, keepdim=True)
@@ -403,19 +408,19 @@ class CPCUnsupersivedCriterion(BaseCriterion):
                 cFeature = torch.flip(cFeature, [1])
 
             batchSize, seqSize, dimAR = cFeature.size()
-            windowSize = seqSize - self.nMatched
+            windowSize = seqSize - self.nMatched[l]
 
             cFeature = cFeature[:, :windowSize]
 
             if self.normalize_enc:
                 encodedData = F.layer_norm(encodedData, (encodedData.size(-1),))
 
-            lossesAtLevel, outAccAtLevel, alignsAtLevel, predictionsAtLevel, logScoresAtLevel = self.applyCPCHead(cFeature, encodedData, label, self.wPredictions[l])
+            lossesAtLevel, outAccAtLevel, alignsAtLevel, predictionsAtLevel, logScoresAtLevel = self.applyCPCHead(cFeature, encodedData, label, level=l)
             losses.append(lossesAtLevel)
             outAcc.append(outAccAtLevel)
-            aligns.append(alignsAtLevel.detach().view(batchSize, windowSize, self.nMatched))
+            aligns.append(alignsAtLevel.detach().view(batchSize, windowSize, self.nMatched[l]))
             predictions.append(predictionsAtLevel)
-            logScores.append(logScoresAtLevel.detach().view(batchSize, windowSize, self.nMatched, -1))
+            logScores.append(logScoresAtLevel.detach().view(batchSize, windowSize, self.nMatched[l], -1))
 
         captureRes = None
         if captureOptions != None:

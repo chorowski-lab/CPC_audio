@@ -147,6 +147,9 @@ def parse_args(argv):
     parser_checkpoint.add_argument('--get_encoded', action='store_true',
                                    help='If activated, compute the ABX score '
                                    'using the output of the encoder network.')
+    parser_checkpoint.add_argument('--cpcLevel', default=0, type=int,
+                                   help='Index of the CPC head at to which extract features. ' 
+                                   'Ignored if get_encoded is True.')
 
     parser_db = subparsers.add_parser('from_pre_computed')
     update_base_parser(parser_db)
@@ -169,7 +172,7 @@ def main(argv):
         model = loadModel([args.path_checkpoint])[0]
         model.gAR.keepHidden = True
         # Feature maker
-        feature_maker = FeatureModule(model, args.get_encoded).cuda().eval()
+        feature_maker = FeatureModule(model, args.get_encoded, args.cpcLevel).cuda().eval()
 
         def feature_function(x): return buildFeature(feature_maker, x,
                                                      seqNorm=args.seq_norm,

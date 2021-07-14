@@ -14,6 +14,23 @@ python -u cpc/train.py \
 --CPCCTCNumMatched 12 \
 --limitNegsInBatch 8 \
 --nEpoch 50 \
---nGPU 1 \
+--nGPU 2 \
 --nLevelsGRU 2 \
 --schedulerRamp 10 \
+
+bash lineval_ls100.sh /pio/scratch/2/i323106/wav2vec/runs/cpc/acpc-hierarchical-uniformpooling4_2/checkpoint_49.pt
+bash lineval_ls100.sh /pio/scratch/2/i323106/wav2vec/runs/cpc/acpc-hierarchical-uniformpooling4_2/checkpoint_49.pt --get_encoded
+
+python cpc/eval/ABX.py from_checkpoint /pio/scratch/2/i323106/wav2vec/runs/cpc/acpc-hierarchical-uniformpooling4_2/checkpoint_49.pt /pio/data/zerospeech2021/dataset/phonetic/dev-clean/dev-clean.item /pio/data/zerospeech2021/LibriSpeech-wav/dev-clean/ --seq_norm --strict --file_extension .wav --out /pio/scratch/2/i323106/wav2vec/runs/cpc/acpc-hierarchical-uniformpooling4_2/abx_exp/
+
+bash train_ls100.sh --pathCheckpoint /pio/scratch/2/i323106/wav2vec/runs/cpc/acpc-hierarchical-uniformpooling8 --CPCCTCReductionFactor 8 (NOT FINISHED)
+
+python /pio/scratch/2/i323106/CPC_audio/cpc/criterion/clustering/clustering_script.py \
+    --pathDB /pio/data/zerospeech2021/LibriSpeech-wav/train-clean-100/ --recursionLevel 1 \
+    --nClusters 50 --MAX_ITER 150 --level_gru 2 \
+    --save --load --batchSizeGPU 300 \
+    /pio/scratch/2/i323106/wav2vec/runs/cpc/acpc-hierarchical-uniformpooling4_2/checkpoint_49.pt \
+    /pio/scratch/2/i323106/wav2vec/runs/cpc/acpc-hierarchical-uniformpooling4_2/kmeans/unipool4_2_kmeans50.pt
+
+bash train_ls100.sh --pathCheckpoint /pio/scratch/2/i323106/wav2vec/runs/cpc/acpc-hierarchical-uniformpooling16 --CPCCTCReductionFactor 16
+bash train_ls100.sh --pathCheckpoint /pio/scratch/2/i323106/wav2vec/runs/cpc/acpc-hierarchical-uniformpooling32 --CPCCTCReductionFactor 32

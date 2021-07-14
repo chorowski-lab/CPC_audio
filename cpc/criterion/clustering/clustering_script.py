@@ -85,6 +85,10 @@ def parseArgs(argv):
     parser.add_argument('--norm_vec_len', action='store_true',
                         help="Normalize vector lengths.")
 
+    parser.add_argument('--cpcLevel', default=0, type=int,
+                        help='Index of the CPC head at to which extract features. ' 
+                        'Ignored if get_encoded is True.')
+
     return parser.parse_args(argv)
 
 # some example with nullspace and normalization making dists cosine:
@@ -158,7 +162,7 @@ if __name__ == "__main__":
     model = loadModel([args.pathCheckpoint], updateConfig=updateConfig, load_nullspace=args.nullspace)[0]
     #model = loadModel([args.pathCheckpoint])[0]#, updateConfig=updateConfig)[0]
 
-    featureMaker = FeatureModule(model, args.encoder_layer)
+    featureMaker = FeatureModule(model, args.encoder_layer, args.cpcLevel)
     print("Checkpoint loaded!")
     print("")
 

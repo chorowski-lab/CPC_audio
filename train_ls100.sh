@@ -48,4 +48,4 @@ exec python -u cpc/train.py \
 --nGPU 2 \
 --nLevelsGRU 2 \
 --schedulerRamp 10 \
-    "$@" 2>&1 | tee -ai ${SAVE_DIR}/out.txt
+"$@" 2>&1 | tee -ai ${SAVE_DIR}/out.txt

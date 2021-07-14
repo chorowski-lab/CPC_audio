@@ -18,9 +18,10 @@ class FeatureModule(torch.nn.Module):
     working with CPC trained features.
     """
 
-    def __init__(self, featureMaker, get_encoded, collapse=False):
+    def __init__(self, featureMaker, get_encoded, cpcLevel, collapse=False):
         super(FeatureModule, self).__init__()
         self.get_encoded = get_encoded
+        self.cpcLevel = cpcLevel
         self.featureMaker = featureMaker
         self.collapse = collapse
 
@@ -33,6 +34,8 @@ class FeatureModule(torch.nn.Module):
         cFeature, encoded, _ = self.featureMaker(batchAudio.cuda(), label)
         if self.get_encoded:
             cFeature = encoded
+        else:
+            cFeature = cFeature[self.cpcLevel]
         if self.collapse:
             cFeature = cFeature.contiguous().view(-1, cFeature.size(2))
         return cFeature

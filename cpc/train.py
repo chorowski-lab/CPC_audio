@@ -113,8 +113,10 @@ def trainStep(dataLoader,
         label = label.cuda(non_blocking=True)
         c_feature, encoded_data, label = cpcModel(batchData, label)
         allLosses, allAcc, _ = cpcCriterion(c_feature, encoded_data, label, None)
-        totLoss = torch.sum(torch.stack(allLosses))
-
+        totLoss = 0
+        for loss in allLosses:
+            totLoss += loss.mean()
+        totLoss = totLoss / len(allLosses)
         totLoss.backward()
 
         # Show grads ?

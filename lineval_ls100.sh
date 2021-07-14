@@ -43,7 +43,8 @@ exec python -u cpc/eval/linear_separability.py \
     /pio/scratch/2/jch/wav2vec/LibriSpeech100_labels_split/train_split.txt \
     /pio/scratch/2/jch/wav2vec/LibriSpeech100_labels_split/test_split.txt \
     "$@" \
-    --pathPhone /pio/scratch/2/jch/wav2vec/LibriSpeech100_labels_split/converted_aligned_phones.txt \
+    --pathPhone /pio/scratch/2/i323106/converted_aligned_phones.txt \
     --file_extension .wav \
     --pathCheckpoint $SAVE_DIR \
+    # --get_encoded \
     2>&1 | tee -ai ${SAVE_DIR}/out.txt

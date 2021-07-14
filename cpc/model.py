@@ -159,10 +159,10 @@ class CPCAR(nn.Module):
                  dimOutput,
                  keepHidden,
                  nLevelsGRU,
+                 reductionFactor,
+                 numLevels,
                  mode="GRU",
-                 reverse=False,
-                 reductionFactor=2,
-                 numLevels=2):
+                 reverse=False):
 
         super(CPCAR, self).__init__()
         self.RESIDUAL_STD = 0.1
@@ -189,6 +189,12 @@ class CPCAR(nn.Module):
         return self.heads[0].hidden_size
 
     def forward(self, x):
+        if x.size(1) % self.reductionFactor != 0:
+            numExtraElements = x.size(1) % self.reductionFactor
+            padValue = torch.repeat_interleave(torch.mean(x[:, -numExtraElements:, :], dim=1).view(-1, 1, x.size(2)), 
+                                                repeats=self.reductionFactor - numExtraElements, dim=1)
+            x = torch.cat((x, padValue), dim=1)
+
         assert x.size(1) % self.reductionFactor == 0
 
         if self.reverse:

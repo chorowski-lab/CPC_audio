@@ -33,6 +33,7 @@ def train_step(feature_maker, criterion, data_loader, optimizer, label_key="spea
         batch_data, label_data = fulldata
         label = label_data[label_key]
         c_feature, encoded_data, _ = feature_maker(batch_data, None)
+        c_feature = c_feature[0]
         if not feature_maker.optimize:
             c_feature, encoded_data = c_feature.detach(), encoded_data.detach()
 
@@ -67,6 +68,7 @@ def val_step(feature_maker, criterion, data_loader, label_key="speaker", centerp
             batch_data, label_data = fulldata
             label = label_data[label_key]
             c_feature, encoded_data, _ = feature_maker(batch_data, None)
+            c_feature = c_feature[0]
             if centerpushSettings:
                 centers, pushDeg = centerpushSettings
                 c_feature = utils.pushToClosestForBatch(c_feature, centers, deg=pushDeg)
