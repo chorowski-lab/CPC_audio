@@ -1,0 +1,30 @@
+# k-means clustering 
+python /pio/scratch/2/i325922/CPC_audio/cpc/criterion/clustering/clustering_script.py \
+    --pathDB /pio/data/zerospeech2021/LibriSpeech-wav/train-clean-100/ --recursionLevel 1 \
+    --nClusters 50 --MAX_ITER 150 --level_gru 2 \
+    --save --load --batchSizeGPU 500 \
+    /pio/scratch/2/i323106/wav2vec/runs/cpc/acpc-hierarchical-uniformpooling4_2/checkpoint_49.pt \
+    /pio/scratch/2/i323106/wav2vec/runs/cpc/acpc-hierarchical-uniformpooling4_2/kmeans/unipool4_2_kmeans50.pt
+
+
+# audio-quantization - LibriSpeech
+python /pio/scratch/2/i323106/CPC_audio/scripts/quantize_audio.py \
+    /pio/scratch/2/i323106/wav2vec/runs/cpc/acpc-hierarchical-uniformpooling4_2/kmeans/unipool4_2_kmeans50.pt \
+    /pio/data/zerospeech2021/LibriSpeech-wav/dev-clean/ \
+    /pio/scratch/2/i323106/wav2vec/runs/cpc/acpc-hierarchical-uniformpooling4_2/quantized/LibriSpeech-wav/dev-clean/ \
+    --file_extension wav
+
+# audio-quantization - lexical dev
+python /pio/scratch/2/i323106/CPC_audio/scripts/quantize_audio.py \
+    /pio/scratch/2/i323106/wav2vec/runs/cpc/acpc-hierarchical-uniformpooling4_2/kmeans/unipool4_2_kmeans50.pt \
+    /pio/data/zerospeech2021/dataset/lexical/dev/ \
+    /pio/scratch/2/i323106/wav2vec/runs/cpc/acpc-hierarchical-uniformpooling4_2/quantized/LibriSpeech-wav/dev-clean/ \
+    --file_extension wav
+
+
+# audio-quantization - lexical test
+python /pio/scratch/2/i323106/CPC_audio/scripts/quantize_audio.py \
+    /pio/scratch/2/i323106/wav2vec/runs/cpc/acpc-hierarchical-uniformpooling4_2/kmeans/unipool4_2_kmeans50.pt \
+    /pio/data/zerospeech2021/dataset/lexical/test/ \
+    /pio/scratch/2/i323106/wav2vec/runs/cpc/acpc-hierarchical-uniformpooling4_2/quantized/LibriSpeech-wav/dev-clean/ \
+    --file_extension wav
